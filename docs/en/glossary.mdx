@@ -55,6 +55,20 @@ not recognise, it is probably here. Definitions are deliberately practical, not 
 | **RTBH / blackhole** | Remotely-Triggered Black Hole — announce the victim's `/32` (or `/128`) with a discard next-hop so routers drop *all* traffic to it. Blunt but instant. Kapkan's default. |
 | **FlowSpec** | A BGP extension (RFC 8955/8956) that announces a *filter* — protocol, ports, packet size — so routers drop only the attack traffic and leave the rest of the host reachable. |
 | **Scrubbing / divert** | Instead of dropping the victim's traffic, reroute it through a "scrubbing centre" that filters out the attack and sends the clean traffic back. Requires a scrubbing service you already operate or buy. |
+| **Data plane** | The part of a system that touches individual packets, as opposed to the *control plane* that decides what should happen to them. Kapkan is a control plane; its optional in-kernel data plane lets it do the dropping itself as well. |
+
+## Kernel filtering
+
+These matter only if you run Kapkan's optional in-kernel data plane.
+
+| Term | Meaning |
+| --- | --- |
+| **eBPF / BPF** | A way to load small, verified programs into a running Linux kernel — no kernel module, no reboot. The kernel refuses to load anything it cannot prove is safe and terminating. |
+| **XDP** | eXpress Data Path — the earliest point at which an eBPF program can see an incoming packet. Its verdict (pass, drop, redirect) is reached before the kernel builds its own packet structure, which is what makes dropping there cheap. |
+| **Native / generic XDP** | Whether the network driver runs the program itself (native, needs driver support) or the kernel runs it slightly later on the driver's behalf (generic, works anywhere). |
+| **BPF map** | A key/value table shared between an eBPF program and userspace. Kapkan's rules live in maps: the engine writes them, the kernel program reads them for every packet. |
+| **bpffs** | A small filesystem, normally mounted at `/sys/fs/bpf`, where programs and maps can be "pinned" so they outlive the process that created them. |
+| **BTF** | BPF Type Format — type information the kernel publishes about itself, so a program compiled elsewhere can be loaded portably across kernel versions. |
 
 ## Kapkan concepts
 
