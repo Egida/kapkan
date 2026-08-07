@@ -128,3 +128,9 @@ jobs:
       # wasm validator before next build.
       - name: Build static export
         run: npm run build
+      # Docs ship in 5 locales and rehype-slug derives heading ids from the
+      # *translated* text, so a fragment copied from the English source points at
+      # an anchor that doesn't exist in ru/de/fr/es. Only the built HTML knows the
+      # real ids — hence checking out/ rather than the MDX.
+      - name: Check internal links and anchors
+        run: npm run check-links
