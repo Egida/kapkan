@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Troubleshooting",
   description:
-    "Symptom-keyed fixes for the things that most often go wrong: no detections, BGP that won't peer, routes that don't take effect, rejected bans and failed reloads.",
+    "Symptom-keyed fixes for the things that most often go wrong: no detections, BGP that won't peer, routes that don't take effect, an XDP data plane that isn't dropping, rejected bans and failed reloads.",
 };
 
 # Troubleshooting
@@ -84,6 +84,46 @@ flood does not stop:
   [FlowSpec](/docs/flowspec) to match the attack precisely.
 - **FlowSpec not taking effect?** The peer must have negotiated the FlowSpec capability; a peer
   that does not support it simply ignores the rules. See [FlowSpec](/docs/flowspec).
+
+## The XDP data plane isn't dropping anything
+
+You enabled `dataplane` and traffic that a static rule should drop is still arriving. Ask the box
+directly — this command is read-only, needs no running daemon, and cannot disturb what it reports:
+
+```sh
+sudo kapkan dataplane status
+```
+
+The first two lines answer the question; the rest is detail. The states it can report, and what
+each one means:
+
+- **`ENFORCING`** with `DRY-RUN` on the first line — the datapath is rewriting every drop verdict
+  into a pass. This is the most common answer, and it reflects what the *kernel* is doing, which
+  can differ from what the config file now says. Set `dry_run: false` and reload.
+- **`ENFORCING` with `GENERIC`** on the first line — the program is on the generic (skb) path
+  rather than the driver path, costing roughly an order of magnitude of capacity. Either the NIC
+  driver has no native XDP support or `dataplane.xdp_mode: generic` is set.
+- **`no_pin_path` / `no_program`** — nothing is attached and nothing ever was here. Check that
+  `dataplane.enabled` is `true`, and that the pin path in the report is the one in your config
+  (the report always says where it got the path from).
+- **`detached`** — the program and maps are pinned and intact but no attachment is bound to a live
+  netdevice. Confirm the configured interfaces exist (`ip link`), then restart Kapkan.
+- **`not_bpffs`** — the pin path is not on a bpffs, so nothing can ever be pinned there. Mount it
+  (`mount -t bpf bpffs /sys/fs/bpf`), and if your unit sets `ProtectKernelTunables=yes`, remove
+  it — that mounts `/sys/fs/bpf` read-only.
+- **`torn` / `schema_skew`** — the pin set is incomplete, or the pinned maps are a different map
+  schema version than the binary (an upgrade that has not restarted yet). Restart Kapkan: it
+  refuses to adopt either and rebuilds. Dynamic mitigation rules from the old process are lost in
+  the rebuild; static policy is not, it comes from the config file.
+- **`attach_unknown`** — you are not running as the user the daemon runs as. Reading a `bpf_link`
+  pin needs write permission on it, so an unprivileged reader sees the maps and no attachments.
+  Re-run with `sudo`.
+
+If it says `ENFORCING`, not dry-run, on the right interface, then the program is running and the
+rules are the next thing to look at: the `VERDICTS` block shows which branch actually decided the
+traffic's fate. Remember that the `OBSERVATIONS` block is bumped *alongside* those verdicts, not
+instead of them, so it must not be added into the total. Full flag and exit-code reference:
+[CLI](/docs/cli#dataplane-status).
 
 ## A ban was rejected (HTTP 409)
 
