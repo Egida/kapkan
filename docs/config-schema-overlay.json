@@ -80,7 +80,7 @@
     "dataplane.static_rules.match.dst_port": { "tier": "advanced", "crossField": "Not allowed with proto icmp or icmp6.", "description": "Single destination port to match; 0 matches any." },
     "dataplane.static_rules.action": { "tier": "advanced", "crossField": "ratelimit requires profile; pass and drop forbid it.", "description": "Verdict for matching traffic: pass, drop, or ratelimit." },
     "dataplane.static_rules.profile": { "tier": "advanced", "crossField": "Must name a declared dataplane.ratelimit_profiles entry, and is only valid with the ratelimit action.", "description": "Rate-limit profile applied to matching traffic." },
-    "dataplane.limits.max_dynamic_rules": { "tier": "advanced", "reloadImmutable": true, "defaultWhenAbsent": 4096, "crossField": "Must exceed ban.max_active_bans * 8, or installs fail mid-attack and fall back to blackhole.", "description": "Maximum rules the mitigator may install. Each ban contributes up to 8." },
+    "dataplane.limits.max_dynamic_rules": { "tier": "advanced", "reloadImmutable": true, "defaultWhenAbsent": 4096, "crossField": "Must be at least ban.max_active_bans * 8, or installs fail mid-attack and fall back to blackhole.", "description": "Maximum rules the mitigator may install. Each ban contributes up to 8." },
     "dataplane.limits.max_static_rules": { "tier": "advanced", "reloadImmutable": true, "defaultWhenAbsent": 256, "description": "Maximum operator-written static rules." },
     "dataplane.limits.max_ratelimit_sources": { "tier": "advanced", "reloadImmutable": true, "defaultWhenAbsent": 1048576, "description": "Size of the per-source token-bucket LRU. Each entry costs kernel memory charged to this unit's cgroup." },
 
