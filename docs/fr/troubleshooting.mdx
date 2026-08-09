@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Dépannage",
   description:
-    "Correctifs indexés par symptôme pour les problèmes les plus fréquents : aucune détection, BGP qui refuse d'établir la session, routes sans effet, bannissements rejetés et rechargements échoués.",
+    "Correctifs indexés par symptôme pour les problèmes les plus fréquents : aucune détection, BGP qui refuse d'établir la session, routes sans effet, un plan de données XDP qui ne rejette rien, bannissements rejetés et rechargements échoués.",
 };
 
 # Dépannage
@@ -89,6 +89,51 @@ flood ne s'arrête pas :
   sur votre bordure, ou utilisez [FlowSpec](/docs/flowspec) pour cibler l'attaque précisément.
 - **FlowSpec sans effet ?** Le pair doit avoir négocié la capacité FlowSpec ; un pair qui ne la
   prend pas en charge ignore simplement les règles. Voir [FlowSpec](/docs/flowspec).
+
+## Le plan de données XDP ne rejette rien
+
+Vous avez activé `dataplane` et le trafic qu'une règle statique devrait rejeter continue d'arriver.
+Interrogez directement la machine — cette commande est en lecture seule, n'exige aucun démon en
+cours d'exécution et ne peut pas perturber ce qu'elle rapporte :
+
+```sh
+sudo kapkan dataplane status
+```
+
+Les deux premières lignes répondent à la question ; le reste n'est que du détail. Les états qu'elle
+peut signaler, et ce que chacun signifie :
+
+- **`ENFORCING`** avec `DRY-RUN` sur la première ligne — le chemin de données réécrit chaque verdict
+  de rejet en verdict de passage. C'est la réponse la plus fréquente, et elle reflète ce que fait le
+  *noyau*, ce qui peut différer de ce que dit désormais le fichier de configuration. Mettez
+  `dry_run: false` et rechargez.
+- **`ENFORCING` avec `GENERIC`** sur la première ligne — le programme est sur le chemin générique
+  (skb) plutôt que sur le chemin du pilote, ce qui coûte environ un ordre de grandeur de capacité.
+  Soit le pilote de la carte réseau ne prend pas en charge XDP nativement, soit
+  `dataplane.xdp_mode: generic` est défini.
+- **`no_pin_path` / `no_program`** — rien n'est attaché et rien ne l'a jamais été ici. Vérifiez que
+  `dataplane.enabled` vaut `true`, et que le chemin d'épinglage indiqué dans le rapport est bien
+  celui de votre configuration (le rapport indique toujours d'où il tient ce chemin).
+- **`detached`** — le programme et les maps sont épinglés et intacts, mais aucun attachement n'est
+  lié à un netdevice actif. Confirmez que les interfaces configurées existent (`ip link`), puis
+  redémarrez Kapkan.
+- **`not_bpffs`** — le chemin d'épinglage n'est pas sur un bpffs, rien ne pourra donc jamais y être
+  épinglé. Montez-le (`mount -t bpf bpffs /sys/fs/bpf`), et si votre unité systemd définit
+  `ProtectKernelTunables=yes`, retirez-le — il monte `/sys/fs/bpf` en lecture seule.
+- **`torn` / `schema_skew`** — l'ensemble des épinglages est incomplet, ou les maps épinglées
+  relèvent d'une version de schéma de maps différente de celle du binaire (une mise à niveau qui n'a
+  pas encore redémarré). Redémarrez Kapkan : il refuse d'adopter l'un comme l'autre et reconstruit.
+  Les règles de mitigation dynamiques de l'ancien processus sont perdues dans la reconstruction ; la
+  politique statique ne l'est pas, elle provient du fichier de configuration.
+- **`attach_unknown`** — vous n'êtes pas l'utilisateur sous lequel tourne le démon. Lire un
+  épinglage `bpf_link` exige la permission d'écriture dessus, si bien qu'un lecteur non privilégié
+  voit les maps et aucun attachement. Relancez avec `sudo`.
+
+S'il indique `ENFORCING`, hors dry-run, sur la bonne interface, alors le programme tourne et ce sont
+les règles qu'il faut examiner ensuite : le bloc `VERDICTS` montre quelle branche a réellement
+décidé du sort du trafic. Rappelez-vous que le bloc `OBSERVATIONS` est incrémenté *en même temps*
+que ces verdicts, et non à leur place : il ne doit donc pas être ajouté au total. Référence complète
+des options et des codes de sortie : [CLI](/docs/cli#dataplane-status).
 
 ## Un bannissement a été rejeté (HTTP 409)
 

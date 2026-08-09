@@ -187,14 +187,29 @@ in `hosts`, neben dem üblichen Sample und der Klassifizierung.
 
 <Callout type="info" title="Mitigation ist optional">
 Carpet-Angriffe sind standardmäßig nur Alarm. Setzen Sie `carpet.mitigation`, um das
-Aggregationspräfix automatisch zu mitigieren — `flowspec` installiert Filterregeln, die dem
-Datenverkehrsmuster des Angriffs über das gesamte Präfix entsprechen (chirurgisch — legitimer
-Datenverkehr zu diesen Hosts fließt weiter), oder `blackhole` blackholet das gesamte Präfix per RTBH
-(grob — jeder Host darin geht dunkel). Beide Methoden **verweigern ein Präfix, das eine
-`protected_whitelist`-Adresse enthält** rundheraus: eine Präfix-Mitigation kann kein einzelnes Mitglied
-ausnehmen, und die Whitelist-Garantie ist absolut. Ein Präfix-Bann zählt zudem seine gesamte
-Adressspanne auf `ban.max_banned_fraction` an und hat seine eigene
-`carpet.max_active_prefix_bans`-Obergrenze. Siehe [Mitigation](/docs/mitigation).
+Aggregationspräfix automatisch zu mitigieren:
+
+- `flowspec` — kündigt Filterregeln an, die dem Datenverkehrsmuster des Angriffs über das gesamte
+  Präfix entsprechen (chirurgisch: legitimer Datenverkehr zu diesen Hosts fließt weiter). Erfordert
+  Upstreams, die FlowSpec unterstützen.
+- `dataplane` — installiert dieselbe auf den Vektor eingeengte Regel in der XDP-Datenebene **dieser
+  Maschine**, sodass das Verwerfen lokal geschieht und keine Mitwirkung des Routers benötigt. Sie
+  sieht nur Datenverkehr, der die NIC dieser Maschine erreicht, und hilft daher nicht mehr, sobald
+  der Uplink selbst gesättigt ist. Erfordert einen `dataplane`-Block mit `enabled: true`; andernfalls
+  verweigert die Engine die Konfiguration, statt stillschweigend auf eine andere Methode
+  zurückzufallen.
+- `blackhole` — blackholet das gesamte Präfix per RTBH (grob: jeder Host darin geht dunkel).
+
+**Jede** Methode verweigert ein Präfix, das eine `protected_whitelist`-Adresse enthält, rundheraus:
+eine Präfix-Mitigation kann kein einzelnes Mitglied ausnehmen, und die Whitelist-Garantie ist absolut.
+Fügt ein Reload eine geschützte Adresse zu einem bereits mitigierten Präfix hinzu, wird der Bann beim
+nächsten Prüfdurchlauf zurückgezogen — und mit `dataplane` schützt der Kernel diesen Host sofort, ohne
+auf den Rückzug zu warten, weil die Prüfung auf geschützte Ziele jeder installierten Regel
+übergeordnet ist.
+
+Ein Präfix-Bann zählt zudem seine gesamte Adressspanne (256 Adressen bei einem `/24`) auf
+`ban.max_banned_fraction` an und hat seine eigene `carpet.max_active_prefix_bans`-Obergrenze. Siehe
+[Mitigation](/docs/mitigation).
 </Callout>
 
 ## Erkennung ausgehender Angriffe

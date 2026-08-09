@@ -181,13 +181,27 @@ y la clasificación habituales.
 
 <Callout type="info" title="La mitigación es opcional (opt-in)">
 Los ataques de carpet son de solo alerta por defecto. Establece `carpet.mitigation` para mitigar de forma
-automática el prefijo de agregación — `flowspec` instala reglas de filtrado que coinciden con el patrón de
-tráfico del ataque en todo el prefijo (quirúrgico: el tráfico legítimo hacia esos hosts sigue fluyendo), o
-`blackhole` aplica un RTBH a todo el prefijo (contundente: todos los hosts que contiene quedan a oscuras).
-Cualquiera de los dos métodos **rechaza de plano un prefijo
-que contenga una dirección de `protected_whitelist`**: una mitigación de prefijo no puede eximir a un solo
-miembro y la garantía de la lista blanca es absoluta. Un bloqueo de prefijo también computa todo su rango de
-direcciones para `ban.max_banned_fraction` y tiene su propio límite `carpet.max_active_prefix_bans`. Consulta
+automática el prefijo de agregación:
+
+- `flowspec` — anuncia reglas de filtrado que coinciden con el patrón de tráfico del ataque en todo el
+  prefijo (quirúrgico: el tráfico legítimo hacia esos hosts sigue fluyendo). Necesita upstreams que
+  respeten FlowSpec.
+- `dataplane` — instala esa misma regla acotada al vector en el plano de datos XDP de **esta máquina**,
+  de modo que el descarte se produce localmente y no necesita la cooperación de ningún router. Solo ve
+  el tráfico que llega a la NIC de esta máquina, así que no ayuda una vez que el propio uplink está
+  saturado. Requiere un bloque `dataplane` con `enabled: true`; de lo contrario, el motor rechaza la
+  configuración en lugar de recurrir en silencio a otro método.
+- `blackhole` — aplica un RTBH a todo el prefijo (contundente: todos los hosts que contiene quedan a
+  oscuras).
+
+**Todos** los métodos rechazan de plano un prefijo que contenga una dirección de `protected_whitelist`:
+una mitigación de prefijo no puede eximir a un solo miembro y la garantía de la lista blanca es absoluta.
+Si una recarga añade una dirección protegida a un prefijo que ya está mitigado, el bloqueo se retira en el
+siguiente barrido — y con `dataplane`, el kernel protege ese host de inmediato, sin esperar a la retirada,
+porque la comprobación de destino protegido tiene prioridad sobre cualquier regla instalada.
+
+Un bloqueo de prefijo también computa todo su rango de direcciones (256 direcciones para un `/24`) para
+`ban.max_banned_fraction` y tiene su propio límite `carpet.max_active_prefix_bans`. Consulta
 [Mitigación](/docs/mitigation).
 </Callout>
 

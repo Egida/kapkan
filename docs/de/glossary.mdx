@@ -56,6 +56,20 @@ praxisnah und nicht RFC-genau.
 | **RTBH / Blackhole** | Remotely-Triggered Black Hole — kündigt das `/32` (oder `/128`) des Opfers mit einem Discard-Next-Hop an, sodass Router *jeglichen* Verkehr dorthin verwerfen. Grob, aber sofort wirksam. Kapkans Standard. |
 | **FlowSpec** | Eine BGP-Erweiterung (RFC 8955/8956), die einen *Filter* ankündigt — Protokoll, Ports, Paketgröße — sodass Router nur den Angriffsverkehr verwerfen und der Rest des Hosts erreichbar bleibt. |
 | **Scrubbing / Divert** | Statt den Verkehr des Opfers zu verwerfen, wird er über ein „Scrubbing-Center“ umgeleitet, das den Angriff herausfiltert und den sauberen Verkehr zurücksendet. Erfordert einen Scrubbing-Dienst, den Sie bereits betreiben oder einkaufen. |
+| **Datenebene** | Der Teil eines Systems, der einzelne Pakete anfasst — im Gegensatz zur *Steuerungsebene* (control plane), die entscheidet, was mit ihnen geschehen soll. Kapkan ist eine Steuerungsebene; seine optionale Datenebene im Kernel lässt es das Verwerfen zusätzlich selbst übernehmen. |
+
+## Filterung im Kernel
+
+Diese Begriffe sind nur relevant, wenn Sie Kapkans optionale Datenebene im Kernel betreiben.
+
+| Begriff | Bedeutung |
+| --- | --- |
+| **eBPF / BPF** | Eine Möglichkeit, kleine, verifizierte Programme in einen laufenden Linux-Kernel zu laden — ohne Kernelmodul, ohne Neustart. Der Kernel weigert sich, etwas zu laden, dessen Sicherheit und Terminierung er nicht beweisen kann. |
+| **XDP** | eXpress Data Path — der früheste Punkt, an dem ein eBPF-Programm ein eingehendes Paket sehen kann. Sein Urteil (durchlassen, verwerfen, umleiten) steht fest, bevor der Kernel seine eigene Paketstruktur aufbaut, und genau das macht das Verwerfen dort so günstig. |
+| **Native / generic XDP** | Ob der Netzwerktreiber das Programm selbst ausführt (native, erfordert Treiberunterstützung) oder der Kernel es kurz darauf stellvertretend für den Treiber ausführt (generic, funktioniert überall). |
+| **BPF-Map** | Eine Schlüssel-Wert-Tabelle, die sich ein eBPF-Programm und der Userspace teilen. Kapkans Regeln leben in Maps: Die Engine schreibt sie, das Kernel-Programm liest sie für jedes Paket. |
+| **bpffs** | Ein kleines Dateisystem, üblicherweise unter `/sys/fs/bpf` eingehängt, in dem Programme und Maps „gepinnt“ werden können, sodass sie den Prozess überdauern, der sie erzeugt hat. |
+| **BTF** | BPF Type Format — Typinformationen, die der Kernel über sich selbst veröffentlicht, sodass ein anderswo kompiliertes Programm portabel über Kernel-Versionen hinweg geladen werden kann. |
 
 ## Kapkan-Konzepte
 

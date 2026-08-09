@@ -1,8 +1,3 @@
-{/* NOT REGISTERED YET. This page is deliberately absent from docs-nav.ts and i18n.ts
-    until the in-kernel backend actually enforces rules. Registering it earlier would
-    publish a feature operators cannot use. Register it, and fan the translations out to
-    ru/de/fr/es, in the same change that lands the mitigator backend. */}
-
 export const metadata = {
   title: "In-kernel data plane",
   description:
@@ -47,7 +42,7 @@ Four things, each with a one-line check:
 
 | Requirement | Check | Notes |
 | --- | --- | --- |
-| Linux 5.15 or newer | `uname -r` | Debian 12, Ubuntu 22.04/24.04 and RHEL 9 and their rebuilds qualify. **RHEL/Alma/Rocky 8 does not** — it ships 4.18 and is supported into 2029, so check before assuming. |
+| Linux 5.15 or newer | `uname -r` | The full test suite runs on 5.15, 6.1, 6.6 and 6.12 on every change. Debian 12, Ubuntu 22.04/24.04, RHEL 9 and their rebuilds qualify. **RHEL/Alma/Rocky 8 does not** — it ships 4.18 and is supported into 2029, so check before assuming. |
 | Kernel BTF | `ls /sys/kernel/btf/vmlinux` | Present on every distro kernel that meets the floor above. |
 | A mounted bpffs | `mount \| grep ' /sys/fs/bpf '` | Kapkan pins its program and maps under `pin_path` so policy survives a restart of the process. |
 | A NIC driver with XDP support | `ethtool -i eth0` and check the driver | Optional — without it the kernel's generic path is used instead. See [Attach modes](#attach-modes). |
@@ -55,11 +50,19 @@ Four things, each with a one-line check:
 The process also needs `CAP_BPF` and `CAP_NET_ADMIN` to load and attach the program, write access
 to the bpffs mount, and `AF_NETLINK`.
 
-<Callout type="warning" title="The shipped systemd unit does not grant these yet">
-Kapkan's packaged unit is deliberately hardened and, as shipped, blocks an XDP attach: it has no
-`AmbientCapabilities`, `ProtectSystem=strict` leaves `/sys/fs/bpf` read-only, and
-`RestrictAddressFamilies` omits `AF_NETLINK`. Running the data plane means overriding those —
-see [Deployment](/docs/deployment) for the exact drop-in.
+<Callout type="warning" title="The packaged unit does not grant these by default">
+Kapkan's systemd unit is deliberately hardened, and as shipped it blocks an XDP attach: no
+`AmbientCapabilities`, `ProtectSystem=strict` leaving `/sys/fs/bpf` read-only, and
+`RestrictAddressFamilies` without `AF_NETLINK`. That is the right default — most Kapkan boxes never
+run a data plane, and handing every one of them `CAP_BPF` to save the few that do is a bad trade.
+
+The packages ship the override at `/usr/share/kapkan/kapkan-dataplane.conf`. Install it deliberately:
+
+```sh
+sudo mkdir -p /etc/systemd/system/kapkan.service.d
+sudo cp /usr/share/kapkan/kapkan-dataplane.conf /etc/systemd/system/kapkan.service.d/
+sudo systemctl daemon-reload && sudo systemctl restart kapkan
+```
 </Callout>
 
 Nothing needs a compiler on the box. The BPF program is compiled when Kapkan is built and shipped
@@ -221,6 +224,51 @@ native to generic without any error. The mode actually in use is reported by
 `kapkan dataplane status` and exported as a metric — check it after any change to the host, and
 alert on it if you have sized for native.
 </Callout>
+
+## What it blocks, measured
+
+Every release runs eighteen attack captures end to end — synthetic telemetry into the real
+detector, the real classifier, the rules it generates, compiled into real kernel maps, then the
+captured frames replayed through the program. Each capture carries a stream of legitimate traffic
+alongside the attack, because a block rate without one measures nothing.
+
+| | |
+| --- | --- |
+| Attack traffic dropped | **100%** on seventeen of eighteen captures; **98.5%** on the per-source rate-limit capture, where each attacking source is allowed its first frame before its bucket empties |
+| Legitimate traffic dropped | **zero**, in all eighteen |
+| Allowlisted traffic dropped | **zero**, in all eighteen |
+
+The captures cover UDP and SYN floods on IPv4 and IPv6, DNS, NTP, CLDAP, SSDP, memcached and
+chargen amplification, ICMP and fragment floods, a TCP ACK flood, a multi-vector mix, a
+carpet-bombed `/24`, a source flood, VLAN-tagged frames and IPv6 with extension headers.
+
+<Callout type="info" title="These are not throughput numbers">
+A block rate says what fraction of an attack the rules catch. It says nothing about how much
+traffic a given box can absorb, which depends on your NIC, your driver, your CPU and whether the
+program attached in native or generic mode. Size a deployment on your own hardware.
+</Callout>
+
+## The one thing it does not inspect
+
+An IPv6 packet may carry a chain of extension headers before its TCP or UDP header. Walking that
+chain costs the kernel program instructions it does not have without a bound, so it walks at most
+**eight** — and a packet carrying more is **forwarded without a single rule being evaluated**.
+Sixty-four bytes of padding is enough to build one.
+
+This is deliberate. A parse limit that dropped packets would be a default-deny hiding inside a
+parser, and one malformed-looking chain would take a customer offline. The data plane's default
+verdict is always pass, and this is no exception.
+
+But it is also a way around your filter, so it is counted and surfaced rather than buried:
+
+```
+kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}
+```
+
+No legitimate traffic chains eight extension headers. **Any movement on that counter is worth
+looking at** — `kapkan dataplane status` prints a block when it is non-zero, and the console shows
+a banner. If it moves during an attack, drop or normalise long extension-header chains upstream,
+where a router can do it without a per-packet budget.
 
 ## Limits and memory
 

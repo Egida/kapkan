@@ -177,13 +177,28 @@ porte `scope: prefix`, le CIDR d'agrégation dans `prefix`, et son fan-out dans 
 l'échantillon et de la classification habituels.
 
 <Callout type="info" title="L'atténuation est en option">
-Les attaques carpet sont en alerte seule par défaut. Définissez `carpet.mitigation` pour atténuer automatiquement le préfixe
-d'agrégation — `flowspec` installe des règles de filtrage correspondant au motif de trafic de l'attaque sur l'ensemble du
-préfixe (chirurgical — le trafic légitime vers ces hôtes continue de circuler), ou `blackhole` met l'ensemble du préfixe
-en RTBH (brutal — chaque hôte qu'il contient devient injoignable).
-Chacune des deux méthodes **refuse catégoriquement un préfixe contenant une adresse `protected_whitelist`** : une atténuation
-de préfixe ne peut pas exempter un seul membre et la garantie de liste blanche est absolue. Un bannissement de préfixe compte aussi
-toute son étendue d'adresses dans `ban.max_banned_fraction` et possède son propre plafond `carpet.max_active_prefix_bans`.
+Les attaques carpet sont en alerte seule par défaut. Définissez `carpet.mitigation` pour atténuer
+automatiquement le préfixe d'agrégation :
+
+- `flowspec` — annonce des règles de filtrage correspondant au motif de trafic de l'attaque sur
+  l'ensemble du préfixe (chirurgical : le trafic légitime vers ces hôtes continue de circuler).
+  Nécessite des upstreams qui prennent en charge FlowSpec.
+- `dataplane` — installe cette même règle restreinte au vecteur dans le plan de données XDP **de cette
+  machine**, de sorte que le rejet a lieu localement et ne demande aucune coopération du routeur. Il ne
+  voit que le trafic qui atteint la carte réseau de cette machine, et n'aide donc plus dès lors que le
+  lien vers l'upstream est lui-même saturé. Nécessite un bloc `dataplane` avec `enabled: true` ; sinon
+  le moteur refuse la configuration plutôt que de se rabattre silencieusement sur une autre méthode.
+- `blackhole` — met l'ensemble du préfixe en RTBH (brutal : chaque hôte qu'il contient devient
+  injoignable).
+
+**Chaque** méthode refuse catégoriquement un préfixe contenant une adresse `protected_whitelist` : une
+atténuation de préfixe ne peut pas exempter un seul membre et la garantie de liste blanche est absolue.
+Si un rechargement ajoute une adresse protégée à un préfixe déjà atténué, le bannissement est retiré
+lors du prochain cycle de vérification — et avec `dataplane`, le noyau protège cet hôte immédiatement,
+sans attendre ce retrait, car la vérification des destinations protégées prime sur toute règle installée.
+
+Un bannissement de préfixe compte aussi toute son étendue d'adresses (256 adresses pour un `/24`) dans
+`ban.max_banned_fraction` et possède son propre plafond `carpet.max_active_prefix_bans`.
 Voir [Mitigation](/docs/mitigation).
 </Callout>
 
