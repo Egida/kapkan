@@ -35,7 +35,7 @@ Vincula (bind) el listener en consecuencia — consulta [Autenticación](/docs/a
 | `kapkan_mitigate_announced_routes` | `mode` | Gauge de rutas de blackhole anunciadas actualmente, separadas por el modo `real` / `dry_run`. Cuenta solo los peldaños que piden a un peer que aplique algo (`blackhole`, `divert`, `flowspec`); los baneos del peldaño local `dataplane` están en `kapkan_mitigate_dataplane_bans`. |
 | `kapkan_mitigate_flowspec_rules` | `mode` | Gauge de reglas de [FlowSpec](/docs/flowspec) anunciadas actualmente, separadas por el modo `real` / `dry_run`. Vigílalo frente al límite de rutas FlowSpec de tus routers. |
 | `kapkan_mitigate_dataplane_bans` | `mode` | Gauge de baneos aplicados actualmente por el plano de datos XDP de este host en lugar de por un upstream, separados por el modo `real` / `dry_run`. No anuncian nada a ningún peer y siguen filtrando durante una caída de BGP. |
-| `kapkan_mitigate_dataplane_rules` | `mode` | Gauge de las reglas que esos baneos instalaron en el kernel, separadas por el modo `real` / `dry_run`. Un baneo lleva varias reglas, así que este valor supera a `kapkan_mitigate_dataplane_bans` — vigílalo frente a `dataplane.limits.max_dynamic_rules` igual que `kapkan_mitigate_flowspec_rules` se vigila frente al límite de rutas de un upstream. |
+| `kapkan_mitigate_dataplane_rules` | `mode` | Gauge de las reglas que esos baneos instalaron en el kernel, separadas por el modo `real` / `dry_run`. Un baneo aporta 1 regla cuando el ataque se clasifica limpiamente como de un solo vector, y hasta 8 cuando es mixto o no clasificado, así que este valor va desde `kapkan_mitigate_dataplane_bans` hasta 8 veces esa cifra. Vigílalo frente a `dataplane.limits.max_dynamic_rules` igual que `kapkan_mitigate_flowspec_rules` se vigila frente al límite de rutas de un upstream. |
 | `kapkan_mitigate_bans_rejected_total` | `reason` | Bloqueos (bans) rechazados por una regla de seguridad, por `reason`: `max_active_bans`, `blast_radius_fraction`, `blast_radius_rate`, o `max_active_prefix_bans` (carpet). |
 | `kapkan_mitigate_fallback_total` | `from`, `to` | Anuncios de mitigación que degradaron a un método de fallback porque el peer rechazó el primario, por `from`/`to`. Una serie con `from="flowspec"` distinta de cero señala upstreams que no respetan FlowSpec. |
 | `kapkan_notify_notifications_total` | `channel`, `result` | Notificaciones intentadas, por canal (telegram, slack, email, webhook, exec) y `result` (`ok`, `error`, o `dropped` cuando los slots de entrega estaban saturados). |
@@ -53,12 +53,19 @@ atribuido a los baneos que lo poseen y archivado bajo el indicador de dry-run co
 baneo. `kapkan_dataplane_rules` mide la magnitud vecina desde el otro extremo: todas las reglas que
 el kernel está ejecutando realmente — las estáticas de tu configuración más esas mismas reglas
 dinámicas — archivadas bajo el indicador del propio plano de datos. Así que
-`kapkan_mitigate_dataplane_rules` debería seguir a la mitad dinámica de `kapkan_dataplane_rules`.
+bajo `mode="real"`, `kapkan_mitigate_dataplane_rules` debería seguir a la mitad dinámica de
+`kapkan_dataplane_rules`.
 
 Grafica ambos y compáralos en lugar de sumarlos. Son dos caminos independientes hacia la misma
-cifra, y una diferencia persistente entre ellos es un fallo real — una retirada que falló, o reglas
-que el kernel expiró por debajo de un baneo que aún se considera activo — que una única cifra sumada
-ocultaría precisamente.
+cifra, y una diferencia persistente entre ellos **en modo `real`** es un fallo — una retirada que
+falló, o reglas que el kernel expiró por debajo de un baneo que aún se considera activo — que una
+única cifra sumada ocultaría precisamente.
+
+No configures alertas sobre los buckets `dry_run`. Un baneo en dry-run nunca llega al instalador, así
+que no entra nada en el kernel: `kapkan_mitigate_dataplane_rules{mode="dry_run"}` informa de las
+reglas que se *habrían* instalado, mientras que la mitad dinámica de `kapkan_dataplane_rules` se
+queda en cero. Esa diferencia es la distinción intencionada entre intención y medición, y como
+`dry_run` es el valor por defecto de fábrica, es lo que mostrará cualquier despliegue nuevo.
 
 La etiqueta `proto` es el protocolo de transporte por el que llegó el flow: `sflow5`, `netflow5`,
 `netflow9` o `ipfix` (p. ej. `kapkan_ingest_flows_total{proto="sflow5"}`).

@@ -34,7 +34,7 @@ Bind the listener accordingly — see [Authentication](/docs/authentication).
 | `kapkan_mitigate_announced_routes` | `mode` | Gauge of blackhole routes currently announced, split by `real` / `dry_run` mode. Counts only the rungs that ask a peer to enforce something (`blackhole`, `divert`, `flowspec`); bans on the local `dataplane` rung are in `kapkan_mitigate_dataplane_bans`. |
 | `kapkan_mitigate_flowspec_rules` | `mode` | Gauge of [FlowSpec](/docs/flowspec) rules currently announced, split by `real` / `dry_run` mode. Watch this against your routers' FlowSpec route limit. |
 | `kapkan_mitigate_dataplane_bans` | `mode` | Gauge of bans currently enforced by this host's own XDP data plane rather than by an upstream, split by `real` / `dry_run` mode. These announce nothing to any peer and keep filtering through a BGP outage. |
-| `kapkan_mitigate_dataplane_rules` | `mode` | Gauge of rules those bans installed in the kernel, split by `real` / `dry_run` mode. One ban carries several rules, so this exceeds `kapkan_mitigate_dataplane_bans` — watch it against `dataplane.limits.max_dynamic_rules` the way `kapkan_mitigate_flowspec_rules` is watched against an upstream's route limit. |
+| `kapkan_mitigate_dataplane_rules` | `mode` | Gauge of rules those bans installed in the kernel, split by `real` / `dry_run` mode. A ban contributes 1 rule for a cleanly classified single-vector attack and up to 8 for a mixed or unclassified one, so this is at least `kapkan_mitigate_dataplane_bans` and at most 8× it — watch it against `dataplane.limits.max_dynamic_rules` the way `kapkan_mitigate_flowspec_rules` is watched against an upstream's route limit. |
 | `kapkan_mitigate_bans_rejected_total` | `reason` | Bans refused by a safety guard, by `reason`: `max_active_bans`, `blast_radius_fraction`, `blast_radius_rate`, or `max_active_prefix_bans` (carpet). |
 | `kapkan_mitigate_fallback_total` | `from`, `to` | Mitigation announces that degraded to a fallback method because the peer rejected the primary, by `from`/`to`. A non-zero `from="flowspec"` series flags upstreams that do not honor FlowSpec. |
 | `kapkan_notify_notifications_total` | `channel`, `result` | Notifications attempted, by channel (telegram, slack, email, webhook, exec) and `result` (`ok`, `error`, or `dropped` when delivery slots were saturated). |
@@ -51,13 +51,19 @@ The two `kapkan_mitigate_dataplane_*` gauges are the mitigator's account of what
 attributed to the bans that own it and filed under each ban's frozen dry-run flag.
 `kapkan_dataplane_rules` measures the neighbouring quantity from the other end: every rule the
 kernel is actually running — your config's statics plus those same dynamic rules — filed under
-the datapath's own flag. So `kapkan_mitigate_dataplane_rules` should track the dynamic half of
-`kapkan_dataplane_rules`.
+the datapath's own flag. So under `mode="real"`, `kapkan_mitigate_dataplane_rules` should track
+the dynamic half of `kapkan_dataplane_rules`.
 
 Graph both and compare them rather than adding them up. They are two independent paths to the
-same number, and a lasting gap between them is a real fault — a withdraw that failed, or rules
-the kernel expired underneath a ban that still considers itself active — which a single summed
-figure would hide.
+same number, and a lasting gap between them **in `real` mode** is a fault — a withdraw that
+failed, or rules the kernel expired underneath a ban that still considers itself active — which
+a single summed figure would hide.
+
+Do not alert on the `dry_run` buckets. A dry-run ban is never handed to the installer, so
+nothing enters the kernel: `kapkan_mitigate_dataplane_rules{mode="dry_run"}` reports the rules
+that *would* have been installed, while the dynamic half of `kapkan_dataplane_rules` stays at
+zero. That gap is the intended difference between intent and measurement, and since `dry_run`
+is the shipped default it is what a new deployment will show.
 
 The `proto` label is the wire protocol the flow arrived on: `sflow5`, `netflow5`,
 `netflow9`, or `ipfix` (e.g. `kapkan_ingest_flows_total{proto="sflow5"}`).
