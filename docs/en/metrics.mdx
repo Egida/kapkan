@@ -31,8 +31,10 @@ Bind the listener accordingly — see [Authentication](/docs/authentication).
 | `kapkan_engine_tracked_hosts` | — | Gauge of hosts currently tracked by the engine. |
 | `kapkan_engine_boundary_debug_bytes_total` | `exporter`, `iface`, `dir` | Sampling-corrected bytes toward (`dir=in`) or from (`dir=out`) protected hosts, broken down by `exporter` and interface (`iface` = ifIndex). Only appears while [`sampling.boundary_debug: true`](/docs/configuration) — a temporary aid to find your edge interfaces. It is NOT cardinality-bounded; disable it again after reading the breakdown. |
 | `kapkan_engine_events_dropped_total` | `kind` | Engine lifecycle events shed because the event channel was full, by `kind` (`attack_started`, `attack_ongoing`, `attack_ended`). A dropped `attack_started` or `attack_ended` is a real loss — that episode's mitigation or notification is missed; a dropped `attack_ongoing` heartbeat self-heals on the next detection window. Should sit at zero; a rising counter means the event consumer cannot keep up. |
-| `kapkan_mitigate_announced_routes` | `mode` | Gauge of blackhole routes currently announced, split by `real` / `dry_run` mode. |
+| `kapkan_mitigate_announced_routes` | `mode` | Gauge of blackhole routes currently announced, split by `real` / `dry_run` mode. Counts only the rungs that ask a peer to enforce something (`blackhole`, `divert`, `flowspec`); bans on the local `dataplane` rung are in `kapkan_mitigate_dataplane_bans`. |
 | `kapkan_mitigate_flowspec_rules` | `mode` | Gauge of [FlowSpec](/docs/flowspec) rules currently announced, split by `real` / `dry_run` mode. Watch this against your routers' FlowSpec route limit. |
+| `kapkan_mitigate_dataplane_bans` | `mode` | Gauge of bans currently enforced by this host's own XDP data plane rather than by an upstream, split by `real` / `dry_run` mode. These announce nothing to any peer and keep filtering through a BGP outage. |
+| `kapkan_mitigate_dataplane_rules` | `mode` | Gauge of rules those bans installed in the kernel, split by `real` / `dry_run` mode. One ban carries several rules, so this exceeds `kapkan_mitigate_dataplane_bans` — watch it against `dataplane.limits.max_dynamic_rules` the way `kapkan_mitigate_flowspec_rules` is watched against an upstream's route limit. |
 | `kapkan_mitigate_bans_rejected_total` | `reason` | Bans refused by a safety guard, by `reason`: `max_active_bans`, `blast_radius_fraction`, `blast_radius_rate`, or `max_active_prefix_bans` (carpet). |
 | `kapkan_mitigate_fallback_total` | `from`, `to` | Mitigation announces that degraded to a fallback method because the peer rejected the primary, by `from`/`to`. A non-zero `from="flowspec"` series flags upstreams that do not honor FlowSpec. |
 | `kapkan_notify_notifications_total` | `channel`, `result` | Notifications attempted, by channel (telegram, slack, email, webhook, exec) and `result` (`ok`, `error`, or `dropped` when delivery slots were saturated). |
@@ -44,6 +46,18 @@ The `mode` label on `kapkan_mitigate_announced_routes` is the fastest way to con
 state at a glance: while `dry_run: true`, every would-be route is counted under
 `mode="dry_run"` and nothing under `mode="real"`. See [Mitigation](/docs/mitigation) and the
 [Safety model](/docs/safety).
+
+The two `kapkan_mitigate_dataplane_*` gauges are the mitigator's account of what it installed,
+attributed to the bans that own it and filed under each ban's frozen dry-run flag.
+`kapkan_dataplane_rules` measures the neighbouring quantity from the other end: every rule the
+kernel is actually running — your config's statics plus those same dynamic rules — filed under
+the datapath's own flag. So `kapkan_mitigate_dataplane_rules` should track the dynamic half of
+`kapkan_dataplane_rules`.
+
+Graph both and compare them rather than adding them up. They are two independent paths to the
+same number, and a lasting gap between them is a real fault — a withdraw that failed, or rules
+the kernel expired underneath a ban that still considers itself active — which a single summed
+figure would hide.
 
 The `proto` label is the wire protocol the flow arrived on: `sflow5`, `netflow5`,
 `netflow9`, or `ipfix` (e.g. `kapkan_ingest_flows_total{proto="sflow5"}`).

@@ -97,7 +97,10 @@ comportan correctamente:
 
 - `GET /api/v1/status` muestra el modo actual y los recuentos de ataques/baneos activos.
 - La métrica `kapkan_mitigate_announced_routes` está etiquetada por modo; en producción, las rutas se
-  contabilizan bajo `real` en lugar de `dry_run`. Consulta [Métricas](/docs/metrics).
+  contabilizan bajo `real` en lugar de `dry_run`. Si tu escalado usa el peldaño local `dataplane`,
+  vigila `kapkan_mitigate_dataplane_bans` en su lugar: esos baneos se aplican en la NIC de este host
+  y están deliberadamente ausentes del recuento de rutas anunciadas.
+  Consulta [Métricas](/docs/metrics).
 - `GET /api/v1/bans` enumera todos los baneos, activos e históricos, de modo que puedes confirmar que
   un baneo se anunció y, más tarde, se retiró automáticamente al expirar su TTL.
 

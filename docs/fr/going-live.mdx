@@ -100,7 +100,10 @@ et que les annonces se comportent comme prévu :
 - `GET /api/v1/status` affiche le mode actuel ainsi que le nombre d'attaques et de bannissements
   actifs.
 - La métrique `kapkan_mitigate_announced_routes` est étiquetée par mode ; en production, les routes
-  sont comptabilisées sous `real` plutôt que sous `dry_run`. Consultez les [Métriques](/docs/metrics).
+  sont comptabilisées sous `real` plutôt que sous `dry_run`. Si votre échelle d'escalade utilise
+  l'échelon local `dataplane`, surveillez plutôt `kapkan_mitigate_dataplane_bans` : ces bannissements
+  sont appliqués sur la NIC de cet hôte et sont délibérément absents du décompte des routes
+  annoncées. Consultez les [Métriques](/docs/metrics).
 - `GET /api/v1/bans` liste chaque bannissement, actif et historique, ce qui vous permet de
   confirmer qu'un bannissement a bien été annoncé puis automatiquement retiré après expiration
   de son TTL.
