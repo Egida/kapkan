@@ -1,20 +1,27 @@
 export const metadata = {
   title: "Referencia de CLI",
   description:
-    "Cada opción de línea de comandos del binario de Kapkan: ruta de la configuración, formato y nivel de los registros, el pid file y el control de proceso al estilo nginx con `-s`, y los subcomandos de utilidad para el esquema y la validación.",
+    "Cada opción de línea de comandos del binario de Kapkan: ruta de la configuración, formato y nivel de los registros, el pid file y el control de proceso al estilo nginx con `-s`, las flags de utilidad para el esquema y la validación, y el comando `dataplane status`.",
 };
 
 # Referencia de CLI
 
-Kapkan es un único binario. Todo lo que hace se selecciona mediante opciones de línea de comandos
-al arrancar; no hay subcomandos más allá de los modos de utilidad que se describen abajo. Todos
-los registros van a **stderr**; la API REST y las métricas de Prometheus se sirven por HTTP en
-`api.listen` (predeterminado `127.0.0.1:8080`), mientras que las flags de utilidad (`-version`,
-`-dump-schema`) imprimen su salida en **stdout**.
+Kapkan es un único binario. Lo que hace se selecciona mediante opciones de línea de comandos al
+arrancar, más un pequeño número de **comandos** que inspeccionan el sistema en ejecución y
+terminan. Todos los registros van a **stderr**; la API REST y las métricas de Prometheus se sirven
+por HTTP en `api.listen` (predeterminado `127.0.0.1:8080`), mientras que las flags de utilidad
+(`-version`, `-dump-schema`) y los comandos imprimen su salida en **stdout**.
 
 ```sh
-kapkan [flags]
+kapkan [flags]                     # run the daemon
+kapkan [flags] <command> [args]    # run a command and exit
 ```
+
+Las flags globales van **antes** del comando; las flags propias del comando van después. Así,
+`kapkan -config /etc/kapkan/config.yaml dataplane status -json` lee la ruta de la configuración de
+la `-config` global y pasa `-json` a `dataplane status`. Una flag que ya termina por sí sola
+(`-version`, `-check-config`, `-dump-schema`, `-check-update`, `-s`) no se puede combinar con un
+comando: Kapkan rechaza la combinación en lugar de atender en silencio solo a una de ellas.
 
 ## Flags
 
@@ -144,8 +151,91 @@ de Releases de GitHub y envía solo la propia solicitud (tu IP y un User-Agent g
 identidad del nodo, la configuración ni datos de ataques. La comprobación periódica en proceso está
 **desactivada de forma predeterminada**; esta flag funciona independientemente de ese ajuste.
 
+## Comandos
+
+### `dataplane status`
+
+```sh
+kapkan dataplane status              # human-readable report
+kapkan dataplane status -json        # the same inspection as JSON
+```
+
+Informa de si el plano de datos XDP está filtrando de verdad y, cuando no lo está, de por qué no.
+Dos propiedades lo hacen utilizable durante un incidente:
+
+- **Es estrictamente de solo lectura.** Abre en modo solo lectura el programa y los mapas fijados
+  en bpffs —los descriptores de archivo de los mapas llevan `BPF_F_RDONLY`, así que es el *kernel*
+  el que rechaza cualquier escritura a través de ellos— y nunca carga un programa, ni crea un mapa,
+  ni escribe un valor en un mapa, ni conecta, ni desconecta, ni elimina un pin. Arrancar el demonio
+  adopta o reconstruye un conjunto de pins; este comando no puede hacerlo, así que jamás puede
+  costarte las reglas de mitigación que estás intentando diagnosticar.
+- **Funciona con el demonio detenido.** Ese es el caso principal, no un extra: con el valor
+  predeterminado `dataplane.on_exit: keep`, el kernel sigue aplicando la política estática sin
+  ningún proceso de Kapkan, y este comando lee los pins directamente para decírtelo.
+
+El informe empieza por el veredicto y el remedio, y luego da el detalle: las interfaces conectadas
+con el modo realmente en vigor, las versiones del kernel y del esquema de mapas, la generación
+activa, los recuentos de reglas estáticas y dinámicas, el tamaño, la ocupación y la memoria de cada
+mapa, la flag de dry-run y los contadores de veredictos.
+
+Merece la pena conocer de antemano dos cosas de esa salida:
+
+- **El modo de conexión `GENERIC` se destaca en la primera línea.** `xdp_mode: auto` recae de la
+  ruta del driver a la ruta genérica (skb) sin fallar, y eso cuesta aproximadamente un orden de
+  magnitud de capacidad, así que es un titular y no un campo entre veinte.
+- **Los contadores de veredictos se imprimen en dos bloques.** Los contadores *terminales* reparten
+  el tráfico sin solaparse —se incrementa exactamente uno por paquete—, así que se suman en un
+  total. Los contadores de *observación* se incrementan *junto* a uno terminal para el mismo
+  paquete (`dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`);
+  añadirlos al total daría un recuento de paquetes mayor que el número de paquetes, así que se
+  listan aparte y nunca se suman.
+
+| Flag | Predeterminado | Descripción |
+| --- | --- | --- |
+| `-json` | `false` | Imprime la inspección completa como JSON, incluido el campo `state` del que se derivan los códigos de salida. |
+| `-pin-path <dir>` | de `-config` | El directorio bpffs que se va a inspeccionar. De forma predeterminada, `dataplane.pin_path` de la configuración indicada por la `-config` global, recayendo en `/sys/fs/bpf/kapkan` cuando ese archivo no se puede leer. El informe siempre indica qué ruta miró y de dónde salió esa ruta. |
+
+#### Códigos de salida
+
+| Código de salida | Estado informado | Significado y qué hacer |
+| --- | --- | --- |
+| `0` | `enforcing` | Al menos una interfaz tiene una conexión XDP activa. Nada que hacer. |
+| `10` | `no_pin_path`, `no_program`, `detached` | El plano de datos **no está filtrando**, y no hay nada roto: nunca se ha ejecutado aquí, o está detenido, o sus conexiones han desaparecido. Arranca Kapkan, o comprueba que las interfaces configuradas existen. |
+| `11` | `not_bpffs`, `torn`, `schema_skew` | Hay algo que **arreglar** antes de que pueda funcionar: bpffs no está montado, el conjunto de pins está incompleto, o los mapas fijados tienen una versión de esquema distinta de la de este binario. El motivo impreso nombra la solución (montar bpffs; reiniciar Kapkan). |
+| `1` | `attach_unknown`, o cualquier fallo de lectura | El comando **no ha podido responder**: casi siempre por permisos (ver más abajo). Deliberadamente no se informa como "no está filtrando", porque bien podría estar filtrando. |
+| `2` | — | Error de uso: una flag o un comando desconocidos, o un argumento sobrante. |
+
+Solo `enforcing` termina con `0`, así que `kapkan dataplane status >/dev/null` encaja directamente
+en una comprobación de monitorización. La convención de usar `10` para un estado con significado es
+la misma que emplea [`-check-update`](#comprobar-actualizaciones).
+
+#### Permisos
+
+Leer pins sale mucho más barato que crearlos: en un kernel con
+`kernel.unprivileged_bpf_disabled=0` no hace falta **ninguna capability**; ni `CAP_NET_ADMIN` ni
+`CAP_PERFMON`, que el demonio sí necesita para *cargar y conectar*, entran en juego. Lo que sí lo
+condiciona:
+
+- El directorio de pins tiene modo `0700` y pertenece al usuario con el que se ejecuta el demonio,
+  así que en la práctica querrás `sudo kapkan dataplane status`.
+- En un kernel con `kernel.unprivileged_bpf_disabled` activado —el valor predeterminado en Debian y
+  Ubuntu— `bpf(2)` necesita además `CAP_BPF`, incluso para abrir un pin existente.
+- **Los pins de link necesitan permiso de escritura, no solo de lectura:** el kernel rechaza
+  `BPF_OBJ_GET` sobre un `bpf_link` a menos que el descriptor se abra con `O_RDWR`. Un lector sin
+  privilegios de root ve, por tanto, todos los mapas y ninguna conexión, lo que se informa como
+  `attach_unknown` (salida `1`) y no como "detached".
+
+<Callout type="info" title="Nunca modifica aquello que diagnostica">
+Por eso `dataplane status` es una ruta de solo lectura aparte, en vez de reutilizar el propio
+código de arranque del demonio. Arrancar el plano de datos adopta un conjunto de pins existente o,
+cuando el esquema no coincide, lo derriba y lo reconstruye, descartando todas las reglas de
+mitigación dinámicas que hubiera en el kernel. Un diagnóstico capaz de hacer eso en mitad de un
+ataque sería peor que no tener diagnóstico.
+</Callout>
+
 ## Próximos pasos
 
 - [Inicio rápido](/docs/quickstart): descarga Kapkan y ejecútalo en modo dry-run.
 - [Referencia de configuración](/docs/configuration): cada clave del archivo YAML.
 - [Despliegue en producción](/docs/deployment): la unidad de systemd y sus flags.
+- [Solución de problemas](/docs/troubleshooting): soluciones organizadas por síntoma, incluido el plano de datos.

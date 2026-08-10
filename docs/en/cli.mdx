@@ -1,19 +1,27 @@
 export const metadata = {
   title: "CLI reference",
   description:
-    "Every command-line flag of the kapkan binary — config path, log format and level, the pid file and nginx-style `-s` process control, and the schema/validation utility subcommands.",
+    "Every command-line flag of the kapkan binary — config path, log format and level, the pid file and nginx-style `-s` process control, the schema/validation utility flags, and the `dataplane status` command.",
 };
 
 # CLI reference
 
-Kapkan is a single binary. Everything it does is selected by command-line flags at startup —
-there are no subcommands beyond the utility modes below. All logs go to **stderr**; the REST
-API and Prometheus metrics are served over HTTP on `api.listen` (default `127.0.0.1:8080`), while
-the utility flags (`-version`, `-dump-schema`) print their output to **stdout**.
+Kapkan is a single binary. What it does is selected by command-line flags at startup, plus a
+small number of **commands** that inspect the running system and exit. All logs go to
+**stderr**; the REST API and Prometheus metrics are served over HTTP on `api.listen` (default
+`127.0.0.1:8080`), while the utility flags (`-version`, `-dump-schema`) and the commands print
+their output to **stdout**.
 
 ```sh
-kapkan [flags]
+kapkan [flags]                     # run the daemon
+kapkan [flags] <command> [args]    # run a command and exit
 ```
+
+Global flags come **before** the command; the command's own flags come after it. So
+`kapkan -config /etc/kapkan/config.yaml dataplane status -json` reads the config path from the
+global `-config` and passes `-json` to `dataplane status`. A flag that already exits on its own
+(`-version`, `-check-config`, `-dump-schema`, `-check-update`, `-s`) cannot be combined with a
+command — Kapkan refuses the combination rather than silently honouring one of them.
 
 ## Flags
 
@@ -140,8 +148,86 @@ the request itself (your IP and a generic User-Agent) — never node identity, c
 data. The periodic in-process check is **off by default**; this flag works regardless of that
 setting.
 
+## Commands
+
+### `dataplane status`
+
+```sh
+kapkan dataplane status              # human-readable report
+kapkan dataplane status -json        # the same inspection as JSON
+```
+
+Reports whether the XDP data plane is actually filtering, and why not when it isn't. Two
+properties make it usable during an incident:
+
+- **It is strictly read-only.** It opens the pinned program and maps read-only — the map file
+  descriptors carry `BPF_F_RDONLY`, so the *kernel* refuses a write through them — and it never
+  loads a program, creates a map, writes a map value, attaches, detaches or removes a pin.
+  Starting the daemon adopts-or-rebuilds a pin set; this command cannot, so it can never cost you
+  the mitigation rules you are trying to diagnose.
+- **It works with the daemon stopped.** That is the main case, not a bonus: with the default
+  `dataplane.on_exit: keep`, the kernel goes on enforcing static policy with no Kapkan process at
+  all, and this command reads the pins directly to tell you so.
+
+The report leads with the verdict and the remedy, then gives the detail: attached interfaces with
+the mode actually in force, the kernel and map-schema versions, the live generation, static and
+dynamic rule counts, per-map size/occupancy/memory, the dry-run flag, and the verdict counters.
+
+Two things in that output are worth knowing about in advance:
+
+- **`GENERIC` attach mode is called out on the first line.** `xdp_mode: auto` falls back from the
+  driver path to the generic (skb) path without failing, and that costs roughly an order of
+  magnitude of capacity, so it is a headline and not a field among twenty.
+- **Verdict counters are printed in two blocks.** The *terminal* counters partition the traffic —
+  exactly one is bumped per packet — so they are totalled. The *observation* counters are bumped
+  *alongside* a terminal one for the same packet (`dryrun_would_drop`, `pass_rule_expired`,
+  `pass_frag_noports`, `err_policy_missing`); adding them to the total would produce a packet
+  count larger than the number of packets, so they are listed separately and never summed in.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-json` | `false` | Print the whole inspection as JSON, including the `state` field the exit codes are derived from. |
+| `-pin-path <dir>` | from `-config` | The bpffs directory to inspect. Defaults to `dataplane.pin_path` from the config named by the global `-config`, falling back to `/sys/fs/bpf/kapkan` when that file cannot be read. The report always states which path it looked at and where that path came from. |
+
+#### Exit codes
+
+| Exit code | Reported state | Meaning and what to do |
+| --- | --- | --- |
+| `0` | `enforcing` | At least one interface has a live XDP attachment. Nothing to do. |
+| `10` | `no_pin_path`, `no_program`, `detached` | The data plane is **not filtering**, and nothing about it is broken — it has never run here, or it is stopped, or its attachments are gone. Start Kapkan, or check that the configured interfaces exist. |
+| `11` | `not_bpffs`, `torn`, `schema_skew` | Something must be **fixed** before it can work: bpffs is not mounted, the pin set is torn, or the pinned maps are a different schema version than this binary. The printed reason names the fix (mount bpffs; restart Kapkan). |
+| `1` | `attach_unknown`, or any read failure | The command **could not answer** — most often permission (see below). Deliberately not reported as "not filtering", because it may well be filtering. |
+| `2` | — | Usage error: an unknown flag, command or stray argument. |
+
+Only `enforcing` exits `0`, so `kapkan dataplane status >/dev/null` drops straight into a
+monitoring check. The `10`-for-a-meaningful-state convention is the same one
+[`-check-update`](#checking-for-updates) uses.
+
+#### Permissions
+
+Reading pins is much cheaper than creating them: on a kernel with
+`kernel.unprivileged_bpf_disabled=0`, **no capability at all** is required — neither
+`CAP_NET_ADMIN` nor `CAP_PERFMON`, which the daemon needs in order to *load and attach*, is
+involved. What does gate it:
+
+- The pin directory is mode `0700`, owned by the user the daemon runs as, so in practice you want
+  `sudo kapkan dataplane status`.
+- On a kernel with `kernel.unprivileged_bpf_disabled` set — the default on Debian and Ubuntu —
+  `bpf(2)` additionally needs `CAP_BPF`, even to open an existing pin.
+- **Link pins need write permission, not just read:** the kernel refuses `BPF_OBJ_GET` on a
+  `bpf_link` unless the descriptor is opened `O_RDWR`. A non-root reader therefore sees every map
+  and no attachment, which is reported as `attach_unknown` (exit `1`) rather than as "detached".
+
+<Callout type="info" title="It never mutates the thing it is diagnosing">
+This is why `dataplane status` is a separate read-only path instead of reusing the daemon's own
+startup code. Starting the data plane adopts an existing pin set — or, when the schema does not
+match, tears it down and rebuilds it, discarding every dynamic mitigation rule in the kernel. A
+diagnostic that could do that mid-attack would be worse than no diagnostic.
+</Callout>
+
 ## Next steps
 
 - [Quickstart](/docs/quickstart) — download Kapkan and run it in dry-run.
 - [Configuration reference](/docs/configuration) — every key in the YAML file.
 - [Production deployment](/docs/deployment) — the systemd unit and its flags.
+- [Troubleshooting](/docs/troubleshooting) — symptom-keyed fixes, including the data plane.

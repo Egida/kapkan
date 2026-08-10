@@ -15,3 +15,6 @@ engine/internal/api/static/
 /engine/kapkan
 # the site build copies the canonical top-level docs/ here for Next to render
 site/frontend/content/docs/
+# kernel-matrix scratch: cached guest kernels (~12MB each), the generated
+# initramfs payload and the per-kernel boot logs. See engine/hack/kernel-matrix.
+engine/.kernel-matrix/

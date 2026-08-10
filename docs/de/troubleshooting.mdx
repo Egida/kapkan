@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Fehlerbehebung",
   description:
-    "Nach Symptomen sortierte Lösungen für die häufigsten Probleme: keine Erkennungen, BGP baut keine Sitzung auf, Routen werden nicht wirksam, abgelehnte Sperren und fehlgeschlagene Reloads.",
+    "Nach Symptomen sortierte Lösungen für die häufigsten Probleme: keine Erkennungen, BGP baut keine Sitzung auf, Routen werden nicht wirksam, eine XDP-Datenebene, die nichts verwirft, abgelehnte Sperren und fehlgeschlagene Reloads.",
 };
 
 # Fehlerbehebung
@@ -92,6 +92,53 @@ Flut hört nicht auf:
   Edge, oder nutzen Sie [FlowSpec](/docs/flowspec), um den Angriff präzise zu treffen.
 - **FlowSpec wird nicht wirksam?** Der Peer muss die FlowSpec-Capability ausgehandelt haben; ein
   Peer, der sie nicht unterstützt, ignoriert die Regeln einfach. Siehe [FlowSpec](/docs/flowspec).
+
+## Die XDP-Datenebene verwirft nichts
+
+Sie haben `dataplane` aktiviert, und Traffic, den eine statische Regel verwerfen sollte, kommt
+weiterhin an. Fragen Sie die Maschine direkt — dieser Befehl ist rein lesend, benötigt keinen
+laufenden Daemon und kann das, worüber er berichtet, nicht stören:
+
+```sh
+sudo kapkan dataplane status
+```
+
+Die ersten beiden Zeilen beantworten die Frage; der Rest ist Detail. Die Zustände, die er melden
+kann, und was jeder davon bedeutet:
+
+- **`ENFORCING`** mit `DRY-RUN` in der ersten Zeile — der Datenpfad wandelt jedes
+  Verwerfen-Urteil in ein Durchlassen um. Das ist die häufigste Antwort, und sie spiegelt wider,
+  was der *Kernel* tut — was davon abweichen kann, was die Konfigurationsdatei inzwischen sagt.
+  Setzen Sie `dry_run: false` und laden Sie neu.
+- **`ENFORCING` mit `GENERIC`** in der ersten Zeile — das Programm läuft auf dem generischen
+  (skb) Pfad statt auf dem Treiberpfad, was rund eine Größenordnung an Kapazität kostet. Entweder
+  hat der NIC-Treiber keine native XDP-Unterstützung, oder `dataplane.xdp_mode: generic` ist
+  gesetzt.
+- **`no_pin_path` / `no_program`** — nichts ist angebunden, und hier war auch nie etwas. Prüfen
+  Sie, ob `dataplane.enabled` auf `true` steht und ob der Pin-Pfad im Bericht derselbe ist wie in
+  Ihrer Konfiguration (der Bericht nennt immer, woher er den Pfad hat).
+- **`detached`** — Programm und Maps sind gepinnt und intakt, aber es besteht keine Anbindung an
+  ein aktives Netzwerkgerät. Stellen Sie sicher, dass die konfigurierten Interfaces existieren
+  (`ip link`), und starten Sie dann Kapkan neu.
+- **`not_bpffs`** — der Pin-Pfad liegt nicht auf einem bpffs, dort kann also niemals etwas
+  gepinnt werden. Mounten Sie es (`mount -t bpf bpffs /sys/fs/bpf`), und falls Ihre Unit
+  `ProtectKernelTunables=yes` setzt, entfernen Sie das — es mountet `/sys/fs/bpf`
+  schreibgeschützt.
+- **`torn` / `schema_skew`** — der Pin-Satz ist unvollständig, oder die gepinnten Maps haben eine
+  andere Map-Schema-Version als die Binary (ein Upgrade, das noch nicht neu gestartet wurde).
+  Starten Sie Kapkan neu: es weigert sich, eines von beiden zu übernehmen, und baut neu auf.
+  Dynamische Mitigationsregeln aus dem alten Prozess gehen beim Neuaufbau verloren; die statische
+  Policy nicht, sie stammt aus der Konfigurationsdatei.
+- **`attach_unknown`** — Sie laufen nicht unter dem Benutzer, unter dem der Daemon läuft. Das
+  Lesen eines `bpf_link`-Pins erfordert Schreibrechte darauf, deshalb sieht ein Leser ohne
+  Privilegien zwar die Maps, aber keine Anbindungen. Führen Sie den Befehl erneut mit `sudo` aus.
+
+Wenn dort `ENFORCING`, kein Dry-Run, auf dem richtigen Interface steht, dann läuft das Programm,
+und als Nächstes sind die Regeln an der Reihe: Der Block `VERDICTS` zeigt, welcher Zweig das
+Schicksal des Traffics tatsächlich entschieden hat. Denken Sie daran, dass der Block
+`OBSERVATIONS` *zusätzlich zu* diesen Urteilen hochgezählt wird, nicht an ihrer Stelle — er darf
+deshalb nicht in die Summe eingerechnet werden. Vollständige Referenz zu Flags und Exit-Codes:
+[CLI](/docs/cli#dataplane-status).
 
 ## Eine Sperre wurde abgelehnt (HTTP 409)
 

@@ -1,20 +1,29 @@
 export const metadata = {
   title: "Référence CLI",
   description:
-    "Chaque option de ligne de commande du binaire kapkan — chemin de configuration, format et niveau des journaux, le pid file et le contrôle de processus `-s` à la manière de nginx, et les sous-commandes utilitaires de schéma/validation.",
+    "Chaque option de ligne de commande du binaire kapkan — chemin de configuration, format et niveau des journaux, le pid file et le contrôle de processus `-s` à la manière de nginx, les options utilitaires de schéma/validation, et la commande `dataplane status`.",
 };
 
 # Référence CLI
 
-Kapkan est un binaire unique. Tout ce qu'il fait est sélectionné par des options de ligne de commande
-au démarrage — il n'existe aucune sous-commande au-delà des modes utilitaires ci-dessous. Tous les
-journaux vont vers **stderr** ; l'API REST et les métriques Prometheus sont servies via HTTP sur
-`api.listen` (par défaut `127.0.0.1:8080`), tandis que les options utilitaires (`-version`,
-`-dump-schema`) écrivent leur sortie sur **stdout**.
+Kapkan est un binaire unique. Ce qu'il fait est sélectionné par des options de ligne de commande au
+démarrage, auxquelles s'ajoutent un petit nombre de **commandes** qui inspectent le système en cours
+d'exécution puis se terminent. Tous les journaux vont vers **stderr** ; l'API REST et les métriques
+Prometheus sont servies via HTTP sur `api.listen` (par défaut `127.0.0.1:8080`), tandis que les
+options utilitaires (`-version`, `-dump-schema`) et les commandes écrivent leur sortie sur
+**stdout**.
 
 ```sh
-kapkan [flags]
+kapkan [flags]                     # run the daemon
+kapkan [flags] <command> [args]    # run a command and exit
 ```
+
+Les options globales se placent **avant** la commande ; les options propres à la commande viennent
+après elle. Ainsi, `kapkan -config /etc/kapkan/config.yaml dataplane status -json` lit le chemin de
+configuration depuis le `-config` global et passe `-json` à `dataplane status`. Une option qui se
+termine déjà d'elle-même (`-version`, `-check-config`, `-dump-schema`, `-check-update`, `-s`) ne peut
+pas être combinée avec une commande — Kapkan refuse la combinaison plutôt que d'en honorer
+silencieusement une seule.
 
 ## Options
 
@@ -148,8 +157,93 @@ Releases et n'envoie que la requête elle-même (votre adresse IP et un User-Age
 l'identité du nœud, la configuration ni les données d'attaque. La vérification périodique en cours de
 processus est **désactivée par défaut** ; cette option fonctionne indépendamment de ce réglage.
 
+## Commandes
+
+### `dataplane status`
+
+```sh
+kapkan dataplane status              # human-readable report
+kapkan dataplane status -json        # the same inspection as JSON
+```
+
+Indique si le plan de données XDP filtre réellement, et pourquoi il ne le fait pas le cas échéant.
+Deux propriétés la rendent utilisable en plein incident :
+
+- **Elle est strictement en lecture seule.** Elle ouvre le programme et les maps épinglés en lecture
+  seule — les descripteurs de fichier des maps portent `BPF_F_RDONLY`, de sorte que le *noyau*
+  lui-même refuse toute écriture au travers — et elle ne charge jamais de programme, ne crée aucune
+  map, n'écrit aucune valeur de map, n'attache ni ne détache rien et ne supprime aucun épinglage. Le
+  démarrage du démon reprend un jeu d'objets épinglés existant ou le reconstruit ; cette commande ne
+  le peut pas, elle ne peut donc jamais vous coûter les règles d'atténuation que vous cherchez
+  justement à diagnostiquer.
+- **Elle fonctionne alors que le démon est arrêté.** C'est le cas principal, pas un bonus : avec la
+  valeur par défaut `dataplane.on_exit: keep`, le noyau continue d'appliquer la politique statique
+  sans aucun processus Kapkan, et cette commande lit directement les objets épinglés pour vous le
+  dire.
+
+Le rapport commence par le verdict et le remède, puis donne le détail : les interfaces attachées avec
+le mode réellement en vigueur, les versions du noyau et du schéma des maps, la génération active, le
+nombre de règles statiques et dynamiques, la taille / l'occupation / la mémoire de chaque map,
+l'indicateur dry-run et les compteurs de verdicts.
+
+Deux points de cette sortie méritent d'être connus à l'avance :
+
+- **Le mode d'attachement `GENERIC` est signalé dès la première ligne.** `xdp_mode: auto` retombe du
+  chemin pilote vers le chemin générique (skb) sans échouer, et cela coûte environ un ordre de
+  grandeur de capacité ; c'est donc une information mise en avant, et non un champ parmi vingt.
+- **Les compteurs de verdicts sont affichés en deux blocs.** Les compteurs *terminaux* partitionnent
+  le trafic — exactement un est incrémenté par paquet — ils sont donc totalisés. Les compteurs
+  d'*observation* sont incrémentés *en plus* d'un compteur terminal pour le même paquet
+  (`dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`) ; les ajouter
+  au total produirait un nombre de paquets supérieur au nombre de paquets réels, ils sont donc listés
+  séparément et jamais inclus dans la somme.
+
+| Option | Valeur par défaut | Description |
+| --- | --- | --- |
+| `-json` | `false` | Affiche l'inspection complète au format JSON, y compris le champ `state` dont sont dérivés les codes de sortie. |
+| `-pin-path <dir>` | depuis `-config` | Le répertoire bpffs à inspecter. Par défaut `dataplane.pin_path` issu de la configuration désignée par le `-config` global, avec repli sur `/sys/fs/bpf/kapkan` lorsque ce fichier ne peut pas être lu. Le rapport indique toujours quel chemin il a examiné et d'où vient ce chemin. |
+
+#### Codes de sortie
+
+| Code de sortie | État signalé | Signification et ce qu'il faut faire |
+| --- | --- | --- |
+| `0` | `enforcing` | Au moins une interface possède un attachement XDP actif. Rien à faire. |
+| `10` | `no_pin_path`, `no_program`, `detached` | Le plan de données **ne filtre pas**, et rien n'est cassé pour autant — soit il n'a jamais tourné ici, soit il est arrêté, soit ses attachements ont disparu. Démarrez Kapkan, ou vérifiez que les interfaces configurées existent. |
+| `11` | `not_bpffs`, `torn`, `schema_skew` | Quelque chose doit être **corrigé** avant qu'il puisse fonctionner : bpffs n'est pas monté, le jeu d'objets épinglés est incomplet, ou les maps épinglées ont une version de schéma différente de celle de ce binaire. La raison affichée nomme le correctif (monter bpffs ; redémarrer Kapkan). |
+| `1` | `attach_unknown`, ou toute erreur de lecture | La commande **n'a pas pu répondre** — le plus souvent un problème de permission (voir ci-dessous). Délibérément pas signalé comme « ne filtre pas », car il se peut très bien qu'il filtre. |
+| `2` | — | Erreur d'invocation : une option, une commande inconnue ou un argument superflu. |
+
+Seul `enforcing` se termine avec le code `0` : `kapkan dataplane status >/dev/null` s'intègre donc
+directement dans un contrôle de supervision. La convention du `10` pour un état porteur de sens est
+la même que celle utilisée par [`-check-update`](#vérifier-les-mises-à-jour).
+
+#### Permissions
+
+Lire des objets épinglés coûte bien moins cher que d'en créer : sur un noyau où
+`kernel.unprivileged_bpf_disabled=0`, **aucune capability n'est requise** — ni `CAP_NET_ADMIN` ni
+`CAP_PERFMON`, dont le démon a besoin pour *charger et attacher*, n'entrent en jeu. Ce qui
+conditionne réellement l'accès :
+
+- Le répertoire d'épinglage est en mode `0700` et appartient à l'utilisateur sous lequel tourne le
+  démon ; en pratique, vous voudrez donc `sudo kapkan dataplane status`.
+- Sur un noyau où `kernel.unprivileged_bpf_disabled` est activé — la valeur par défaut sur Debian et
+  Ubuntu — `bpf(2)` exige en plus `CAP_BPF`, même pour ouvrir un épinglage existant.
+- **Les épinglages de link exigent un droit d'écriture, pas seulement de lecture :** le noyau refuse
+  `BPF_OBJ_GET` sur un `bpf_link` à moins que le descripteur ne soit ouvert en `O_RDWR`. Un lecteur
+  non-root voit donc toutes les maps et aucun attachement, ce qui est signalé comme `attach_unknown`
+  (code de sortie `1`) plutôt que comme « détaché ».
+
+<Callout type="info" title="Elle ne modifie jamais ce qu'elle diagnostique">
+C'est pourquoi `dataplane status` est un chemin de code séparé, en lecture seule, plutôt qu'une
+réutilisation du code de démarrage du démon. Le démarrage du plan de données reprend un jeu d'objets
+épinglés existant — ou, lorsque le schéma ne correspond pas, le détruit et le reconstruit, en jetant
+toutes les règles d'atténuation dynamiques présentes dans le noyau. Un diagnostic capable de faire
+cela en pleine attaque serait pire que pas de diagnostic du tout.
+</Callout>
+
 ## Étapes suivantes
 
 - [Démarrage rapide](/docs/quickstart) — téléchargez Kapkan et exécutez-le en dry-run.
 - [Référence de configuration](/docs/configuration) — chaque clé du fichier YAML.
 - [Déploiement en production](/docs/deployment) — l'unité systemd et ses options.
+- [Dépannage](/docs/troubleshooting) — des correctifs indexés par symptôme, y compris pour le plan de données.

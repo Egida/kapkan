@@ -56,6 +56,20 @@ délibérément pratiques, pas conformes à la précision d'un RFC.
 | **RTBH / trou noir** | Remotely-Triggered Black Hole (trou noir déclenché à distance) — annoncer le `/32` (ou `/128`) de la victime avec un discard next-hop pour que les routeurs écartent *tout* le trafic vers elle. Brutal mais instantané. Le réglage par défaut de Kapkan. |
 | **FlowSpec** | Une extension BGP (RFC 8955/8956) qui annonce un *filtre* — protocole, ports, taille de paquet — afin que les routeurs n'écartent que le trafic d'attaque et laissent le reste de l'hôte joignable. |
 | **Scrubbing / déviation** | Au lieu d'écarter le trafic de la victime, le rerouter à travers un « centre de scrubbing » qui filtre l'attaque et renvoie le trafic propre. Nécessite un service de scrubbing que vous exploitez ou achetez déjà. |
+| **Plan de données (data plane)** | La partie d'un système qui manipule les paquets un par un, par opposition au *plan de contrôle* qui décide de ce qu'il faut en faire. Kapkan est un plan de contrôle ; son plan de données optionnel dans le noyau lui permet d'écarter aussi les paquets lui-même. |
+
+## Filtrage dans le noyau
+
+Ces termes ne comptent que si vous exécutez le plan de données optionnel de Kapkan dans le noyau.
+
+| Terme | Signification |
+| --- | --- |
+| **eBPF / BPF** | Un moyen de charger de petits programmes vérifiés dans un noyau Linux en cours d'exécution — sans module noyau, sans redémarrage. Le noyau refuse de charger tout programme dont il ne peut pas prouver qu'il est sans danger et qu'il se termine. |
+| **XDP** | eXpress Data Path — le tout premier point où un programme eBPF peut voir un paquet entrant. Son verdict (laisser passer, écarter, rediriger) est rendu avant que le noyau ne construise sa propre structure de paquet, ce qui rend l'écartement peu coûteux à cet endroit. |
+| **XDP natif / générique** | Selon que le pilote réseau exécute lui-même le programme (native, nécessite la prise en charge du pilote) ou que le noyau l'exécute un peu plus tard pour le compte du pilote (generic, fonctionne partout). |
+| **BPF map** | Une table clé/valeur partagée entre un programme eBPF et l'espace utilisateur. Les règles de Kapkan vivent dans des maps : le moteur les écrit, le programme du noyau les lit pour chaque paquet. |
+| **bpffs** | Un petit système de fichiers, normalement monté sur `/sys/fs/bpf`, où les programmes et les maps peuvent être « épinglés » afin de survivre au processus qui les a créés. |
+| **BTF** | BPF Type Format — les informations de type que le noyau publie sur lui-même, afin qu'un programme compilé ailleurs puisse être chargé de façon portable d'une version de noyau à l'autre. |
 
 ## Concepts Kapkan
 

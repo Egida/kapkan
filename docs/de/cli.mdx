@@ -1,20 +1,28 @@
 export const metadata = {
   title: "CLI-Referenz",
   description:
-    "Jeder Kommandozeilen-Flag des Kapkan-Binarys — Konfigurationspfad, Log-Format und -Level, die pid-Datei und die nginx-artige `-s`-Prozesssteuerung sowie die Schema-/Validierungs-Hilfsmodi.",
+    "Jeder Kommandozeilen-Flag des Kapkan-Binarys — Konfigurationspfad, Log-Format und -Level, die pid-Datei und die nginx-artige `-s`-Prozesssteuerung, die Schema-/Validierungs-Hilfsmodi sowie der Befehl `dataplane status`.",
 };
 
 # CLI-Referenz
 
-Kapkan ist ein einzelnes Binary. Alles, was es tut, wird beim Start über Kommandozeilen-Flags
-ausgewählt — es gibt keine Subcommands über die Hilfsmodi unten hinaus. Alle Logs gehen
-nach **stderr**; die REST-API und die Prometheus-Metriken werden über HTTP auf `api.listen`
-(Standard `127.0.0.1:8080`) bereitgestellt, während die Hilfs-Flags (`-version`, `-dump-schema`)
-ihre Ausgabe nach **stdout** schreiben.
+Kapkan ist ein einzelnes Binary. Was es tut, wird beim Start über Kommandozeilen-Flags
+ausgewählt, dazu kommt eine kleine Zahl von **Befehlen**, die das laufende System inspizieren und
+sich dann beenden. Alle Logs gehen nach **stderr**; die REST-API und die Prometheus-Metriken
+werden über HTTP auf `api.listen` (Standard `127.0.0.1:8080`) bereitgestellt, während die
+Hilfs-Flags (`-version`, `-dump-schema`) und die Befehle ihre Ausgabe nach **stdout** schreiben.
 
 ```sh
-kapkan [flags]
+kapkan [flags]                     # run the daemon
+kapkan [flags] <command> [args]    # run a command and exit
 ```
+
+Globale Flags stehen **vor** dem Befehl; die eigenen Flags des Befehls folgen ihm.
+`kapkan -config /etc/kapkan/config.yaml dataplane status -json` liest den Konfigurationspfad also
+aus dem globalen `-config` und übergibt `-json` an `dataplane status`. Ein Flag, das sich ohnehin
+selbst beendet (`-version`, `-check-config`, `-dump-schema`, `-check-update`, `-s`), lässt sich
+nicht mit einem Befehl kombinieren — Kapkan verweigert die Kombination, statt stillschweigend nur
+eines von beiden zu befolgen.
 
 ## Flags
 
@@ -150,8 +158,92 @@ User-Agent) — niemals Knotenidentität, Konfiguration oder Angriffsdaten. Die 
 In-Process-Prüfung ist **standardmäßig deaktiviert**; dieses Flag funktioniert unabhängig von
 dieser Einstellung.
 
+## Befehle
+
+### `dataplane status`
+
+```sh
+kapkan dataplane status              # human-readable report
+kapkan dataplane status -json        # the same inspection as JSON
+```
+
+Meldet, ob die XDP-Datenebene tatsächlich filtert — und, falls nicht, warum nicht. Zwei
+Eigenschaften machen den Befehl während eines Vorfalls brauchbar:
+
+- **Er ist strikt lesend.** Er öffnet das gepinnte Programm und die Maps nur lesend — die
+  Map-Dateideskriptoren tragen `BPF_F_RDONLY`, sodass der *Kernel* selbst einen Schreibzugriff
+  darüber verweigert — und er lädt niemals ein Programm, legt keine Map an, schreibt keinen
+  Map-Wert, hängt sich nicht an oder ab und entfernt keinen Pin. Der Start des Daemons übernimmt
+  einen bestehenden Pin-Satz oder baut ihn neu auf; dieser Befehl kann das nicht und kann Sie
+  deshalb niemals die Mitigation-Regeln kosten, die Sie gerade diagnostizieren wollen.
+- **Er funktioniert auch bei gestopptem Daemon.** Das ist der Hauptfall, keine Dreingabe: mit dem
+  Standard `dataplane.on_exit: keep` setzt der Kernel die statische Policy ganz ohne
+  Kapkan-Prozess weiter durch, und dieser Befehl liest die Pins direkt aus, um Ihnen genau das
+  mitzuteilen.
+
+Der Bericht beginnt mit dem Urteil und der Abhilfe und liefert dann die Details: angebundene
+Interfaces mit dem tatsächlich wirksamen Modus, die Kernel- und Map-Schema-Versionen, die aktive
+Generation, die Anzahl statischer und dynamischer Regeln, Größe/Belegung/Speicher je Map, das
+Dry-Run-Flag und die Verdict-Zähler.
+
+Zwei Dinge an dieser Ausgabe sollten Sie vorab kennen:
+
+- **Der Attach-Modus `GENERIC` wird in der ersten Zeile hervorgehoben.** `xdp_mode: auto` fällt
+  ohne Fehlschlag vom Treiberpfad auf den generischen (skb-)Pfad zurück, und das kostet rund eine
+  Größenordnung an Kapazität — deshalb ist es eine Schlagzeile und kein Feld unter zwanzig.
+- **Die Verdict-Zähler werden in zwei Blöcken ausgegeben.** Die *terminalen* Zähler partitionieren
+  den Verkehr — pro Paket wird genau einer erhöht —, deshalb werden sie aufsummiert. Die
+  *Beobachtungs*-Zähler werden für dasselbe Paket *zusätzlich* zu einem terminalen Zähler erhöht
+  (`dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`); sie in die
+  Summe aufzunehmen ergäbe eine Paketzahl, die größer wäre als die Zahl der Pakete — daher werden
+  sie getrennt aufgeführt und nie mitgezählt.
+
+| Flag | Standard | Beschreibung |
+| --- | --- | --- |
+| `-json` | `false` | Gibt die gesamte Inspektion als JSON aus, einschließlich des Feldes `state`, aus dem die Exit-Codes abgeleitet werden. |
+| `-pin-path <dir>` | aus `-config` | Das zu inspizierende bpffs-Verzeichnis. Standard ist `dataplane.pin_path` aus der Konfiguration, die das globale `-config` benennt; lässt sich diese Datei nicht lesen, wird auf `/sys/fs/bpf/kapkan` zurückgefallen. Der Bericht nennt immer den Pfad, den er betrachtet hat, und woher dieser Pfad stammt. |
+
+#### Exit-Codes
+
+| Exit-Code | Gemeldeter Zustand | Bedeutung und was zu tun ist |
+| --- | --- | --- |
+| `0` | `enforcing` | Mindestens ein Interface hat eine aktive XDP-Anbindung. Nichts zu tun. |
+| `10` | `no_pin_path`, `no_program`, `detached` | Die Datenebene **filtert nicht**, und dabei ist nichts kaputt — sie lief hier noch nie, oder sie ist gestoppt, oder ihre Anbindungen sind weg. Starten Sie Kapkan oder prüfen Sie, ob die konfigurierten Interfaces existieren. |
+| `11` | `not_bpffs`, `torn`, `schema_skew` | Es muss erst etwas **behoben** werden, bevor sie arbeiten kann: bpffs ist nicht gemountet, der Pin-Satz ist unvollständig, oder die gepinnten Maps haben eine andere Schema-Version als dieses Binary. Der ausgegebene Grund benennt die Abhilfe (bpffs mounten; Kapkan neu starten). |
+| `1` | `attach_unknown` oder ein beliebiger Lesefehler | Der Befehl **konnte keine Antwort geben** — meist wegen fehlender Berechtigung (siehe unten). Bewusst nicht als „filtert nicht" gemeldet, denn sie filtert möglicherweise sehr wohl. |
+| `2` | — | Aufruffehler: ein unbekanntes Flag, ein unbekannter Befehl oder ein überzähliges Argument. |
+
+Nur `enforcing` endet mit `0`, sodass sich `kapkan dataplane status >/dev/null` direkt in eine
+Monitoring-Prüfung einfügt. Die Konvention, `10` für einen aussagekräftigen Zustand zu verwenden,
+ist dieselbe wie bei [`-check-update`](#nach-updates-suchen).
+
+#### Berechtigungen
+
+Pins zu lesen ist weit billiger, als sie anzulegen: auf einem Kernel mit
+`kernel.unprivileged_bpf_disabled=0` ist **überhaupt keine Capability** erforderlich — weder
+`CAP_NET_ADMIN` noch `CAP_PERFMON`, die der Daemon zum *Laden und Anhängen* braucht, sind im
+Spiel. Was den Zugriff tatsächlich begrenzt:
+
+- Das Pin-Verzeichnis hat den Modus `0700` und gehört dem Benutzer, unter dem der Daemon läuft —
+  in der Praxis wollen Sie also `sudo kapkan dataplane status`.
+- Auf einem Kernel mit gesetztem `kernel.unprivileged_bpf_disabled` — der Standard auf Debian und
+  Ubuntu — benötigt `bpf(2)` zusätzlich `CAP_BPF`, selbst um einen bestehenden Pin zu öffnen.
+- **Link-Pins brauchen Schreib-, nicht nur Leserechte:** Der Kernel verweigert `BPF_OBJ_GET` auf
+  einem `bpf_link`, sofern der Deskriptor nicht mit `O_RDWR` geöffnet wird. Ein Leser ohne
+  root-Rechte sieht daher jede Map und keine Anbindung — das wird als `attach_unknown` (Exit `1`)
+  gemeldet und nicht als „detached".
+
+<Callout type="info" title="Er verändert niemals das, was er diagnostiziert">
+Deshalb ist `dataplane status` ein eigener, rein lesender Pfad und keine Wiederverwendung des
+Startcodes des Daemons. Der Start der Datenebene übernimmt einen bestehenden Pin-Satz — oder reißt
+ihn, wenn das Schema nicht passt, ab und baut ihn neu auf, wobei jede dynamische Mitigation-Regel
+im Kernel verworfen wird. Eine Diagnose, die das mitten im Angriff tun könnte, wäre schlimmer als
+gar keine Diagnose.
+</Callout>
+
 ## Nächste Schritte
 
 - [Schnellstart](/docs/quickstart) — Kapkan herunterladen und im Dry-Run betreiben.
 - [Konfigurationsreferenz](/docs/configuration) — jeder Schlüssel in der YAML-Datei.
 - [Produktiv-Deployment](/docs/deployment) — die systemd-Unit und ihre Flags.
+- [Fehlerbehebung](/docs/troubleshooting) — nach Symptomen sortierte Lösungen, einschließlich der Datenebene.
