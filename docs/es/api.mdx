@@ -119,9 +119,9 @@ contienen objetos `Attack`.
 | `tenant` | string | El tenant del grupo propietario, cuando hay uno etiquetado (consulta [Multi-tenencia](/docs/multi-tenancy)). |
 | `direction` | string | `incoming` o `outgoing`. |
 | `metric` | string | La métrica que se disparó, p. ej. `pps`, `mbps`, `tcp_syn_pps`. |
-| `rate` | number | La tasa observada en el momento de la detección, en la unidad de la métrica. |
+| `rate` | number | La tasa de la métrica que se disparó, en su unidad: la medición actual del motor mientras el ataque está activo, y la última antes de terminar después. |
 | `threshold` | number | El umbral que se cruzó. |
-| `rates` | object | Desglose completo de tasas por protocolo (ver más abajo). |
+| `rates` | object | Desglose completo de tasas por protocolo (ver más abajo), de la misma medición que `rate`. |
 | `active` | bool | `true` mientras está en curso. |
 | `ban_state` | string | `active`, `withdrawn` o `rejected`. Se omite cuando no hay baneo. |
 | `method` | string | Método de mitigación: `blackhole`, `flowspec` o `divert`. Se omite cuando no hay baneo. |
@@ -182,6 +182,13 @@ contienen objetos `Attack`.
   "recent": []
 }
 ```
+
+Mientras un ataque está activo, `rate` y `rates` se releen del motor en cada solicitud, de
+modo que siguen al ataque en lugar de informar el instante de su detección — cuando la
+ventana deslizante contenía un solo segundo y subestimaba una inundación sostenida por un
+factor de varias veces. `metric` y `threshold` se mantienen tal como se capturaron en la
+detección: nombran lo que se disparó, y el motor juzga el final del ataque contra los
+umbrales congelados en su inicio.
 
 El objeto `rates` lleva el trío base (`pps`, `mbps`, `flows_per_sec`) más los
 campos por protocolo que sean distintos de cero: `tcp_pps`, `tcp_mbps`, `udp_pps`, `udp_mbps`,

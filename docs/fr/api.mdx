@@ -124,9 +124,9 @@ en premier). Les deux tableaux contiennent des objets `Attack`.
 | `tenant` | string | Le tenant du groupe propriétaire, lorsqu'il est étiqueté (voir [Multi-tenant](/docs/multi-tenancy)). |
 | `direction` | string | `incoming` ou `outgoing`. |
 | `metric` | string | La métrique qui a déclenché, p. ex. `pps`, `mbps`, `tcp_syn_pps`. |
-| `rate` | number | Le débit observé à la détection, dans l'unité de la métrique. |
+| `rate` | number | Le débit de la métrique déclenchante, dans son unité : la mesure courante du moteur tant que l'attaque est active, la dernière avant sa fin ensuite. |
 | `threshold` | number | Le seuil franchi. |
-| `rates` | object | Ventilation complète des débits par protocole (voir ci-dessous). |
+| `rates` | object | Ventilation complète des débits par protocole (voir ci-dessous), issue de la même mesure que `rate`. |
 | `active` | bool | `true` tant que l'attaque est en cours. |
 | `ban_state` | string | `active`, `withdrawn` ou `rejected`. Omis lorsqu'il n'y a pas de bannissement. |
 | `method` | string | Méthode de mitigation : `blackhole`, `flowspec` ou `divert`. Omis lorsqu'il n'y a pas de bannissement. |
@@ -187,6 +187,13 @@ en premier). Les deux tableaux contiennent des objets `Attack`.
   "recent": []
 }
 ```
+
+Tant qu'une attaque est active, `rate` et `rates` sont relus depuis le moteur à chaque
+requête : ils suivent donc l'attaque au lieu de rapporter l'instant de sa détection — quand
+la fenêtre glissante ne contenait qu'une seconde et sous-estimait un flood soutenu d'un
+facteur plusieurs. `metric` et `threshold` restent tels qu'ils ont été capturés à la
+détection : ils nomment ce qui a déclenché, et le moteur juge la fin de l'attaque d'après
+les seuils figés à son début.
 
 L'objet `rates` porte le trio de base (`pps`, `mbps`, `flows_per_sec`) plus les champs
 par protocole qui sont non nuls : `tcp_pps`, `tcp_mbps`, `udp_pps`, `udp_mbps`,

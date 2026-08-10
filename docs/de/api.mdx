@@ -124,9 +124,9 @@ Arrays enthalten `Attack`-Objekte.
 | `tenant` | string | Der Tenant der besitzenden Gruppe, sofern einer zugewiesen ist (siehe [Mandantenfähigkeit](/docs/multi-tenancy)). |
 | `direction` | string | `incoming` oder `outgoing`. |
 | `metric` | string | Die Metrik, die ausgelöst hat, z. B. `pps`, `mbps`, `tcp_syn_pps`. |
-| `rate` | number | Die bei der Erkennung beobachtete Rate, in der Einheit der Metrik. |
+| `rate` | number | Die Rate der auslösenden Metrik, in deren Einheit: solange der Angriff aktiv ist die aktuelle Messung der Engine, danach die letzte vor seinem Ende. |
 | `threshold` | number | Der überschrittene Schwellenwert. |
-| `rates` | object | Vollständige Ratenaufschlüsselung je Protokoll (siehe unten). |
+| `rates` | object | Vollständige Ratenaufschlüsselung je Protokoll (siehe unten), aus derselben Messung wie `rate`. |
 | `active` | bool | `true`, solange der Angriff andauert. |
 | `ban_state` | string | `active`, `withdrawn` oder `rejected`. Entfällt, wenn keine Sperre vorliegt. |
 | `method` | string | Mitigationsmethode: `blackhole`, `flowspec` oder `divert`. Entfällt, wenn keine Sperre vorliegt. |
@@ -187,6 +187,13 @@ Arrays enthalten `Attack`-Objekte.
   "recent": []
 }
 ```
+
+Solange ein Angriff aktiv ist, werden `rate` und `rates` bei jeder Anfrage neu aus der
+Engine gelesen. Sie folgen damit dem Angriff, statt den Moment seiner Erkennung zu melden —
+als das Zeitfenster nur eine Sekunde enthielt und einen anhaltenden Flood um ein Mehrfaches
+zu niedrig auswies. `metric` und `threshold` bleiben, wie sie bei der Erkennung erfasst
+wurden: sie benennen den Auslöser, und die Engine beurteilt das Ende des Angriffs anhand der
+zu seinem Beginn eingefrorenen Schwellenwerte.
 
 Das `rates`-Objekt führt das Basistrio (`pps`, `mbps`, `flows_per_sec`) sowie die Felder je
 Protokoll, die ungleich null sind: `tcp_pps`, `tcp_mbps`, `udp_pps`, `udp_mbps`, `icmp_pps`,
