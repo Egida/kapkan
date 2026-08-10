@@ -4,11 +4,16 @@ import { useState } from "react";
 
 // Real operator-console screenshots, framed in a browser window. Tabs swap the
 // image; all four are emitted so switching is instant (no flash on first view).
+//
+// w/h are the images' intrinsic CSS sizes (the files themselves are 2×) and they
+// reserve layout space, so a wrong value shifts the page as the image loads.
+// engine/scripts/capture-console.sh prints the exact numbers to paste here after
+// a recapture — the heights track content, so they change whenever the scene does.
 const TABS = [
-  { id: "overview", label: "Overview", src: "/assets/screenshots/console-overview.png", w: 1440, h: 1021 },
-  { id: "attacks", label: "Attacks", src: "/assets/screenshots/console-attacks.png", w: 1440, h: 618 },
-  { id: "hosts", label: "Hosts", src: "/assets/screenshots/console-hosts.png", w: 1440, h: 740 },
-  { id: "mitigation", label: "Mitigation", src: "/assets/screenshots/console-mitigation.png", w: 1440, h: 769 },
+  { id: "overview", label: "Overview", src: "/assets/screenshots/console-overview.png", w: 1440, h: 1049 },
+  { id: "attacks", label: "Attacks", src: "/assets/screenshots/console-attacks.png", w: 1440, h: 644 },
+  { id: "hosts", label: "Hosts", src: "/assets/screenshots/console-hosts.png", w: 1440, h: 768 },
+  { id: "mitigation", label: "Mitigation", src: "/assets/screenshots/console-mitigation.png", w: 1440, h: 973 },
 ] as const;
 
 export function ConsoleShowcase() {
