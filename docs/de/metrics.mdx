@@ -31,8 +31,10 @@ Binden Sie den Listener entsprechend — siehe [Authentifizierung](/docs/authent
 | `kapkan_engine_tracked_hosts` | — | Gauge der aktuell von der Engine verfolgten Hosts. |
 | `kapkan_engine_boundary_debug_bytes_total` | `exporter`, `iface`, `dir` | Sampling-korrigierte Bytes zu (`dir=in`) oder von (`dir=out`) geschützten Hosts, aufgeschlüsselt nach `exporter` und Interface (`iface` = ifIndex). Erscheint nur, solange [`sampling.boundary_debug: true`](/docs/configuration) gilt — eine vorübergehende Hilfe, um Ihre Edge-Interfaces zu finden. Sie ist NICHT kardinalitätsbegrenzt; deaktivieren Sie sie wieder, nachdem Sie die Aufschlüsselung gelesen haben. |
 | `kapkan_engine_events_dropped_total` | `kind` | Lebenszyklus-Ereignisse der Engine, die wegen eines vollen Ereigniskanals verworfen wurden, nach `kind` (`attack_started`, `attack_ongoing`, `attack_ended`). Ein verworfenes `attack_started` oder `attack_ended` ist ein echter Verlust — die Mitigation oder Benachrichtigung dieser Episode entfällt; ein verworfener `attack_ongoing`-Heartbeat heilt sich im nächsten Erkennungsfenster selbst. Sollte bei null bleiben; ein steigender Zähler bedeutet, dass der Ereignis-Consumer nicht mithält. |
-| `kapkan_mitigate_announced_routes` | `mode` | Gauge der aktuell angekündigten Blackhole-Routen, aufgeteilt nach den Modi `real` / `dry_run`. |
+| `kapkan_mitigate_announced_routes` | `mode` | Gauge der aktuell angekündigten Blackhole-Routen, aufgeteilt nach den Modi `real` / `dry_run`. Zählt nur die Stufen, die einen Peer um Durchsetzung bitten (`blackhole`, `divert`, `flowspec`); Sperren auf der lokalen `dataplane`-Stufe stehen in `kapkan_mitigate_dataplane_bans`. |
 | `kapkan_mitigate_flowspec_rules` | `mode` | Gauge der aktuell angekündigten [FlowSpec](/docs/flowspec)-Regeln, aufgeteilt nach den Modi `real` / `dry_run`. Behalten Sie diesen Wert im Verhältnis zum FlowSpec-Routenlimit Ihrer Router im Auge. |
+| `kapkan_mitigate_dataplane_bans` | `mode` | Gauge der Sperren, die derzeit von der XDP-Datenebene dieses Hosts durchgesetzt werden statt von einem Upstream, aufgeteilt nach den Modi `real` / `dry_run`. Diese kündigen keinem Peer etwas an und filtern auch während eines BGP-Ausfalls weiter. |
+| `kapkan_mitigate_dataplane_rules` | `mode` | Gauge der Regeln, die diese Sperren im Kernel installiert haben, aufgeteilt nach den Modi `real` / `dry_run`. Eine Sperre steuert 1 Regel bei, wenn der Angriff sauber als Einzelvektor klassifiziert wurde, und bis zu 8 bei einem gemischten oder unklassifizierten — der Wert liegt also zwischen `kapkan_mitigate_dataplane_bans` und dem Achtfachen davon. Behalten Sie ihn im Verhältnis zu `dataplane.limits.max_dynamic_rules` im Auge, so wie `kapkan_mitigate_flowspec_rules` im Verhältnis zum Routenlimit eines Upstreams. |
 | `kapkan_mitigate_bans_rejected_total` | `reason` | Sperren, die durch eine Sicherheitsregel abgelehnt wurden, nach `reason`: `max_active_bans`, `blast_radius_fraction`, `blast_radius_rate` oder `max_active_prefix_bans` (carpet). |
 | `kapkan_mitigate_fallback_total` | `from`, `to` | Mitigation-Ankündigungen, die auf eine fallback-Methode heruntergestuft wurden, weil der Peer die primäre Methode abgelehnt hat, nach `from`/`to`. Eine Reihe mit `from="flowspec"` und einem Wert ungleich null kennzeichnet Upstreams, die FlowSpec nicht berücksichtigen. |
 | `kapkan_notify_notifications_total` | `channel`, `result` | Versuchte Benachrichtigungen, nach Kanal (telegram, slack, email, webhook, exec) und `result` (`ok`, `error` oder `dropped`, wenn die Zustellungs-Slots ausgelastet waren). |
@@ -44,6 +46,25 @@ Das Label `mode` an `kapkan_mitigate_announced_routes` ist der schnellste Weg, d
 auf einen Blick zu bestätigen: Solange `dry_run: true` gilt, wird jede potenzielle Route unter
 `mode="dry_run"` gezählt und nichts unter `mode="real"`. Siehe [Mitigation](/docs/mitigation) und das
 [Sicherheitsmodell](/docs/safety).
+
+Die beiden `kapkan_mitigate_dataplane_*`-Gauges sind die Aufstellung des Mitigators darüber, was er
+installiert hat, zugeordnet zu den Sperren, denen sie gehören, und abgelegt unter dem jeweils
+eingefrorenen Dry-run-Flag der Sperre. `kapkan_dataplane_rules` misst dieselbe Größe vom anderen
+Ende her: jede Regel, die der Kernel tatsächlich ausführt — die statischen Regeln Ihrer
+Konfiguration plus eben jene dynamischen — abgelegt unter dem Flag der Datenebene selbst.
+Unter `mode="real"` sollte `kapkan_mitigate_dataplane_rules` also der dynamischen Hälfte von
+`kapkan_dataplane_rules` folgen.
+
+Zeichnen Sie beide auf und vergleichen Sie sie, statt sie zu addieren. Es sind zwei unabhängige Wege
+zu derselben Zahl, und eine anhaltende Lücke zwischen ihnen **im Modus `real`** ist ein Fehler — ein
+fehlgeschlagener Widerruf oder Regeln, die der Kernel unter einer Sperre hat auslaufen lassen, die
+sich selbst noch für aktiv hält —, den eine einzelne Summe genau verbergen würde.
+
+Alarmieren Sie nicht auf die `dry_run`-Buckets. Eine Dry-run-Sperre erreicht den Installer nie, es
+gelangt also nichts in den Kernel: `kapkan_mitigate_dataplane_rules{mode="dry_run"}` meldet die
+Regeln, die installiert *worden wären*, während die dynamische Hälfte von `kapkan_dataplane_rules`
+bei null bleibt. Diese Lücke ist der beabsichtigte Unterschied zwischen Absicht und Messung — und da
+`dry_run` die ausgelieferte Voreinstellung ist, zeigt jede neue Installation genau das.
 
 Das Label `proto` ist das Wire-Protokoll, über das der Flow eingetroffen ist: `sflow5`, `netflow5`,
 `netflow9` oder `ipfix` (z. B. `kapkan_ingest_flows_total{proto="sflow5"}`).

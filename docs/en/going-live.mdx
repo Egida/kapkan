@@ -93,7 +93,9 @@ After step 3, a quick check that you are truly live and that announcements behav
 
 - `GET /api/v1/status` shows the current mode and active attack/ban counts.
 - The `kapkan_mitigate_announced_routes` metric is labeled by mode; in production, routes are
-  counted under `real` rather than `dry_run`. See [Metrics](/docs/metrics).
+  counted under `real` rather than `dry_run`. If your ladder uses the local `dataplane` rung,
+  watch `kapkan_mitigate_dataplane_bans` instead — those bans are enforced on this host's NIC
+  and are deliberately absent from the announced-route count. See [Metrics](/docs/metrics).
 - `GET /api/v1/bans` lists every ban, active and historical, so you can confirm a ban was
   announced and later auto-withdrawn after its TTL.
 

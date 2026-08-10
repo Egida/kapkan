@@ -33,8 +33,10 @@ d'API avec `api.token_env`. Seuls les points de terminaison de données `/api/v1
 | `kapkan_engine_tracked_hosts` | — | Jauge des hôtes actuellement suivis par le moteur. |
 | `kapkan_engine_boundary_debug_bytes_total` | `exporter`, `iface`, `dir` | Octets corrigés de l'échantillonnage vers (`dir=in`) ou depuis (`dir=out`) les hôtes protégés, ventilés par `exporter` et par interface (`iface` = ifIndex). N'apparaît que lorsque [`sampling.boundary_debug: true`](/docs/configuration) — une aide temporaire pour identifier vos interfaces de bordure. Sa cardinalité n'est PAS bornée ; désactivez-la de nouveau après avoir lu la ventilation. |
 | `kapkan_engine_events_dropped_total` | `kind` | Événements de cycle de vie du moteur abandonnés parce que le canal d'événements était plein, par `kind` (`attack_started`, `attack_ongoing`, `attack_ended`). Un `attack_started` ou `attack_ended` abandonné est une perte réelle — la mitigation ou la notification de cet épisode est manquée ; un heartbeat `attack_ongoing` abandonné se rétablit de lui-même à la fenêtre de détection suivante. Devrait rester à zéro ; un compteur qui augmente signifie que le consommateur d'événements ne suit pas. |
-| `kapkan_mitigate_announced_routes` | `mode` | Jauge des routes de blackhole actuellement annoncées, ventilées par mode `real` / `dry_run`. |
+| `kapkan_mitigate_announced_routes` | `mode` | Jauge des routes de blackhole actuellement annoncées, ventilées par mode `real` / `dry_run`. Ne compte que les échelons qui demandent à un peer d'appliquer quelque chose (`blackhole`, `divert`, `flowspec`) ; les bannissements de l'échelon local `dataplane` sont dans `kapkan_mitigate_dataplane_bans`. |
 | `kapkan_mitigate_flowspec_rules` | `mode` | Jauge des règles [FlowSpec](/docs/flowspec) actuellement annoncées, ventilées par mode `real` / `dry_run`. Surveillez-la par rapport à la limite de routes FlowSpec de vos routeurs. |
+| `kapkan_mitigate_dataplane_bans` | `mode` | Jauge des bannissements actuellement appliqués par le plan de données XDP de cet hôte plutôt que par un upstream, ventilés par mode `real` / `dry_run`. Ils n'annoncent rien à aucun peer et continuent de filtrer pendant une panne BGP. |
+| `kapkan_mitigate_dataplane_rules` | `mode` | Jauge des règles que ces bannissements ont installées dans le noyau, ventilées par mode `real` / `dry_run`. Un bannissement apporte 1 règle lorsque l'attaque est proprement classée comme mono-vecteur, et jusqu'à 8 lorsqu'elle est mixte ou non classée : cette valeur va donc de `kapkan_mitigate_dataplane_bans` à 8 fois ce nombre. Surveillez-la par rapport à `dataplane.limits.max_dynamic_rules`, comme `kapkan_mitigate_flowspec_rules` l'est par rapport à la limite de routes d'un upstream. |
 | `kapkan_mitigate_bans_rejected_total` | `reason` | Bannissements refusés par une garde de sécurité, par `reason` : `max_active_bans`, `blast_radius_fraction`, `blast_radius_rate` ou `max_active_prefix_bans` (carpet). |
 | `kapkan_mitigate_fallback_total` | `from`, `to` | Annonces d'atténuation ayant basculé vers une méthode de repli parce que le pair a rejeté la méthode principale, par `from`/`to`. Une série `from="flowspec"` non nulle signale les opérateurs en amont qui n'honorent pas FlowSpec. |
 | `kapkan_notify_notifications_total` | `channel`, `result` | Notifications tentées, par canal (telegram, slack, email, webhook, exec) et par `result` (`ok`, `error` ou `dropped` lorsque les créneaux de livraison étaient saturés). |
@@ -46,6 +48,25 @@ Le label `mode` sur `kapkan_mitigate_announced_routes` est le moyen le plus rapi
 l'état dry-run d'un coup d'œil : tant que `dry_run: true`, chaque route qui aurait été annoncée est
 comptabilisée sous `mode="dry_run"` et aucune sous `mode="real"`. Voir [Atténuation](/docs/mitigation)
 et le [Modèle de sécurité](/docs/safety).
+
+Les deux jauges `kapkan_mitigate_dataplane_*` sont le décompte, par l'atténuateur, de ce qu'il a
+installé, attribué aux bannissements qui le possèdent et classé sous l'indicateur dry-run figé de
+chaque bannissement. `kapkan_dataplane_rules` mesure la grandeur voisine par l'autre bout : toutes
+les règles que le noyau exécute réellement — les statiques de votre configuration plus ces mêmes
+règles dynamiques — classées sous l'indicateur du plan de données lui-même.
+Sous `mode="real"`, `kapkan_mitigate_dataplane_rules` devrait donc suivre la moitié dynamique de
+`kapkan_dataplane_rules`.
+
+Tracez les deux et comparez-les plutôt que de les additionner. Ce sont deux chemins indépendants
+vers le même nombre, et un écart persistant entre eux **en mode `real`** est une panne — un retrait
+qui a échoué, ou des règles que le noyau a laissé expirer sous un bannissement qui se croit toujours
+actif — qu'un unique chiffre additionné masquerait précisément.
+
+N'alertez pas sur les buckets `dry_run`. Un bannissement en dry-run n'atteint jamais l'installateur,
+donc rien n'entre dans le noyau : `kapkan_mitigate_dataplane_rules{mode="dry_run"}` rapporte les
+règles qui *auraient* été installées, tandis que la moitié dynamique de `kapkan_dataplane_rules`
+reste à zéro. Cet écart est la distinction voulue entre l'intention et la mesure, et comme `dry_run`
+est la valeur par défaut livrée, c'est ce qu'affichera tout nouveau déploiement.
 
 Le label `proto` est le protocole filaire sur lequel le flow est arrivé : `sflow5`, `netflow5`,
 `netflow9` ou `ipfix` (par ex. `kapkan_ingest_flows_total{proto="sflow5"}`).

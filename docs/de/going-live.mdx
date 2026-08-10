@@ -95,7 +95,10 @@ Nach Schritt 3 eine schnelle Prüfung, dass Sie wirklich live sind und sich die 
 
 - `GET /api/v1/status` zeigt den aktuellen Modus sowie die Anzahl aktiver Angriffe/Bans an.
 - Die Metrik `kapkan_mitigate_announced_routes` ist nach Modus gekennzeichnet; in der Produktion werden Routen
-  unter `real` statt unter `dry_run` gezählt. Siehe [Metriken](/docs/metrics).
+  unter `real` statt unter `dry_run` gezählt. Wenn Ihre Eskalationsleiter die lokale `dataplane`-Stufe
+  nutzt, beobachten Sie stattdessen `kapkan_mitigate_dataplane_bans` — diese Bans werden auf der NIC
+  dieses Hosts durchgesetzt und fehlen bewusst in der Zählung der angekündigten Routen.
+  Siehe [Metriken](/docs/metrics).
 - `GET /api/v1/bans` listet jeden Ban auf, aktive wie historische, sodass Sie bestätigen können, dass ein Ban
   angekündigt und später nach Ablauf seiner TTL automatisch zurückgezogen wurde.
 
