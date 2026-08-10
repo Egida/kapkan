@@ -29,7 +29,7 @@ El archivo se puede recargar en tiempo de ejecución. Envía `SIGHUP`
 (`systemctl reload kapkan`) o `POST /api/v1/config/reload` y Kapkan vuelve a leer el archivo y
 aplica la nueva configuración sin interrumpir la ingesta de flow. Casi todo se recarga en
 caliente, incluidos `dry_run`, los umbrales, `networks`, los hostgroups, las líneas base
-(baselines), las opciones de notificación y `sampling.default_rate`. Seis cosas quedan fijadas al
+(baselines), las opciones de notificación y `sampling.default_rate`. Siete cosas quedan fijadas al
 arrancar — una recarga que cambie cualquiera de ellas se **rechaza** (no se ignora en silencio), así
 que debes reiniciar el demonio para cambiarlas:
 
@@ -38,7 +38,11 @@ que debes reiniciar el demonio para cambiarlas:
 - `api.listen`;
 - las opciones de `samples`;
 - las opciones de `storage`;
-- las opciones de `geoip`.
+- las opciones de `geoip`;
+- la conexión del plano de datos y el dimensionamiento de sus mapas (`dataplane.enabled`,
+  `interfaces`, `xdp_mode`, `pin_path`, `on_exit` y todo lo que hay bajo `limits`): nada de eso
+  puede cambiar bajo un programa XDP ya cargado. La política estática del mismo bloque —
+  `allowlist`, `static_rules`, `ratelimit_profiles` — se recarga en caliente.
 
 <Callout type="warning" title="El modo dry-run está activado por defecto">
 `dry_run` tiene el valor predeterminado `true`, y una clave `dry_run` ausente se trata como
@@ -95,7 +99,8 @@ La mayoría de las claves de más abajo son opcionales. Para arrancar el demonio
 `thresholds.pps` / `.mbps` / `.flows_per_sec` (todos `> 0`). El `api.listen` predeterminado es
 `127.0.0.1:8080`, así que puedes omitirlo. Para **anunciar** realmente blackholes (es decir, una vez que desactivas
 `dry_run`) también necesitas un bloque `bgp`. Todo lo demás — `carpet`, `baseline`,
-`flowspec.source_anchored`, `flow_sources`, `geoip`, `escalation` — es un refinamiento opcional.
+`flowspec.source_anchored`, `flow_sources`, `geoip`, `escalation`, `dataplane` — es un refinamiento
+opcional.
 </Callout>
 
 | Clave | Significado |
@@ -123,10 +128,19 @@ La mayoría de las claves de más abajo son opcionales. Para arrancar el demonio
 | `ban.max_banned_fraction` | Rechazar nuevos bloqueos cuando se haya puesto en blackhole más de esta fracción (`0`–`1`, por familia de direcciones) del espacio protegido — acota el radio de impacto de una baseline envenenada o una tormenta con orígenes falsificados. `0` (por defecto) lo desactiva. |
 | `ban.max_bans_per_window` / `ban_window_seconds` | Protección contra tormentas: como máximo esta cantidad de **nuevos** bloqueos por ventana (segundos). `max_bans_per_window: 0` (por defecto) lo desactiva; la ventana es obligatoria cuando se define la tasa. |
 | `ban.state_file` | Ruta de escritura opcional (p. ej. `/var/lib/kapkan/bans.json`) donde se persisten los bloqueos activos, de modo que un reinicio los rehidrate y los **vuelva a anunciar** en lugar de dejar caer la mitigación hasta una nueva detección. Se complementa con `bgp.graceful_restart`. Vacía (por defecto) desactiva la persistencia. Consulta [Mitigación](/docs/mitigation). |
-| `mitigation` | Método de mitigación: `blackhole` (predeterminado), `flowspec` ([FlowSpec](/docs/glossary) — una extensión de BGP que filtra por más que la IP de destino, p. ej. puerto/protocolo, de modo que puedes descartar solo el tráfico de ataque) o `divert`. Anulable por hostgroup. Consulta [FlowSpec](/docs/flowspec) y [Desvío de tráfico](/docs/scrubbing). |
+| `mitigation` | Método de mitigación: `blackhole` (predeterminado), `flowspec` ([FlowSpec](/docs/glossary) — una extensión de BGP que filtra por más que la IP de destino, p. ej. puerto/protocolo, de modo que puedes descartar solo el tráfico de ataque), `divert` o `dataplane` (descarte en el kernel de esta misma máquina, sin anunciar nada: exige un bloque `dataplane` con `enabled: true`, o la configuración se rechaza al arrancar). Anulable por hostgroup. Consulta [FlowSpec](/docs/flowspec), [Desvío de tráfico](/docs/scrubbing) y [Plano de datos en el kernel](/docs/dataplane). |
 | `flowspec.action` / `rate_mbps` | Acción de la regla FlowSpec: `discard` o `rate_limit` (con `rate_mbps`). Consulta [FlowSpec](/docs/flowspec). |
 | `flowspec.source_anchored` / `min_source_concentration` | Cuando se activa, una regla FlowSpec fija **tanto** a la víctima (destino) **como** a un origen atacante dominante de la muestra — descartando solo a los atacantes y respetando a los clientes legítimos — pero solo cuando la muestra está suficientemente concentrada (por defecto `0.8`); de lo contrario, recurre al anclaje en la víctima. Desactivado por defecto. |
-| `escalation[]` | Escala opcional de peldaños `{ after_seconds, action }` (`none` / `flowspec` / `divert` / `blackhole`) que prevalece sobre `mitigation`. Consulta [Escalado progresivo](/docs/escalation). |
+| `escalation[]` | Escala opcional de peldaños `{ after_seconds, action }` (`none` / `dataplane` / `flowspec` / `divert` / `blackhole`, en ese orden de severidad) que prevalece sobre `mitigation`. La escala debe ser no decreciente: puede mantener o endurecer, nunca suavizar. Un peldaño `dataplane` exige un bloque `dataplane` con `enabled: true`. Consulta [Escalado progresivo](/docs/escalation). |
+| `dataplane` | Filtro opcional en el kernel: Kapkan conecta un programa [XDP](/docs/glossary) a las tarjetas de red de esta misma máquina y descarta el tráfico de ataque en cuanto el controlador lo recibe, en lugar de anunciar una ruta y pedirle a un router que lo haga. Si el bloque está ausente (lo predeterminado), la función está apagada por completo y ningún otro bloque la referencia. Necesita Linux 5.15 o posterior y un drop-in de systemd que conceda `CAP_BPF`, `CAP_NET_ADMIN` y `CAP_PERFMON`: lee [Plano de datos en el kernel](/docs/dataplane) antes de activarlo. |
+| `dataplane.enabled` | Vale `true` de forma predeterminada cuando el bloque está presente, así que esta clave existe para apagar un bloque ya configurado sin borrarlo. Con `false` el bloque se descarta por completo: un peldaño `dataplane`, `mitigation: dataplane` o `carpet.mitigation: dataplane` se rechaza entonces al arrancar exactamente igual que si el bloque no existiera. |
+| `dataplane.interfaces` / `xdp_mode` | Las tarjetas de red a las que conectarse (**obligatorio**, al menos una; los nombres deben ser únicos y válidos, hasta 15 caracteres) y cómo hacerlo: `auto` (predeterminado) intenta el XDP nativo del controlador y recurre a la ruta generic, `native` falla directamente si el controlador no tiene XDP nativo, `generic` fuerza la ruta skb, más lenta (virtio, pruebas). Si la tarjeta nombrada existe de verdad se resuelve en el momento de la conexión, con un error al arrancar. |
+| `dataplane.pin_path` / `on_exit` | El directorio [bpffs](/docs/glossary) que contiene el programa y los mapas anclados, para que la política sobreviva a un reinicio de *este proceso* (predeterminado `/sys/fs/bpf/kapkan`; la ruta debe ser absoluta, y Kapkan se niega a arrancar si no tiene modo `0700` y no pertenece al uid con el que corre el demonio). `on_exit` es lo que hace un apagado limpio: `keep` (predeterminado) deja el programa conectado y aplicando aún la política estática, `detach` lo retira por completo. |
+| `dataplane.drop_malformed` | Descartar las tramas que no se pueden analizar en lugar de dejarlas pasar y contarlas. `false` de forma predeterminada: esto es un ejecutor de la mitigación, no un cortafuegos, así que su veredicto predeterminado es **pass** y lo no reconocido no se trata como hostil. |
+| `dataplane.allowlist` | Prefijos de **origen** — o direcciones sueltas, tomadas como rutas de host — que siempre pasan, comprobados antes que cualquier otra regla. Fíjate en el eje: aquí se trata de *desde dónde* llega el tráfico, mientras que `protected_whitelist` nombra destinos que nunca se bloquean. Ambos se aplican en el kernel y ninguno sustituye al otro. Vacío de forma predeterminada; se recarga en caliente. |
+| `dataplane.ratelimit_profiles[]` | Topes con nombre a los que apunta el `profile` de una regla estática: cada entrada tiene un `name` único más `pps` y/o `mbps` (hay que definir al menos uno; `0` deja esa dimensión sin límite). Un perfil al que nada hace referencia se elimina al recargar. Vacío de forma predeterminada; se recarga en caliente. |
+| `dataplane.static_rules[]` | Reglas permanentes del operador, evaluadas después de la allowlist y antes de todo lo que instale el detector. Cada una tiene un `name` único, una `action` (`pass` / `drop` / `ratelimit`, esta última exige `profile`) y un `match` formado por `src`, `proto` (`tcp` / `udp` / `icmp` / `icmp6`), `src_port` y `dst_port`. Los campos de `match` se combinan con Y, y un campo sin definir encaja con cualquier cosa: un `match` vacío encaja por tanto con todos los paquetes, lo que solo tiene sentido con `ratelimit`. Los puertos se rechazan para `icmp`/`icmp6`. Vacío de forma predeterminada; se recarga en caliente. |
+| `dataplane.limits.max_dynamic_rules` / `max_static_rules` / `max_ratelimit_sources` | Tamaños de los mapas BPF, reservados por completo cuando el programa se conecta (predeterminados `4096` / `256` / `1048576`; cada uno debe ser `> 0`). `max_dynamic_rules` acota las reglas que el mitigador puede instalar y debe ser **como mínimo** `ban.max_active_bans * 8`, ya que un solo bloqueo puede instalar hasta 8 reglas de coincidencia: Kapkan rechaza un valor menor en lugar de dejar que las instalaciones fallen en mitad de un ataque, y con el valor predeterminado de `max_dynamic_rules` (`4096`), el techo es exactamente de 512 bloqueos activos. `max_static_rules` también debe cubrir las `static_rules` que hayas escrito. `max_ratelimit_sources` dimensiona la tabla de cubetas de tokens por origen y es la única de las tres que cuesta memoria de verdad. Consulta [Plano de datos en el kernel](/docs/dataplane). |
 | `bgp.local_asn` / `router_id` / `next_hop` / `next_hop6` / `community` | Identidad BGP, next-hops de blackhole IPv4/IPv6 y la [community](/docs/glossary) RTBH — una etiqueta de ruta en forma `ASN:value` (p. ej. `65000:666`) que tu upstream compara para disparar el blackhole. `router_id` debe ser una dirección IPv4 en notación de cuatro octetos. `next_hop6` es opcional incluso cuando hay un prefijo IPv6 en `networks`; si no se define, los blackholes IPv6 usan el next-hop de descarte de RFC 6666 `100::1`. Consulta [Mitigación](/docs/mitigation). |
 | `bgp.communities` / `local_pref` | **Lista** de communities opcional (anula `community`) y un `LOCAL_PREF` (un atributo BGP de preferencia de ruta) para pares [iBGP](/docs/glossary) (BGP interno) — `LOCAL_PREF` solo viaja dentro de tu propia red, no a pares externos ([eBGP](/docs/glossary)), por lo que solo tiene sentido para tus vecinos internos. Todos los atributos `bgp` son anulables por hostgroup. |
 | `bgp.neighbors[]` | Pares [eBGP](/docs/glossary) (BGP externo): `address`, `remote_asn` y un `port` opcional para pruebas. |
@@ -197,6 +211,30 @@ thresholds_outgoing:                # detect compromised hosts attacking outward
   pps: 50000
   udp_pps: 20000
 
+dataplane:                          # optional; needs Linux 5.15+ and the systemd drop-in
+  interfaces: ["eth0"]              # required; at least one NIC (restart to change)
+  # xdp_mode: auto                  # auto (default) | native | generic
+  # pin_path: /sys/fs/bpf/kapkan    # bpffs dir; mode 0700, owned by the daemon's uid
+  # on_exit: keep                   # keep (default) stays attached and enforcing on shutdown
+  # drop_malformed: false           # default: unparseable frames pass and are counted
+  allowlist:                        # SOURCE prefixes that always pass, checked first
+    - "198.51.100.7"                # monitoring (a bare address is a host route)
+    - "192.0.2.0/24"                # management network
+  ratelimit_profiles:               # named ceilings; set pps, mbps or both
+    - {name: icmp_cap, mbps: 10}
+  static_rules:                     # always-on, before any rule the detector installs
+    - name: drop_chargen
+      match: {proto: udp, src_port: 19}
+      action: drop
+    - name: cap_icmp
+      match: {proto: icmp}
+      action: ratelimit
+      profile: icmp_cap             # must name a declared profile
+  # limits:
+  #   max_dynamic_rules: 4096       # must be >= ban.max_active_bans * 8
+  #   max_static_rules: 256
+  #   max_ratelimit_sources: 1048576  # per-source token buckets (kernel memory)
+
 ban:
   ttl_seconds: 600                  # every ban auto-withdraws after this
   unban_hysteresis_seconds: 120     # stay below threshold this long before unban
@@ -245,6 +283,13 @@ páginas dedicadas para ver sus esquemas completos:
   y `flows_per_attack` (predeterminado `20`). Estos controlan el ring buffer de flow continuo que
   se usa para adjuntar las fuentes, los puertos y los protocolos dominantes a cada ataque en el
   momento en que se dispara. Cambiar el dimensionamiento requiere un reinicio.
+
+El bloque `dataplane` de arriba se muestra para ilustrar su forma. No es autosuficiente: una máquina
+con `dataplane.enabled: true` **falla al arrancar** si el kernel no es 5.15 o posterior y si no está
+instalado el drop-in de systemd `kapkan-dataplane.conf` que se distribuye con Kapkan, porque la unit
+endurecida no concede ninguna de las tres capacidades que necesita el programa XDP. Instala el
+drop-in junto con el cambio de configuración, no después del primer arranque fallido: [Plano de datos en el kernel](/docs/dataplane) cubre la preparación de la máquina, la memoria que hay que
+presupuestar para los mapas y qué significa cada error de arranque.
 
 ## Corrección de muestreo
 
@@ -308,5 +353,6 @@ tasa real; de lo contrario, déjalo en `false` (el valor predeterminado).
 - [Grupos de hosts](/docs/hostgroups) — políticas por prefijo y grupos de tráfico total.
 - [Líneas base](/docs/baselines) — umbrales aprendidos de forma continua.
 - [Mitigación](/docs/mitigation) — BGP, RTBH, TTLs y límites de bloqueos.
+- [Plano de datos en el kernel](/docs/dataplane) — el bloque `dataplane` completo: preparación de la máquina, orden de evaluación y memoria de los mapas.
 - [Autenticación](/docs/authentication) — protección de la API y el panel.
 - [Puesta en producción](/docs/going-live) — valida y luego desactiva el modo dry-run.
