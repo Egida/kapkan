@@ -72,13 +72,21 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
 }
 
 const STAT_ICONS: IconName[] = ["cpu", "clock", "route", "filter", "terminal"];
+// Indexed by step — `t.how.steps` and this array must stay the same length or
+// the render dereferences undefined.
 const STEP_ICONS: { icon: IconName; color: string }[] = [
   { icon: "antenna", color: "text-accent" },
   { icon: "target", color: "text-red-500" },
   { icon: "shieldCheck", color: "text-green-500" },
+  { icon: "cpu", color: "text-amber-400" },
 ];
-const FEATURE_ICONS: IconName[] = ["share", "bolt", "filter", "search", "activity", "shield", "grid", "bell", "users"];
+// Likewise indexed by card: grows with `t.features.cards`.
+const FEATURE_ICONS: IconName[] = ["share", "bolt", "filter", "search", "activity", "shield", "grid", "bell", "users", "cpu"];
 const SAFETY_CARD_INDEX = 5;
+// The in-kernel card is last and spans the full row, so ten cards fill a
+// three-column grid without leaving a single orphan in the last row. Appending
+// (rather than inserting) is also what keeps SAFETY_CARD_INDEX correct.
+const WIDE_CARD_INDEX = 9;
 const THEM_ICONS: ("x" | "minus")[] = ["x", "x", "minus", "minus", "minus", "x"];
 
 /* ------------------------------------------------------------------- page */
@@ -155,7 +163,7 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
                 <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-3 py-1 backdrop-blur-sm">
                   <span className="h-2 w-2 rounded-full bg-green-500" />
                   <span className="font-mono text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                    {t.hero.eyebrow}
+                    {t.hero.eyebrow} · v{site.version}
                   </span>
                 </div>
                 <h1 className="mb-6 text-4xl font-bold leading-[1.1] tracking-tight sm:text-5xl lg:text-6xl">
@@ -203,7 +211,7 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
                     src="/assets/screenshots/console-overview.png"
                     alt="Kapkan operator console — Overview dashboard with active incidents and global traffic"
                     width={1440}
-                    height={1021}
+                    height={1049}
                     className="h-auto w-full"
                   />
                 </div>
@@ -231,8 +239,12 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
             <h2 className="mb-4 text-3xl font-bold tracking-tight">{t.how.heading}</h2>
             <p className="mx-auto max-w-2xl text-muted-foreground">{t.how.sub}</p>
           </div>
-          <div className="relative grid grid-cols-1 gap-12 md:grid-cols-3">
-            <div className="absolute left-[16%] right-[16%] top-8 hidden h-px bg-gradient-to-r from-transparent via-border to-transparent md:block" />
+          <div className="relative grid grid-cols-1 gap-12 md:grid-cols-2 lg:grid-cols-4">
+            {/* Connector, drawn only where the steps are actually in one row (lg).
+                The inset is the distance from the container edge to the centre of
+                the first icon: with four columns and gap-12 that is ~11% across
+                the whole lg range, where three columns put it at ~16%. */}
+            <div className="absolute left-[11%] right-[11%] top-8 hidden h-px bg-gradient-to-r from-transparent via-border to-transparent lg:block" />
             {t.how.steps.map((step, i) => (
               <div key={step.title} className="group relative z-10 flex flex-col items-center text-center">
                 <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-surface shadow-lg transition-colors group-hover:border-accent">
@@ -256,7 +268,12 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
             </div>
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {t.features.cards.map((f, i) => (
-                <div key={f.title} className="relative overflow-hidden rounded-2xl border border-border bg-surface p-6 transition-colors hover:border-muted-foreground/40">
+                <div
+                  key={f.title}
+                  className={`relative overflow-hidden rounded-2xl border border-border bg-surface p-6 transition-colors hover:border-muted-foreground/40 ${
+                    i === WIDE_CARD_INDEX ? "md:col-span-2 lg:col-span-3" : ""
+                  }`}
+                >
                   {i === SAFETY_CARD_INDEX && (
                     <div className="absolute right-0 top-0 rounded-bl-lg bg-accent/10 px-2 py-1 font-mono text-[10px] font-bold text-accent">
                       {t.features.safetyTag}
@@ -264,7 +281,11 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
                   )}
                   <Icon name={FEATURE_ICONS[i]} className="mb-4 h-6 w-6 text-accent" />
                   <h3 className="mb-2 font-semibold">{f.title}</h3>
-                  <p className="text-sm leading-relaxed text-muted-foreground">{f.body}</p>
+                  {/* The wide card keeps a readable measure instead of running
+                      its lines the full width of the grid. */}
+                  <p className={`text-sm leading-relaxed text-muted-foreground ${i === WIDE_CARD_INDEX ? "max-w-4xl" : ""}`}>
+                    {f.body}
+                  </p>
                 </div>
               ))}
             </div>
