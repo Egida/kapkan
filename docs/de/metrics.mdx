@@ -8,7 +8,8 @@ export const metadata = {
 
 Kapkan stellt Prometheus-Metriken im Namespace `kapkan_` unter `GET /metrics` auf dem
 API-Listener bereit (`api.listen`, üblicherweise `127.0.0.1:8080` — der Wert in der Beispielkonfiguration; das Feld ist erforderlich, also setzen Sie es). Sie decken die gesamte Pipeline ab —
-Flow-Ingest, die Detection-Engine, RTBH-Mitigation und Benachrichtigungen — sodass Sie Durchsatz,
+Flow-Ingest, die Detection-Engine, RTBH-Mitigation, Benachrichtigungen und, wo sie aktiviert
+ist, die XDP-Datenebene im Kernel — sodass Sie Durchsatz,
 Latenz, aktive Angriffe und angekündigte Routen in Ihr bestehendes Monitoring übernehmen können.
 
 <Callout type="info" title="/metrics bleibt offen">
@@ -69,6 +70,151 @@ bei null bleibt. Diese Lücke ist der beabsichtigte Unterschied zwischen Absicht
 Das Label `proto` ist das Wire-Protokoll, über das der Flow eingetroffen ist: `sflow5`, `netflow5`,
 `netflow9` oder `ipfix` (z. B. `kapkan_ingest_flows_total{proto="sflow5"}`).
 
+## Datenebene (XDP)
+
+Die Familie `kapkan_dataplane_*` berichtet über die XDP-Datenebene im Kernel
+([`dataplane.enabled: true`](/docs/dataplane)). Die meisten dieser Reihen entstehen erst, wenn
+die Datenebene in sie schreibt — auf einem Host, der ausschließlich über BGP mitigiert, fehlen
+sie also, statt auf null zu stehen.
+
+Ein großer Teil der Familie betrifft den Lebenszyklus, und das ist Absicht. Ein XDP-Programm,
+das nicht angebunden ist, sieht exakt aus wie eines, das es ist — der Daemon läuft, die API
+antwortet, Sperren werden erfasst — und der einzige sichtbare Unterschied ist, dass die Pakete,
+die Sie verwerfen lassen wollten, nicht verworfen werden. Deshalb ist „ist es angebunden?“ eine
+Metrik und nichts, was man aus einer Logzeile beim Start ableiten muss.
+
+<Callout type="warning" title="Vier Reihen gibt es auch ohne Datenebene">
+`kapkan_dataplane_degraded`, `kapkan_dataplane_pins_rebuilt`,
+`kapkan_dataplane_policy_generation` und `kapkan_dataplane_policy_apply_seconds` tragen keine
+Labels, werden daher beim Start registriert und von jedem Build exportiert — mit dem Wert `0` auf
+einem Host, der nie ein BPF-Programm geladen hat. Lesen Sie `kapkan_dataplane_degraded == 0`
+nicht als „die Datenebene ist gesund“: auf einem Host, der nur BGP nutzt, bedeutet es, dass es
+nichts zu beeinträchtigen gibt. Machen Sie Alarme zur Datenebene davon abhängig, dass sie
+überhaupt läuft — die günstigste solche Absicherung ist das Vorhandensein von
+`kapkan_dataplane_xdp_mode`.
+</Callout>
+
+| Metrik | Labels | Bedeutung |
+| --- | --- | --- |
+| `kapkan_dataplane_degraded` | — | `1`, wenn mindestens ein konfiguriertes Interface keine aktive XDP-Anbindung hat. Dies ist die eine Reihe, auf die Sie alarmieren sollten. `/healthz` meldet denselben Zustand als `dataplane: DEGRADED (n/m interfaces attached)` und liefert weiterhin 200 — ein Neustart kann eine fehlende NIC nicht herbeizaubern. |
+| `kapkan_dataplane_xdp_mode` | `interface`, `mode` | `1`, wenn das Programm in diesem Modus (`native` oder `generic`) an dieses Interface angebunden ist, `0` für den anderen Modus — so bleibt nach einem Fallback über einen Neustart hinweg keine veraltete Reihe zurück, die beides behauptet. BEIDE Reihen stehen auf `0`, wenn ein Interface überhaupt nicht filtert — genau das ist der Unterschied zwischen „auf dem generischen Pfad“ und „nicht geschützt“. `generic` kostet rund das Zehnfache an CPU pro Paket gegenüber `native`. |
+| `kapkan_dataplane_attach_errors_total` | `interface` | Fehlgeschlagene Anbindungsversuche, einschließlich der Wiederholungen des Watchers. Steigt der Zähler *zusammen mit* `kapkan_dataplane_degraded`, nimmt die NIC das Programm nicht an; steigt er *ohne* dieses Signal, ist es ein flappender Link, der wieder eingefangen wird. |
+| `kapkan_dataplane_reattach_total` | `interface` | Wie oft das Programm nach einem Verlust der Anbindung erneut an ein Interface angebunden wurde. Das macht eine sporadisch ausfallende NIC sichtbar: jeder einzelne Scrape meldet „gesund“, und dieser Zähler sagt, dass sie es nicht war. |
+| `kapkan_dataplane_pins_rebuilt` | — | `1`, wenn beim Start ein vorhandenes gepinntes Programm gefunden, abgelehnt und neu aufgebaut wurde — zu erwarten nach einem Upgrade, das das BPF-Objekt, sein Map-Layout oder `dataplane.limits` ändert. Der Preis: die dynamischen Regeln des vorherigen Prozesses sind weg; laufende Angriffe werden im nächsten Erkennungsintervall erneut mitigiert. |
+| `kapkan_dataplane_packets_total` | `verdict` | Pakete nach endgültiger XDP-Entscheidung (`pass_default`, `pass_allow_src`, `drop_static`, `drop_rl`, …). Pro Paket wird genau eine endgültige Entscheidung gezählt — lesen Sie [Endgültige Entscheidungen und Beobachtungen](#endgültige-entscheidungen-und-beobachtungen), bevor Sie summieren. |
+| `kapkan_dataplane_bytes_total` | `verdict` | Bytes, nach denselben endgültigen Entscheidungen. Eine Grafik der Pakete pro Sekunde allein kann einen SYN-Flood mit 64 Byte nicht von einer Amplification-Reflection mit 1500 Byte unterscheiden — und beide verlangen unterschiedliche Reaktionen. |
+| `kapkan_dataplane_observations_total` | `kind` | Beobachtungen des Datenpfads, die eine endgültige Entscheidung begleiten, statt sie zu ersetzen: `dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`. Bewusst eine eigene Metrik — siehe unten. |
+| `kapkan_dataplane_filter_bypass_packets_total` | `reason` | **Ein Alarm, keine Statistik.** Pakete, die weitergeleitet wurden, ohne dass auch nur eine Regel geprüft wurde, weil sie zuerst an eine Parse-Grenze des Datenpfads stießen. Heute existiert ein `reason`: `ipv6_exthdr_cap`. Alarmieren Sie auf jede Rate ungleich null — siehe [Der Alarm bei Filter-Umgehung](#der-alarm-bei-filter-umgehung). |
+| `kapkan_dataplane_filter_bypass_bytes_total` | `reason` | Bytes desselben Vorgangs, nach demselben `reason`. Das trennt eine Sondierung von einer Flut: eine Handvoll konstruierter Pakete pro Stunde ist jemand, der Ihren Parser ausmisst, und eine anhaltende Bitrate ist der Angriff, für den diese Messung gedacht war. |
+| `kapkan_dataplane_rules` | `mode` | Regeln, die der Kernel gerade durchsetzt — statische Policy plus die dynamischen Regeln der Mitigation — aufgeteilt nach `real` / `dry_run`, genau wie bei `kapkan_mitigate_flowspec_rules`. Der Modus ist das aus dem Kernel zurückgelesene Flag des Datenpfads, nicht das der Konfigurationsdatei: ein übernommenes Pin-Set kann noch mit dem Flag des vorherigen Prozesses laufen. |
+| `kapkan_dataplane_map_entries` | `map` | `max_entries` jeder BPF-Map, wie sie tatsächlich angelegt wurde, nachdem `dataplane.limits` angewendet wurden. |
+| `kapkan_dataplane_map_bytes` | `map` | Vom Kernel geschätzter Speicherbedarf je BPF-Map in Bytes (das Feld `memlock` aus dem `fdinfo` der Map). |
+| `kapkan_dataplane_policy_generation` | — | Die Generation der doppelt gepufferten statischen Policy, die aktuell im Kernel aktiv ist. Der Wert selbst ist uninteressant; die Steigung ist der Alarm — jeder Wechsel läuft die Policy-Map unter derselben Sperre durch, die auch Regel-Installationen serialisiert. Eine Generation, die im Sekundentakt steigt, bedeutet, dass etwas die Policy in einer Schleife neu veröffentlicht. |
+| `kapkan_dataplane_policy_apply_seconds` | — | Histogramm der Zeit, um eine Generation statischer Policy zu bauen und zu veröffentlichen. Diese Spanne hält die Sperre, auf die eine Regel-Installation wartet — daher beantwortet diese Metrik die Frage „könnte ein Config-Reload die Mitigation eines Angriffs verzögert haben?“. |
+
+### Endgültige Entscheidungen und Beobachtungen
+
+<Callout type="warning" title="Addieren Sie die beiden Familien niemals">
+`kapkan_dataplane_packets_total` und `kapkan_dataplane_observations_total` sind mit Absicht
+zwei Metriken. Beobachtungszähler werden *zusätzlich zur* endgültigen Entscheidung desselben
+Pakets hochgezählt — ein Dry-run-Rewrite erhöht sowohl `dryrun_would_drop` als auch das `pass`,
+zu dem es umgeschrieben wurde. Eine einzelne Metrik, die beides trüge, würde die naheliegende
+Abfrage genau jene Pakete doppelt zählen lassen, die Sie am dringendsten korrekt gezählt haben
+wollen.
+</Callout>
+
+Da beide getrennt sind, wird pro Paket genau eine endgültige Entscheidung gezählt, also ist
+
+```
+sum(rate(kapkan_dataplane_packets_total[1m]))
+```
+
+die Zahl der Pakete durch den Datenpfad, und
+
+```
+sum(rate(kapkan_dataplane_packets_total{verdict=~"drop_.*"}[1m]))
+  / sum(rate(kapkan_dataplane_packets_total[1m]))
+```
+
+die Verwurfsrate. Keine der beiden Abfragen darf `kapkan_dataplane_observations_total`
+einbeziehen.
+
+Während eines Dry runs ist `dryrun_would_drop` die Beobachtung, die zählt: sie erfasst die
+Pakete, die verworfen *worden wären*, und ist das ganze Argument dafür, `dry_run` abzuschalten.
+
+```
+sum(rate(kapkan_dataplane_observations_total{kind="dryrun_would_drop"}[1m]))
+```
+
+### Der Alarm bei Filter-Umgehung
+
+`kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}` zählt Pakete, die die
+Datenebene **weitergeleitet hat, ohne eine einzige Regel zu prüfen**. Jede andere `pass_*`-Entscheidung
+bedeutet, dass die Regeln liefen und keine davon verwerfen wollte; diese bedeutet, dass die Regeln
+überhaupt nicht liefen — Allow-Listen, Verwerfen-Regeln und Ratenbegrenzungen gleichermaßen. Für
+diese Pakete war der Filter praktisch abgeschaltet.
+
+Die Ursache ist ein Parse-Budget: der Datenpfad läuft höchstens acht IPv6-Erweiterungsheader
+durch, und ein Paket mit mehr wird ungeprüft weitergeleitet. Dass es weitergeleitet und nicht
+verworfen wird, ist Absicht — eine Parse-Grenze darf niemals zu einem Default-Deny werden — und
+damit ist dieser Zähler die gesamte Gegenmaßnahme.
+[Das eine, was sie nicht inspiziert](/docs/dataplane#das-eine-was-sie-nicht-inspiziert)
+beschreibt den Mechanismus und was dagegen zu tun ist.
+
+Kein legitimer Verkehr verkettet acht Erweiterungsheader, daher ist die Alarmschwelle null und
+keine Rate, die Sie einstellen:
+
+```
+sum(rate(kapkan_dataplane_filter_bypass_packets_total[5m])) > 0
+```
+
+Beide Reihen werden auch dann veröffentlicht, wenn noch nichts umgangen wurde — eine gesunde
+Datenebene zeigt also eine ausdrückliche `0` statt „keine Daten“. Nur so erkennen Sie überhaupt,
+dass der Alarm angeschlossen ist.
+
+<Callout type="warning" title="Eine zweite Sicht, kein zusätzlicher Verkehr">
+Diese Pakete werden auch in `kapkan_dataplane_packets_total{verdict="pass_exthdr_cap"}` gezählt.
+Die Dopplung ist Absicht: `packets_total` teilt den Verkehr weiterhin genau einmal auf, und diese
+Familie hebt eines seiner Glieder unter einem Namen heraus, den eine Alarmregel klar benennen
+kann. Addieren Sie die beiden niemals.
+</Callout>
+
+### Zähler über einen Neustart hinweg
+
+`kapkan_dataplane_packets_total` und `kapkan_dataplane_bytes_total` starten mit dem Prozess bei
+null, die Kernel-Maps, aus denen sie gelesen werden, jedoch nicht — ein Prozess, der ein
+vorhandenes Pin-Set übernimmt, erbt die Summen des vorherigen. Der Scraper setzt seine Basislinie
+auf den ersten Messwert und veröffentlicht nur, was *dieser* Prozess beobachtet hat. So bleibt
+`rate()` beim Start korrekt, statt einen Ausschlag über die gesamte Lebensdauer des vorherigen
+Prozesses zu erzeugen. Die absoluten Kernel-Summen finden Sie bei Bedarf unter `/api/v1/status`.
+
+Dasselbe Neusetzen passiert, wenn die Zähler zurückgehen, was nur bedeuten kann, dass sie unter
+dem Prozess zurückgesetzt wurden (Pins neu aufgebaut, eine Map neu erzeugt). Ein Rebuild zeigt
+sich daher als Lücke in der Rate, nie als negativer Ausschlag.
+
+### Map-Größen und Speicher
+
+`kapkan_dataplane_map_entries` und `kapkan_dataplane_map_bytes` sind die Rückkopplungsschleife
+für `dataplane.limits`. Der Speicher von BPF-Maps wird der Memory-Cgroup der Unit beim Laden in
+einem Schritt zugerechnet — ein `MemoryMax=`, das vor der Datenebene passte, kann die Unit also
+beim Start ins OOM treiben. Zwei Maps dominieren den Bedarf — `kapkan_rl_src4` und
+`kapkan_rl_src6`, dimensioniert über `dataplane.limits.max_ratelimit_sources` — und da es
+LRU-Hashes sind, werden sie vollständig vorab alloziert, ganz gleich ob je eine einzige Quelle
+ratenbegrenzt wird. Senken Sie das Limit und lesen Sie das Ergebnis an diesen Gauges ab, statt
+es zu vermuten:
+
+```
+sum(kapkan_dataplane_map_bytes)
+```
+
+### Verworfene Pakete pro Sperre
+
+Wie viel der Kernel **für ein einzelnes Opfer** verworfen hat, steht absichtlich nicht hier.
+`/metrics` ist unauthentifiziert, und eine Opferadresse in einem Label würde jedem, der den
+Listener erreicht, verraten, wer angegriffen wird. Diese Zähler pro Sperre und pro Regel finden
+sich stattdessen im authentifizierten [`/api/v1/bans`](/docs/api), im Objekt `dataplane` jeder
+Sperre.
+
 ## Scraping
 
 Fügen Sie Kapkan als Scrape-Target in Ihrer Prometheus-Konfiguration hinzu:
@@ -99,7 +245,10 @@ Ein offizielles Grafana-Dashboard für die `kapkan_*`-Sammlung steht direkt zum 
 Es deckt die gesamte Pipeline ab — Ingest-Raten für Flows/Datagramme/Dekodierung und
 verworfene Flows, aktive und gestartete Angriffe, verfolgte Hosts, Latenz-Quantile auf dem Hot Path,
 angekündigte Routen und FlowSpec-Regeln nach `mode`, nach `reason` abgelehnte Sperren,
-Mitigation-Fallbacks sowie Benachrichtigungs- und Speicherergebnisse.
+Mitigation-Fallbacks sowie Benachrichtigungs- und Speicherergebnisse. Eine Zeile **Data plane**
+deckt die oben genannten XDP-Metriken ab: Pakete pro Sekunde nach Entscheidung, Regeln im Kernel
+nach Modus, Anbindung nach Interface und Modus, Anbindungsfehler, Policy-Generation und Quantile
+der Apply-Zeit sowie die Einträge der BPF-Maps.
 
 Gehen Sie in Grafana zu **Dashboards → New → Import**, laden Sie die JSON hoch und wählen Sie bei der
 Aufforderung Ihre Prometheus-Datenquelle aus (sie ist als `DS_PROMETHEUS` templatisiert). Das Dashboard
@@ -110,5 +259,6 @@ Bereitstellung.
 ## Verwandte Themen
 
 - [REST-API](/docs/api) — die Daten-Endpunkte, die neben `/metrics` bereitgestellt werden.
+- [Datenebene im Kernel](/docs/dataplane) — das XDP-Backend hinter der `kapkan_dataplane_*`-Sammlung.
 - [Speicherung (ClickHouse)](/docs/storage) — die optionale Persistenz hinter `kapkan_storage_rows_total`.
 - [Deployment](/docs/deployment) — Kapkan als Dienst betreiben und eine Listen-Adresse wählen.
