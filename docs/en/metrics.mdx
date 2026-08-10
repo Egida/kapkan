@@ -8,7 +8,8 @@ export const metadata = {
 
 Kapkan exposes Prometheus metrics under the `kapkan_` namespace at `GET /metrics` on the
 API listener (`api.listen`, conventionally `127.0.0.1:8080` — the value in the example config; the field is required, so set it). They cover the full pipeline —
-flow ingest, the detection engine, RTBH mitigation, and notifications — so you can scrape
+flow ingest, the detection engine, RTBH mitigation, notifications, and the in-kernel XDP
+data plane where it is enabled — so you can scrape
 throughput, latency, active attacks and announced routes into your existing monitoring.
 
 <Callout type="info" title="/metrics stays open">
@@ -68,6 +69,143 @@ is the shipped default it is what a new deployment will show.
 The `proto` label is the wire protocol the flow arrived on: `sflow5`, `netflow5`,
 `netflow9`, or `ipfix` (e.g. `kapkan_ingest_flows_total{proto="sflow5"}`).
 
+## Data plane (XDP)
+
+The `kapkan_dataplane_*` family reports the in-kernel XDP data plane
+([`dataplane.enabled: true`](/docs/dataplane)). Most of these series are created as the data
+plane writes them, so on a host that mitigates through BGP alone they are absent rather than
+zero.
+
+Much of the family is lifecycle, and that is deliberate. An XDP program that is not attached
+looks exactly like one that is — the daemon is up, the API answers, bans are recorded — and the
+only visible difference is that the packets you asked to drop are not being dropped. So
+"is it attached" is a metric rather than something to infer from a log line at boot.
+
+<Callout type="warning" title="Four series exist even with no data plane">
+`kapkan_dataplane_degraded`, `kapkan_dataplane_pins_rebuilt`,
+`kapkan_dataplane_policy_generation` and `kapkan_dataplane_policy_apply_seconds` carry no
+labels, so they are registered at startup and exported by every build — reading `0` on a host
+that has never loaded a BPF program. Do not read `kapkan_dataplane_degraded == 0` as "the data
+plane is healthy": on a BGP-only host it means there is nothing to degrade. Gate data-plane
+alerts on the data plane actually running — the presence of `kapkan_dataplane_xdp_mode` is the
+cheapest such guard.
+</Callout>
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `kapkan_dataplane_degraded` | — | `1` when at least one configured interface has no live XDP attachment. This is the single series to alert on. `/healthz` reports the same condition as `dataplane: DEGRADED (n/m interfaces attached)` and still returns 200 — a restart cannot conjure a missing NIC. |
+| `kapkan_dataplane_xdp_mode` | `interface`, `mode` | `1` when the program is attached to this interface in this mode (`native` or `generic`), `0` for the other, so a fallback across a restart never leaves a stale series claiming both. BOTH series read `0` for an interface that is not filtering at all — that is the difference between "on the generic path" and "not protected". `generic` costs roughly 10x the per-packet CPU of `native`. |
+| `kapkan_dataplane_attach_errors_total` | `interface` | Failed attach attempts, including the watcher's retries. Rising *with* `kapkan_dataplane_degraded` is a NIC that will not take the program; rising *without* it is a flapping link that is being recovered. |
+| `kapkan_dataplane_reattach_total` | `interface` | Times the program was re-attached to an interface after losing the attachment. This is what makes an intermittent NIC visible: every individual scrape says healthy, and this counter says it was not. |
+| `kapkan_dataplane_pins_rebuilt` | — | `1` when an existing pinned program was found at startup, rejected and rebuilt — expected after an upgrade that changes the BPF object, its map layout or `dataplane.limits`. The cost is that the previous process's dynamic rules are gone; active attacks are re-mitigated on their next detection interval. |
+| `kapkan_dataplane_packets_total` | `verdict` | Packets by terminal XDP verdict (`pass_default`, `pass_allow_src`, `drop_static`, `drop_rl`, …). Exactly one terminal verdict is counted per packet — see [Terminal verdicts and observations](#terminal-verdicts-and-observations) before summing it. |
+| `kapkan_dataplane_bytes_total` | `verdict` | Bytes, by the same terminal verdicts. A packets-per-second graph alone cannot tell a 64-byte SYN flood from a 1500-byte amplification reflection, and the two call for different responses. |
+| `kapkan_dataplane_observations_total` | `kind` | Datapath observations that accompany a terminal verdict rather than replacing it: `dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`. A separate metric on purpose — see below. |
+| `kapkan_dataplane_filter_bypass_packets_total` | `reason` | **An alarm, not a statistic.** Packets forwarded without a single rule being evaluated, because they hit a datapath parse limit first. One `reason` exists today, `ipv6_exthdr_cap`. Alert on any non-zero rate — see [The filter-bypass alarm](#the-filter-bypass-alarm). |
+| `kapkan_dataplane_filter_bypass_bytes_total` | `reason` | Bytes for the same, by the same `reason`. It separates a probe from a flood: a handful of crafted packets an hour is somebody measuring your parser, and a sustained bitrate is the attack that measurement was for. |
+| `kapkan_dataplane_rules` | `mode` | Rules the kernel is currently enforcing — static policy plus the mitigator's dynamic rules — split `real` / `dry_run` exactly as `kapkan_mitigate_flowspec_rules` is. The mode is the datapath's own flag read back from the kernel, not the config file's: an adopted pin set can still be running the previous process's flag. |
+| `kapkan_dataplane_map_entries` | `map` | `max_entries` of each BPF map as actually created, after `dataplane.limits` were applied. |
+| `kapkan_dataplane_map_bytes` | `map` | Kernel footprint estimate per BPF map, in bytes (the `memlock` field of the map's `fdinfo`). |
+| `kapkan_dataplane_policy_generation` | — | The generation of the double-buffered static policy currently live in the kernel. The value is uninteresting; the slope is the alert — every flip walks the policy map under the lock that also serialises rule installs, so a generation climbing once a second means something is republishing policy in a loop. |
+| `kapkan_dataplane_policy_apply_seconds` | — | Histogram of the time to build and publish one generation of static policy. That span holds the lock a rule install waits on, so this is the metric that answers "could a config reload have delayed mitigating an attack?". |
+
+### Terminal verdicts and observations
+
+<Callout type="warning" title="Never add the two families together">
+`kapkan_dataplane_packets_total` and `kapkan_dataplane_observations_total` are two metrics
+on purpose. Observation counters are bumped *alongside* the terminal verdict for the same
+packet — a dry-run rewrite bumps both `dryrun_would_drop` and the `pass` it was rewritten
+to — so a single metric carrying both would make the obvious query over-count exactly the
+packets you most want counted correctly.
+</Callout>
+
+With the two split, exactly one terminal verdict is counted per packet, so
+
+```
+sum(rate(kapkan_dataplane_packets_total[1m]))
+```
+
+is packets through the datapath, and
+
+```
+sum(rate(kapkan_dataplane_packets_total{verdict=~"drop_.*"}[1m]))
+  / sum(rate(kapkan_dataplane_packets_total[1m]))
+```
+
+is the drop rate. Neither query should ever include `kapkan_dataplane_observations_total`.
+
+During a dry run the observation to watch is `dryrun_would_drop`: it counts the packets that
+*would* have been dropped, and it is the whole argument for turning `dry_run` off.
+
+```
+sum(rate(kapkan_dataplane_observations_total{kind="dryrun_would_drop"}[1m]))
+```
+
+### The filter-bypass alarm
+
+`kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}` counts packets the
+data plane **forwarded without evaluating a single rule**. Every other `pass_*` verdict means
+the rules ran and none of them said drop; this one means the rules never ran at all — allow
+lists, drop rules and rate limits alike. For those packets the filter was, in effect, switched
+off.
+
+The cause is a parse budget: the datapath walks at most eight IPv6 extension headers, and a
+packet carrying more is passed on unexamined. That it is passed and not dropped is deliberate —
+a parse limit must never become a default-deny — which means this counter is the entire
+mitigation. [The one thing it does not inspect](/docs/dataplane#the-one-thing-it-does-not-inspect)
+covers the mechanism and what to do about it.
+
+No legitimate traffic chains eight extension headers, so the alert threshold is zero rather
+than some rate you tune:
+
+```
+sum(rate(kapkan_dataplane_filter_bypass_packets_total[5m])) > 0
+```
+
+Both series are published even while nothing has been bypassed, so a healthy data plane shows
+an explicit `0` rather than "No data" — that is how you can tell the alert is wired up at all.
+
+<Callout type="warning" title="A second view, not extra traffic">
+These packets are also counted in `kapkan_dataplane_packets_total{verdict="pass_exthdr_cap"}`.
+The duplication is deliberate: `packets_total` still partitions the traffic exactly once, and
+this family lifts one of its members out under a name an alert rule can state plainly. Never
+add the two together.
+</Callout>
+
+### Counters across a restart
+
+`kapkan_dataplane_packets_total` and `kapkan_dataplane_bytes_total` start at zero with the
+process, but the kernel maps they are read from do not — a process that adopts an existing
+pin set inherits the previous one's totals. The scraper seeds its baseline from the first
+read and publishes only what *this* process observed, so `rate()` is correct at startup
+instead of showing a spike as wide as the previous process's whole lifetime. The absolute
+kernel totals are on `/api/v1/status` if you need them.
+
+The same reseeding happens when the counters go backwards, which can only mean they were
+reset underneath the process (pins rebuilt, a map recreated). A rebuild therefore shows up
+as a gap in the rate, never as a negative spike.
+
+### Map sizing and memory
+
+`kapkan_dataplane_map_entries` and `kapkan_dataplane_map_bytes` are the feedback loop for
+`dataplane.limits`. BPF map memory is charged to the unit's memory cgroup in one step at
+load, so a `MemoryMax=` that was fine before the data plane existed can OOM the unit at
+startup. Two maps dominate the footprint — `kapkan_rl_src4` and `kapkan_rl_src6`, sized from
+`dataplane.limits.max_ratelimit_sources` — and being LRU hashes they are pre-allocated in
+full whether or not a single source is ever rate-limited. Lower the limit and read the result
+off these gauges rather than inferring it:
+
+```
+sum(kapkan_dataplane_map_bytes)
+```
+
+### Per-ban drop counts
+
+How much the kernel dropped **for one victim** is deliberately not here. `/metrics` is
+unauthenticated, and a victim address in a label would publish who is under attack to anyone
+who can reach the listener. Those per-ban and per-rule counters are on the authenticated
+[`/api/v1/bans`](/docs/api) instead, under each ban's `dataplane` object.
+
 ## Scraping
 
 Add Kapkan as a scrape target in your Prometheus config:
@@ -98,7 +236,9 @@ An official Grafana dashboard for the `kapkan_*` set is available to download di
 It covers the full pipeline — ingest flow/datagram/decode rates and dropped flows, active and
 started attacks, tracked hosts, hot-path latency quantiles, announced routes and FlowSpec
 rules by `mode`, bans rejected by `reason`, mitigation fallbacks, and notification and storage
-results.
+results. A **Data plane** row covers the XDP metrics above: packets per second by verdict,
+rules in the kernel by mode, attachment by interface and mode, attach errors, policy generation
+and apply-time quantiles, and BPF map entries.
 
 In Grafana, go to **Dashboards → New → Import**, upload the JSON, and pick your Prometheus
 data source when prompted (it is templatized as `DS_PROMETHEUS`). The dashboard targets
@@ -109,5 +249,6 @@ it for provisioning.
 ## Related
 
 - [REST API](/docs/api) — the data endpoints served alongside `/metrics`.
+- [In-kernel data plane](/docs/dataplane) — the XDP backend behind the `kapkan_dataplane_*` set.
 - [Storage (ClickHouse)](/docs/storage) — the optional persistence behind `kapkan_storage_rows_total`.
 - [Deployment](/docs/deployment) — running Kapkan as a service and choosing a listen address.

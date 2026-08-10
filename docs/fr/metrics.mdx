@@ -8,7 +8,8 @@ export const metadata = {
 
 Kapkan expose des métriques Prometheus sous l'espace de noms `kapkan_` via `GET /metrics` sur
 l'écouteur de l'API (`api.listen`, par convention `127.0.0.1:8080` — la valeur de la configuration d'exemple ; ce champ est obligatoire, alors définissez-le). Elles couvrent l'ensemble du
-pipeline — l'ingestion des flows, le moteur de détection, l'atténuation RTBH et les notifications —
+pipeline — l'ingestion des flows, le moteur de détection, l'atténuation RTBH, les notifications et,
+là où il est activé, le plan de données XDP dans le noyau —
 afin que vous puissiez collecter le débit, la latence, les attaques actives et les routes annoncées
 dans votre supervision existante.
 
@@ -71,6 +72,150 @@ est la valeur par défaut livrée, c'est ce qu'affichera tout nouveau déploieme
 Le label `proto` est le protocole filaire sur lequel le flow est arrivé : `sflow5`, `netflow5`,
 `netflow9` ou `ipfix` (par ex. `kapkan_ingest_flows_total{proto="sflow5"}`).
 
+## Plan de données (XDP)
+
+La famille `kapkan_dataplane_*` rend compte du plan de données XDP dans le noyau
+([`dataplane.enabled: true`](/docs/dataplane)). La plupart de ces séries naissent au moment où le
+plan de données y écrit : sur un hôte qui atténue uniquement via BGP, elles sont donc absentes, et
+non à zéro.
+
+Une bonne partie de la famille relève du cycle de vie, et c'est délibéré. Un programme XDP qui
+n'est pas attaché ressemble exactement à un programme qui l'est — le démon tourne, l'API répond,
+les bannissements sont enregistrés — et la seule différence visible est que les paquets que vous
+avez demandé de rejeter ne le sont pas. « Est-il attaché ? » est donc une métrique, et non quelque
+chose à déduire d'une ligne de log au démarrage.
+
+<Callout type="warning" title="Quatre séries existent même sans plan de données">
+`kapkan_dataplane_degraded`, `kapkan_dataplane_pins_rebuilt`,
+`kapkan_dataplane_policy_generation` et `kapkan_dataplane_policy_apply_seconds` ne portent aucun
+label : elles sont donc enregistrées au démarrage et exportées par tous les builds — à `0` sur un
+hôte qui n'a jamais chargé de programme BPF. Ne lisez pas `kapkan_dataplane_degraded == 0` comme
+« le plan de données est en bonne santé » : sur un hôte qui n'utilise que BGP, cela signifie qu'il
+n'y a rien à dégrader. Conditionnez toute alerte sur le plan de données au fait qu'il tourne
+réellement — la garde la moins coûteuse est la présence de `kapkan_dataplane_xdp_mode`.
+</Callout>
+
+| Métrique | Labels | Signification |
+| --- | --- | --- |
+| `kapkan_dataplane_degraded` | — | `1` lorsqu'au moins une interface configurée n'a aucun attachement XDP actif. C'est la seule série sur laquelle alerter. `/healthz` signale la même condition sous la forme `dataplane: DEGRADED (n/m interfaces attached)` et renvoie tout de même 200 — un redémarrage ne peut pas faire apparaître une carte réseau absente. |
+| `kapkan_dataplane_xdp_mode` | `interface`, `mode` | `1` lorsque le programme est attaché à cette interface dans ce mode (`native` ou `generic`), `0` pour l'autre, de sorte qu'un repli survivant à un redémarrage ne laisse jamais une série périmée prétendant les deux. LES DEUX séries valent `0` pour une interface qui ne filtre pas du tout — c'est là toute la différence entre « sur le chemin générique » et « non protégée ». `generic` coûte environ 10 fois plus de CPU par paquet que `native`. |
+| `kapkan_dataplane_attach_errors_total` | `interface` | Tentatives d'attachement échouées, y compris les reprises du watcher. Une hausse *accompagnée de* `kapkan_dataplane_degraded` signale une carte qui refuse le programme ; une hausse *sans* lui signale un lien instable en cours de rétablissement. |
+| `kapkan_dataplane_reattach_total` | `interface` | Nombre de fois où le programme a été rattaché à une interface après avoir perdu son attachement. C'est ce qui rend visible une carte réseau intermittente : chaque collecte prise isolément dit « en bonne santé », et ce compteur dit qu'elle ne l'était pas. |
+| `kapkan_dataplane_pins_rebuilt` | — | `1` lorsqu'un programme épinglé existant a été trouvé au démarrage, rejeté puis reconstruit — attendu après une mise à jour qui modifie l'objet BPF, la disposition de ses maps ou `dataplane.limits`. Le coût : les règles dynamiques du processus précédent sont perdues ; les attaques en cours sont réatténuées à leur prochain intervalle de détection. |
+| `kapkan_dataplane_packets_total` | `verdict` | Paquets par verdict XDP terminal (`pass_default`, `pass_allow_src`, `drop_static`, `drop_rl`, …). Exactement un verdict terminal est compté par paquet — lisez [Verdicts terminaux et observations](#verdicts-terminaux-et-observations) avant de les sommer. |
+| `kapkan_dataplane_bytes_total` | `verdict` | Octets, selon les mêmes verdicts terminaux. Un graphique en paquets par seconde seul ne distingue pas un SYN flood de 64 octets d'une réflexion par amplification de 1500 octets, et les deux appellent des réponses différentes. |
+| `kapkan_dataplane_observations_total` | `kind` | Observations du chemin de données qui accompagnent un verdict terminal au lieu de le remplacer : `dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`. Une métrique distincte à dessein — voir ci-dessous. |
+| `kapkan_dataplane_filter_bypass_packets_total` | `reason` | **Une alarme, pas une statistique.** Paquets transmis sans qu'une seule règle ait été évaluée, parce qu'ils ont d'abord atteint une limite d'analyse du chemin de données. Un seul `reason` existe aujourd'hui : `ipv6_exthdr_cap`. Alertez sur tout taux non nul — voir [L'alarme de contournement du filtre](#lalarme-de-contournement-du-filtre). |
+| `kapkan_dataplane_filter_bypass_bytes_total` | `reason` | Octets correspondants, selon le même `reason`. Cela distingue un sondage d'un déluge : une poignée de paquets fabriqués par heure, c'est quelqu'un qui mesure votre analyseur ; un débit soutenu, c'est l'attaque pour laquelle cette mesure a été faite. |
+| `kapkan_dataplane_rules` | `mode` | Règles que le noyau applique actuellement — la politique statique plus les règles dynamiques de l'atténuation — ventilées en `real` / `dry_run` exactement comme `kapkan_mitigate_flowspec_rules`. Le mode est le drapeau du chemin de données lui-même, relu depuis le noyau, et non celui du fichier de configuration : un jeu d'épinglages adopté peut encore tourner avec le drapeau du processus précédent. |
+| `kapkan_dataplane_map_entries` | `map` | `max_entries` de chaque map BPF telle qu'elle a réellement été créée, après application de `dataplane.limits`. |
+| `kapkan_dataplane_map_bytes` | `map` | Estimation par le noyau de l'empreinte mémoire de chaque map BPF, en octets (le champ `memlock` du `fdinfo` de la map). |
+| `kapkan_dataplane_policy_generation` | — | La génération de la politique statique à double tampon actuellement active dans le noyau. La valeur est sans intérêt ; c'est la pente qui alerte — chaque bascule parcourt la map de politiques sous le verrou qui sérialise aussi les installations de règles, donc une génération qui monte une fois par seconde signifie que quelque chose republie la politique en boucle. |
+| `kapkan_dataplane_policy_apply_seconds` | — | Histogramme du temps nécessaire pour construire et publier une génération de politique statique. Cet intervalle détient le verrou qu'attend une installation de règle : c'est donc la métrique qui répond à « un rechargement de configuration a-t-il pu retarder l'atténuation d'une attaque ? ». |
+
+### Verdicts terminaux et observations
+
+<Callout type="warning" title="N'additionnez jamais les deux familles">
+`kapkan_dataplane_packets_total` et `kapkan_dataplane_observations_total` sont deux métriques à
+dessein. Les compteurs d'observation sont incrémentés *en plus* du verdict terminal du même paquet
+— une réécriture en dry-run incrémente à la fois `dryrun_would_drop` et le `pass` vers lequel elle
+a été réécrite — de sorte qu'une métrique unique portant les deux ferait sur-compter, à la requête
+la plus évidente, précisément les paquets que vous tenez le plus à compter correctement.
+</Callout>
+
+Les deux étant séparées, exactement un verdict terminal est compté par paquet, donc
+
+```
+sum(rate(kapkan_dataplane_packets_total[1m]))
+```
+
+correspond aux paquets traversant le chemin de données, et
+
+```
+sum(rate(kapkan_dataplane_packets_total{verdict=~"drop_.*"}[1m]))
+  / sum(rate(kapkan_dataplane_packets_total[1m]))
+```
+
+au taux de rejet. Aucune de ces deux requêtes ne doit jamais inclure
+`kapkan_dataplane_observations_total`.
+
+Pendant un dry run, l'observation à surveiller est `dryrun_would_drop` : elle compte les paquets
+qui *auraient* été rejetés, et constitue tout l'argument pour désactiver `dry_run`.
+
+```
+sum(rate(kapkan_dataplane_observations_total{kind="dryrun_would_drop"}[1m]))
+```
+
+### L'alarme de contournement du filtre
+
+`kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}` compte les paquets que le
+plan de données a **transmis sans évaluer une seule règle**. Tout autre verdict `pass_*` signifie
+que les règles ont été parcourues et qu'aucune n'a demandé le rejet ; celui-ci signifie qu'elles ne
+l'ont pas été du tout — ni listes d'autorisation, ni règles de rejet, ni limitations de débit. Pour
+ces paquets, le filtre était de fait désactivé.
+
+La cause est un budget d'analyse : le chemin de données parcourt au plus huit en-têtes d'extension
+IPv6, et un paquet qui en porte davantage est transmis sans examen. Qu'il soit transmis et non
+rejeté est délibéré — une limite d'analyse ne doit jamais devenir un refus par défaut — et ce
+compteur constitue donc l'unique parade.
+[La seule chose qu'il n'inspecte pas](/docs/dataplane#la-seule-chose-quil-ninspecte-pas) décrit le
+mécanisme et la conduite à tenir.
+
+Aucun trafic légitime n'enchaîne huit en-têtes d'extension : le seuil d'alerte est donc zéro, et
+non un taux que vous réglez.
+
+```
+sum(rate(kapkan_dataplane_filter_bypass_packets_total[5m])) > 0
+```
+
+Les deux séries sont publiées même quand rien n'a été contourné : un plan de données en bonne santé
+affiche donc un `0` explicite plutôt que « aucune donnée » — c'est ainsi que vous pouvez savoir que
+l'alerte est bel et bien branchée.
+
+<Callout type="warning" title="Une seconde vue, pas du trafic supplémentaire">
+Ces paquets sont aussi comptés dans `kapkan_dataplane_packets_total{verdict="pass_exthdr_cap"}`.
+Ce doublon est délibéré : `packets_total` partitionne toujours le trafic exactement une fois, et
+cette famille en extrait l'un des membres sous un nom qu'une règle d'alerte peut énoncer
+clairement. N'additionnez jamais les deux.
+</Callout>
+
+### Compteurs et redémarrages
+
+`kapkan_dataplane_packets_total` et `kapkan_dataplane_bytes_total` démarrent à zéro avec le
+processus, mais pas les maps du noyau d'où ils sont lus — un processus qui adopte un jeu
+d'épinglages existant hérite des totaux du précédent. Le collecteur amorce sa ligne de base sur la
+première lecture et ne publie que ce que *ce* processus a observé, de sorte que `rate()` reste
+correct au démarrage au lieu de produire un pic aussi large que toute la durée de vie du processus
+précédent. Les totaux absolus du noyau sont disponibles sur `/api/v1/status` si vous en avez
+besoin.
+
+Le même réamorçage se produit lorsque les compteurs reculent, ce qui ne peut signifier qu'une
+remise à zéro sous le processus (épinglages reconstruits, map recréée). Une reconstruction apparaît
+donc comme un trou dans le taux, jamais comme un pic négatif.
+
+### Dimensionnement des maps et mémoire
+
+`kapkan_dataplane_map_entries` et `kapkan_dataplane_map_bytes` sont la boucle de rétroaction de
+`dataplane.limits`. La mémoire des maps BPF est imputée au cgroup mémoire de l'unit en une seule
+fois au chargement : un `MemoryMax=` qui convenait avant l'existence du plan de données peut donc
+faire tuer l'unit par l'OOM au démarrage. Deux maps dominent l'empreinte — `kapkan_rl_src4` et
+`kapkan_rl_src6`, dimensionnées d'après `dataplane.limits.max_ratelimit_sources` — et, étant des
+tables de hachage LRU, elles sont préallouées intégralement, qu'une seule source soit un jour
+limitée en débit ou non. Abaissez la limite et lisez le résultat sur ces jauges plutôt que de le
+supposer :
+
+```
+sum(kapkan_dataplane_map_bytes)
+```
+
+### Paquets rejetés par blocage
+
+Ce que le noyau a rejeté **pour une victime donnée** ne figure délibérément pas ici. `/metrics`
+n'est pas authentifié, et une adresse de victime dans un label révélerait qui est attaqué à
+quiconque peut atteindre l'écouteur. Ces compteurs par bannissement et par règle se trouvent en
+revanche dans [`/api/v1/bans`](/docs/api), qui est authentifié, sous l'objet `dataplane` de chaque
+bannissement.
+
 ## Collecte (scraping)
 
 Ajoutez Kapkan comme cible de collecte dans votre configuration Prometheus :
@@ -101,7 +246,10 @@ Un dashboard Grafana officiel pour l'ensemble `kapkan_*` est disponible en tél�
 Il couvre l'ensemble du pipeline — taux d'ingestion des flows/datagrammes/décodage et flows abandonnés,
 attaques actives et démarrées, hôtes suivis, quantiles de latence du chemin critique, routes annoncées
 et règles FlowSpec par `mode`, bannissements refusés par `reason`, replis d'atténuation, ainsi que les
-résultats des notifications et du stockage.
+résultats des notifications et du stockage. Une rangée **Data plane** couvre les métriques XDP
+ci-dessus : paquets par seconde par verdict, règles dans le noyau par mode, attachement par
+interface et par mode, erreurs d'attachement, génération de politique et quantiles du temps
+d'application, et entrées des maps BPF.
 
 Dans Grafana, allez dans **Dashboards → New → Import**, téléversez le JSON et sélectionnez votre source
 de données Prometheus lorsqu'elle est demandée (elle est paramétrée sous `DS_PROMETHEUS`). Le dashboard
@@ -112,5 +260,6 @@ celui-ci pour le provisionnement.
 ## Pages connexes
 
 - [API REST](/docs/api) — les points de terminaison de données servis aux côtés de `/metrics`.
+- [Plan de données dans le noyau](/docs/dataplane) — le backend XDP derrière l'ensemble `kapkan_dataplane_*`.
 - [Stockage (ClickHouse)](/docs/storage) — la persistance optionnelle derrière `kapkan_storage_rows_total`.
 - [Déploiement](/docs/deployment) — exécuter Kapkan en tant que service et choisir une adresse d'écoute.
