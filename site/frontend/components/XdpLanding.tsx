@@ -2,6 +2,7 @@ import Link from "next/link";
 import { site } from "@/lib/site";
 import type { Locale } from "@/lib/i18n";
 import { xdp } from "@/lib/xdp-i18n";
+import { landing } from "@/lib/landing-i18n";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -11,7 +12,7 @@ import { MobileNav, type NavLink } from "@/components/MobileNav";
 // Same lucide-style inline set the main landing uses, trimmed to this page.
 type IconName =
   | "cpu" | "route" | "gauge" | "shieldCheck" | "clock" | "lock" | "check"
-  | "arrowRight" | "arrowDown" | "x" | "layers" | "zap" | "terminal";
+  | "arrowRight" | "arrowDown" | "x" | "layers" | "zap" | "terminal" | "star";
 
 function Icon({ name, className }: { name: IconName; className?: string }) {
   const s = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -43,6 +44,8 @@ function Icon({ name, className }: { name: IconName; className?: string }) {
       return <svg {...c} {...s}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>;
     case "terminal":
       return <svg {...c} {...s}><path d="M4 17l6-5-6-5" /><path d="M12 19h8" /></svg>;
+    case "star":
+      return <svg {...c} fill="currentColor"><path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.56l-5.91 3.1 1.13-6.57L2.45 9.44l6.6-.96L12 2.5z" /></svg>;
   }
 }
 
@@ -114,11 +117,24 @@ export function XdpLanding({ locale, basePath }: { locale: Locale; basePath: str
   const docsHref = `${basePath}/docs/dataplane`;
   const configHref = `${basePath}/config`;
   const homeHref = basePath || "/";
+  const docsIndexHref = `${basePath}/docs`;
 
+  // Same top menu as the home page — the site's global nav, not a page-specific
+  // one — so it does not visibly change when you land here. The section links
+  // resolve to those sections on the home page; XDP is this page. Labels come
+  // from the landing dictionary so the two headers can never drift apart.
+  const nt = landing[locale].nav;
+  const navLinks: NavLink[] = [
+    { label: nt.features, href: `${homeHref}#features` },
+    { label: nt.how, href: `${homeHref}#how-it-works` },
+    { label: "XDP", href: `${basePath}/xdp` },
+    { label: nt.compare, href: `${homeHref}#compare` },
+    { label: nt.docs, href: docsIndexHref },
+  ];
   const mobileLinks: NavLink[] = [
-    { label: t.nav.home, href: homeHref },
-    { label: t.nav.docs, href: docsHref },
-    { label: site.name, href: site.repo, external: true },
+    ...navLinks,
+    { label: nt.viewGithub, href: site.repo, external: true },
+    { label: nt.buildConfig, href: configHref },
   ];
 
   return (
@@ -128,16 +144,32 @@ export function XdpLanding({ locale, basePath }: { locale: Locale; basePath: str
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
           <Logo href={homeHref} />
           <nav className="hidden items-center gap-8 text-sm font-medium text-muted-foreground md:flex">
-            <Link href={homeHref} className="transition-colors hover:text-foreground">{t.nav.home}</Link>
-            <Link href={docsHref} className="transition-colors hover:text-foreground">{t.nav.docs}</Link>
+            {navLinks.map((l) => (
+              <Link
+                key={l.label}
+                href={l.href}
+                aria-current={l.label === "XDP" ? "page" : undefined}
+                className={`transition-colors hover:text-foreground ${l.label === "XDP" ? "text-foreground" : ""}`}
+              >
+                {l.label}
+              </Link>
+            ))}
           </nav>
           <div className="flex items-center gap-3">
+            <a
+              href={site.repo}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground lg:flex"
+            >
+              <Icon name="star" className="h-3.5 w-3.5 text-amber-400" /> {nt.star}
+            </a>
             <div className="hidden sm:block"><LanguageSwitcher lang={locale} /></div>
             <ThemeToggle />
-            <Link href={docsHref} className="hidden rounded-full bg-accent px-5 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90 sm:inline-flex">
-              {t.nav.docs}
+            <Link href={docsIndexHref} className="hidden rounded-full bg-accent px-5 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90 sm:inline-flex">
+              {nt.readDocs}
             </Link>
-            <MobileNav links={mobileLinks} cta={{ label: t.nav.docs, href: docsHref }} menuLabel={t.nav.home}>
+            <MobileNav links={mobileLinks} cta={{ label: nt.readDocs, href: docsIndexHref }} menuLabel={nt.menu}>
               <LanguageSwitcher lang={locale} />
               <ThemeToggle />
             </MobileNav>
