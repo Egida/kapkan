@@ -54,53 +54,34 @@ const SAFETY_ICONS: IconName[] = ["gauge", "clock", "lock", "check"];
 // classes. It shows the one thing that changes versus an announcement: the
 // encoded rules go into kernel maps, and the XDP program returns a verdict per
 // packet with pass as the default.
+// The pipeline as an HTML flow rather than a fixed-geometry SVG: real text
+// layout means labels size to their own length in every locale (no glyph
+// stretching), the row wraps cleanly on narrow screens, and it stays
+// theme-aware through the same token classes as the rest of the page.
 function Pipeline({ t }: { t: (typeof xdp)[Locale]["how"]["diagram"] }) {
-  const box = "fill-[var(--surface)] stroke-[var(--border)]";
+  const steps = [t.detect, t.compile, t.maps, t.verdict];
   return (
     <figure className="mt-14">
-      <div className="overflow-x-auto">
-        <svg viewBox="0 0 900 220" className="mx-auto h-auto w-full min-w-[680px] max-w-4xl" role="img" aria-label={t.caption}>
-          <defs>
-            <marker id="xdp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0 0L10 5L0 10z" className="fill-[var(--border)]" />
-            </marker>
-          </defs>
-          {/* flow line */}
-          <g strokeWidth="1.6" className="stroke-[var(--border)]" markerEnd="url(#xdp-arrow)" fill="none">
-            <line x1="150" y1="70" x2="212" y2="70" />
-            <line x1="360" y1="70" x2="422" y2="70" />
-            <line x1="570" y1="70" x2="632" y2="70" />
-          </g>
-          {/* nodes. textLength + lengthAdjust makes every label render at the
-              same width regardless of locale — "Rule encoder" and "Codificador
-              de reglas" both fill the box, so a longer translation compresses to
-              fit instead of overflowing. No sub-labels: they would be English
-              under a translated title on every non-English page. */}
-          {[
-            { x: 20, label: t.detect },
-            { x: 230, label: t.compile },
-            { x: 440, label: t.maps },
-            { x: 650, label: t.verdict },
-          ].map((n) => (
-            <g key={n.x}>
-              <rect x={n.x} y="40" width="130" height="60" rx="10" strokeWidth="1.4" className={box} />
-              <text x={n.x + 65} y="75" textAnchor="middle" textLength="112" lengthAdjust="spacingAndGlyphs" className="fill-[var(--foreground)]" fontSize="14" fontWeight="600">{n.label}</text>
-            </g>
-          ))}
-          {/* verdict branch */}
-          <g strokeWidth="1.6" className="stroke-[var(--border)]" fill="none">
-            <path d="M715 100 L715 140 L360 140 L360 158" markerEnd="url(#xdp-arrow)" />
-            <path d="M715 100 L715 170" markerEnd="url(#xdp-arrow)" />
-          </g>
-          <g>
-            <rect x="285" y="158" width="150" height="34" rx="8" strokeWidth="1.4" className="fill-[color-mix(in_srgb,#22c55e_12%,transparent)] stroke-[#22c55e]" />
-            <text x="360" y="180" textAnchor="middle" textLength="132" lengthAdjust="spacingAndGlyphs" className="fill-[#22c55e]" fontSize="12.5" fontWeight="600">{t.pass}</text>
-            <rect x="640" y="178" width="150" height="34" rx="8" strokeWidth="1.4" className="fill-[color-mix(in_srgb,#ef4444_12%,transparent)] stroke-[#ef4444]" />
-            <text x="715" y="200" textAnchor="middle" textLength="132" lengthAdjust="spacingAndGlyphs" className="fill-[#ef4444]" fontSize="12.5" fontWeight="600">{t.drop}</text>
-          </g>
-        </svg>
+      <div className="flex flex-wrap items-stretch justify-center gap-x-2 gap-y-3 sm:gap-x-3">
+        {steps.map((label) => (
+          <div key={label} className="flex items-stretch gap-2 sm:gap-3">
+            <div className="flex items-center rounded-xl border border-border bg-surface px-4 py-3 text-center text-sm font-semibold shadow-sm">
+              {label}
+            </div>
+            <Icon name="arrowRight" className="h-4 w-4 shrink-0 self-center text-muted-foreground" />
+          </div>
+        ))}
+        {/* The XDP program returns exactly one of these two verdicts. */}
+        <div className="flex flex-col justify-center gap-2">
+          <span className="rounded-lg border border-green-500/40 bg-green-500/10 px-3 py-1.5 text-center text-xs font-semibold text-green-600 dark:text-green-400">
+            {t.pass}
+          </span>
+          <span className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-center text-xs font-semibold text-red-600 dark:text-red-400">
+            {t.drop}
+          </span>
+        </div>
       </div>
-      <figcaption className="mx-auto mt-5 max-w-2xl text-center text-sm text-muted-foreground">{t.caption}</figcaption>
+      <figcaption className="mx-auto mt-6 max-w-2xl text-center text-sm text-muted-foreground">{t.caption}</figcaption>
     </figure>
   );
 }

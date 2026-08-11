@@ -99,6 +99,9 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
   const navLinks: NavLink[] = [
     { label: t.nav.features, href: "#features" },
     { label: t.nav.how, href: "#how-it-works" },
+    // "XDP" is an acronym — the same in every locale, so it carries no t.nav
+    // entry. It is a page link (like Docs), not an in-page anchor.
+    { label: "XDP", href: `${basePath}/xdp` },
     { label: t.nav.compare, href: "#compare" },
     { label: t.nav.docs, href: docsHref },
   ];
