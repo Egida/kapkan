@@ -105,7 +105,13 @@ sleep "$WARMUP"
 # fine. The minimums are 75% of what scripts/flowinject/main.go documents having
 # measured; below that the engine is losing datagrams to CPU contention, which is
 # transient, so this retries rather than failing at the first look.
-EXPECT=${EXPECT:-"203.0.113.45:20 203.0.113.10:9 203.0.113.77:3"}
+#
+# They were raised fivefold with no change to the scene when /api/v1/attacks
+# stopped serving the rate frozen at detection and started serving the engine's
+# live one. The floors are what makes this an assertion: left at a fifth of what
+# the scene now produces, the whole scene could collapse to a fifth of itself and
+# still pass.
+EXPECT=${EXPECT:-"203.0.113.45:97 203.0.113.10:45 203.0.113.77:15"}
 SCENE_DEADLINE=$((SECONDS + ${SCENE_WAIT:-90}))
 while :; do
 	SCENE=$(curl -sf "http://127.0.0.1:$API_PORT/api/v1/attacks" || echo '{}')
