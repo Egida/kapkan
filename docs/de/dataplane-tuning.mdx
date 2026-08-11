@@ -1,0 +1,155 @@
+export const metadata = {
+  title: "Feinabstimmung & Referenz",
+  description:
+    "Referenz zur Datenebene im Kernel: die genaue Reihenfolge, in der ein Paket ausgewertet wird, statische Richtlinie gegenüber generierten Regeln, Ratenbegrenzung pro Quelle, native gegenüber generic Attach und wie die Limits den Kernel-Speicher dimensionieren.",
+};
+
+# Feinabstimmung & Referenz
+
+Die genaue Referenz hinter der Datenebene: wie ein Paket ausgewertet wird, der Unterschied zwischen der
+Richtlinie, die Sie schreiben, und den Regeln, die der Detektor generiert, die eine Fähigkeit, die
+FlowSpec nicht ausdrücken kann, und wie sich die Limits in Kernel-Speicher übersetzen. Wenn Sie sie
+noch in Betrieb nehmen, beginnen Sie mit [Datenebene installieren](/docs/dataplane-install).
+
+## Was der Kernel auswertet, in welcher Reihenfolge
+
+Für jedes Paket durchläuft das Programm eine **feste, nicht konfigurierbare** Reihenfolge und stoppt
+beim ersten Urteil:
+
+1. **Quell-Allowlist** — `dataplane.allowlist`. Ein Treffer wird sofort durchgelassen.
+2. **Geschützte Ziele** — Ihre `protected_whitelist`, in den Kernel gespiegelt. Ein Treffer wird sofort
+   durchgelassen.
+3. **Statische Regeln** — Ihre stets aktive Richtlinie, der erste Treffer gewinnt.
+4. **Dynamische Quellregeln** — Einträge pro Angreifer, die der Detektor installiert hat.
+5. **Dynamische Opferregeln** — die Match-Regeln des Angriffs, höchstens acht pro Angriff, der erste Treffer gewinnt.
+6. **Standard: durchlassen.**
+
+<Callout type="info" title="Zwei Allowlists, zwei verschiedene Achsen">
+`dataplane.allowlist` ist eine Liste von **Quellen**, die immer senden dürfen. `protected_whitelist`
+ist eine Liste von **Zielen**, die niemals gesperrt werden. Sie sind nicht austauschbar, und beide
+werden im Kernel durchgesetzt — die Zielgarantie allein im Userspace zu halten würde ein Fenster
+offen lassen, in dem eine kurz zuvor installierte Regel den Verkehr zu einem geschützten Host noch
+verwerfen könnte.
+</Callout>
+
+Das Standardurteil lautet immer **durchlassen**. Es gibt nirgendwo im Programm ein Default-Deny,
+keinen Modus, in dem das Hinzufügen einer Regel ändert, was mit nicht passendem Verkehr geschieht, und
+kein automatisches Verwerfen von Fragmenten oder ungewöhnlichen Protokollen. Ein Paket, das nicht
+geparst werden kann, wird durchgelassen und gezählt, sofern Sie sich nicht mit `drop_malformed: true`
+dafür entscheiden. Dies ist ein Ausführer von Gegenmaßnahmen, keine Firewall: Es verwirft, was ihm zu
+verwerfen aufgetragen wurde, und leitet alles andere weiter.
+
+## Statische Richtlinie gegenüber generierten Regeln
+
+**Statische Regeln** sind das, was Sie schreiben. Sie sind immer aktiv, unabhängig von jedem Angriff,
+und nützlich für Verkehr, den Sie nie wollen (`drop_chargen`), und für dauerhafte Obergrenzen
+(`cap_icmp`). Namen sind erforderlich und müssen eindeutig sein, sodass zwei Regeln niemals unbemerkt
+denselben Eintrag ansprechen können.
+
+```yaml
+static_rules:
+  - name: drop_chargen
+    match: { proto: udp, src_port: 19 }
+    action: drop
+  - name: cap_icmp
+    match: { proto: icmp }
+    action: ratelimit
+    profile: icmp_cap
+```
+
+**Dynamische Regeln** werden pro Angriff generiert, aus derselben Klassifizierung, die auch FlowSpec
+antreibt — das Protokoll, der reflektierte Quell-Port eines Amplifikationsvektors, TCP-SYN-Flags,
+Fragmentierung und die dominierenden Angreiferquellen in der Verkehrsstichprobe. Sie schreiben sie
+nicht und können sie nicht bearbeiten; sie erscheinen in `/api/v1/bans` bei der Sperre, zu der sie
+gehören, und laufen mit ihr ab.
+
+Die beiden kollidieren nie: Statische Regeln belegen ihre eigene Map (Schritt 3 oben), dynamische
+Regeln belegen eine andere (Schritte 4–5), und jede wird durch ihr eigenes Limit dimensioniert.
+
+## Ratenbegrenzung pro Quelle
+
+Eine `ratelimit`-Aktion wird **pro Quelladresse** durchgesetzt, nicht über den gesamten Verkehr des
+Opfers hinweg. Jede Quelle erhält ihren eigenen Token-Bucket, sodass ein Limit von *N* Paketen pro
+Sekunde jede einzelne Quelle auf *N* begrenzt — eine verteilte Flut wird pro Teilnehmer gedrosselt,
+anstatt tausend Quellen eine aggregierte Obergrenze teilen (und erschöpfen) zu lassen.
+
+```yaml
+ratelimit_profiles:
+  - { name: icmp_cap, mbps: 10 }      # each source: 10 Mbps
+  - { name: dns_reply, pps: 50000 }   # each source: 50k pps
+```
+
+<Callout type="info" title="Das ist die eine Sache, die FlowSpec nicht ausdrücken kann">
+Eine FlowSpec-`traffic-rate` gilt für den Flow, auf den die Regel passt, sodass eine Regel, die ein
+Opfer abdeckt, den gesamten passenden Verkehr dieses Opfers kollektiv ratenbegrenzt — und legitime
+Clients konkurrieren mit Angreifern um dasselbe Kontingent. Buckets pro Quelle sind keine schnellere
+Version von etwas, das der Announcer bereits getan hat; sie sind etwas, das er strukturell überhaupt
+nicht leisten konnte.
+</Callout>
+
+`max_ratelimit_sources` begrenzt, wie viele Quell-Buckets gleichzeitig existieren. Es handelt sich um
+eine Least-Recently-Used-Tabelle: Jenseits des Limits werden die am wenigsten aktiven Quellen
+verdrängt, was unter einer sehr breiten Flut bedeutet, dass einige Quellen kurz wieder zugelassen
+werden, bevor sie erneut gedrosselt werden.
+
+## Attach-Modi
+
+Es gibt zwei Stellen im Empfangspfad, an denen der Kernel das Programm ausführen kann:
+
+- **native** — der Treiber ruft es auf, sobald Pakete von der NIC kommen, bevor ein `sk_buff`
+  alloziert wird. Erfordert Treiberunterstützung und leistet die geringste Arbeit pro Paket.
+- **generic** — der Kernel ruft es auf, nachdem der `sk_buff` alloziert wurde. Funktioniert auf jeder
+  Schnittstelle, einschließlich virtio, und leistet mehr Arbeit pro Paket, um dorthin zu gelangen.
+
+`xdp_mode: auto` (der Standard) verwendet native, wo der Treiber es unterstützt, und generic, wo nicht.
+`native` verweigert den Start, anstatt zurückzufallen — was Sie wollen, wenn Sie für den Treiber-Hook
+dimensioniert haben und lieber beim Boot davon erfahren. `generic` erzwingt den zweiten Modus; es ist
+hauptsächlich für virtio und Testumgebungen gedacht.
+
+<Callout type="warning" title="Unter auto ist der Fallback stumm">
+Ein Treiberwechsel, ein Kernel-Upgrade oder eine neue NIC kann Sie ohne Fehlermeldung von native auf
+generic verschieben, und generic leistet pro Kern weit weniger. Welchen Modus jede Schnittstelle
+tatsächlich erhalten hat, meldet `kapkan dataplane status` und wird als Metrik exportiert — wenn Sie
+für native dimensioniert haben, alarmieren Sie darauf. Siehe
+[den Alarm unter Betrieb](/docs/dataplane-operate).
+</Callout>
+
+## Regelablauf und Herunterfahren
+
+Jede generierte Regel trägt ihren eigenen Ablauf-Zeitstempel, und das Kernel-Programm behandelt eine
+abgelaufene Regel als nicht vorhanden. Das ist tragend: Wenn der Kapkan-Prozess abstürzt, beendet wird
+oder hängt, hören die von ihm installierten Regeln dennoch planmäßig auf zu wirken — eine tote
+Steuerungsebene darf den legitimen Verkehr eines Opfers nicht unbegrenzt verworfen lassen.
+
+Bei einem sauberen Herunterfahren entscheidet `on_exit`, was übrig bleibt. Der Standard `keep` lässt
+das Programm angehängt, sodass die statische Richtlinie über einen Neustart oder ein Upgrade hinweg
+weiter durchgesetzt wird, während dynamische Regeln von selbst auslaufen. `detach` entfernt das
+Programm vollständig, wodurch der gesamte Verkehr durchgelassen wird.
+
+## Limits und Speicher
+
+`limits` dimensioniert die Kernel-Maps, die **einmalig** alloziert werden, wenn das Programm angehängt
+wird:
+
+| Schlüssel | Standard | Was es begrenzt |
+| --- | --- | --- |
+| `max_dynamic_rules` | 4096 | Regeln, die der Detektor installieren darf. Jede Sperre trägt bis zu 8 bei. |
+| `max_static_rules` | 256 | Ihre eigenen, stets aktiven Regeln. |
+| `max_ratelimit_sources` | 1048576 | Token-Buckets pro Quelle. |
+
+`max_dynamic_rules` muss **mindestens** `ban.max_active_bans × 8` betragen; Kapkan verweigert eine
+kleinere Konfiguration, weil die Alternative wäre, dass Installationen mitten in einem Angriff zu
+scheitern beginnen und still zu einem Blackhole degradieren. Die Standardwerte liegen bei 512 aktiven
+Sperren genau auf dieser Grenze.
+
+Da die Maps im Voraus alloziert werden, ist der Speicher reserviert, ob ein Angriff im Gange ist oder
+nicht, und die Bucket-Tabelle pro Quelle dominiert den Gesamtwert. Der Map-Speicher wird der
+Memory-cgroup des Dienstes zugerechnet (Kernel 5.11+), sodass Sie, wenn Sie `MemoryMax=` auf der Unit
+setzen, ihn mit Blick auf die Maps dimensionieren sollten.
+
+## Verwandtes
+
+- [Betrieb & Überwachung](/docs/dataplane-operate) — die Zähler und Alarme, die diese Einstellungen antreiben.
+- [FlowSpec](/docs/flowspec) — dieselben generierten Regeln, stattdessen an Ihre Router announciert.
+- [Konfigurationsreferenz](/docs/configuration) — jeder `dataplane`-Schlüssel in einer Tabelle.
+- [Eskalationsleitern](/docs/escalation) — die lokale Verwerfung mit vorgelagerten Methoden kombinieren.

@@ -1,0 +1,140 @@
+export const metadata = {
+  title: "Установка плоскости данных",
+  description:
+    "Безопасно поднимите плоскость данных в ядре: требования к ядру и правам, override systemd из пакетов, блок конфигурации dataplane и как начать в режиме dry-run, прежде чем что-либо отбрасывать.",
+};
+
+# Установка плоскости данных
+
+Эта страница проведёт вас от нуля до плоскости данных, которая подключена, оценивает трафик и пока
+ничего не отбрасывает, — а это ровно та точка, где стоит остановиться и понаблюдать, прежде чем
+переходить к применению. Если вы ещё не читали [обзор](/docs/dataplane), начните с него; в
+частности, убедитесь, что Kapkan на этой машине работает **на пути трафика**, иначе программе будет
+нечего отбрасывать.
+
+## 1. Проверьте требования
+
+Четыре вещи, и для каждой — проверка в одну строку, которую можно выполнить прямо сейчас:
+
+| Требование | Проверка | Примечания |
+| --- | --- | --- |
+| Linux 5.15 или новее | `uname -r` | Полный набор тестов прогоняется на 5.15, 6.1, 6.6 и 6.12 при каждом изменении. Debian 12, Ubuntu 22.04/24.04, RHEL 9 и их пересборки подходят. **RHEL/Alma/Rocky 8 — нет**: там 4.18, а поддержка длится до 2029 года, так что проверьте, а не предполагайте. |
+| BTF в ядре | `ls /sys/kernel/btf/vmlinux` | Есть в любом дистрибутивном ядре, которое удовлетворяет требованию выше. |
+| Смонтированная bpffs | <code>mount &#124; grep ' /sys/fs/bpf '</code> | Kapkan закрепляет (pin) свою программу и карты в `pin_path`, чтобы политика пережила перезапуск процесса. |
+| Драйвер сетевой карты с поддержкой XDP | `ethtool -i eth0`, затем посмотрите драйвер | Необязательно. Без него используется generic-путь ядра — работает корректно, но с меньшей пропускной способностью. См. [Режимы подключения](/docs/dataplane-tuning). |
+
+Процессу также нужны `CAP_BPF` и `CAP_NET_ADMIN`, чтобы загрузить и подключить программу, право
+записи в точку монтирования bpffs и семейство адресов `AF_NETLINK`.
+
+Компилятор на машине не нужен. Программа BPF компилируется при сборке Kapkan и поставляется внутри
+бинарного файла.
+
+## 2. Выдайте права (systemd)
+
+Unit systemd для Kapkan намеренно ужесточён и **в поставляемом виде блокирует подключение XDP**: нет
+`AmbientCapabilities`, `ProtectSystem=strict` оставляет `/sys/fs/bpf` только для чтения, а в
+`RestrictAddressFamilies` отсутствует `AF_NETLINK`. Это правильное значение по умолчанию: на
+большинстве машин с Kapkan плоскость данных никогда не запускается, и выдавать `CAP_BPF` всем
+подряд ради тех немногих, кому она нужна, — плохой размен.
+
+Пакеты поставляют override-файл, который открывает ровно эти лазейки, по пути
+`/usr/share/kapkan/kapkan-dataplane.conf`. Устанавливайте его осознанно и только на тех машинах, где
+работает плоскость данных:
+
+```sh
+sudo mkdir -p /etc/systemd/system/kapkan.service.d
+sudo cp /usr/share/kapkan/kapkan-dataplane.conf /etc/systemd/system/kapkan.service.d/
+sudo systemctl daemon-reload && sudo systemctl restart kapkan
+```
+
+<Callout type="info" title="Запускаете Kapkan иначе?">
+Если вы не используете штатный unit, требование то же: процессу нужны `CAP_BPF` и `CAP_NET_ADMIN`,
+`AF_NETLINK` и `/sys/fs/bpf`, доступный для записи. Выдайте их тем способом, каким это делает ваша
+система инициализации или среда выполнения контейнеров.
+</Callout>
+
+## 3. Добавьте блок `dataplane`
+
+Блок `dataplane` необязателен. Если его нет, функции просто не существует, и бинарный файл ведёт
+себя ровно так же, как без неё. Ниже — полный блок с пояснением к каждому ключу; чтобы начать,
+достаточно одного `interfaces`.
+
+```yaml
+dataplane:
+  interfaces: [eth0]            # NICs to attach to (at least one; restart to change)
+  xdp_mode: auto                # auto | native | generic
+  pin_path: /sys/fs/bpf/kapkan  # policy survives a restart of this process
+  on_exit: keep                 # keep the program attached on shutdown, or detach
+  drop_malformed: false         # unparseable frames pass and are counted
+
+  allowlist:                    # SOURCE prefixes that always pass
+    - "198.51.100.7/32"         #   monitoring
+    - "192.0.2.0/24"            #   management network
+
+  ratelimit_profiles:           # named ceilings, referenced by static rules
+    - { name: icmp_cap, mbps: 10 }
+    - { name: dns_reply, pps: 50000 }
+
+  static_rules:                 # always-on operator policy
+    - name: drop_chargen
+      match: { proto: udp, src_port: 19 }
+      action: drop
+    - name: cap_icmp
+      match: { proto: icmp }
+      action: ratelimit
+      profile: icmp_cap
+
+  limits:
+    max_dynamic_rules: 4096
+    max_static_rules: 256
+    max_ratelimit_sources: 1048576
+```
+
+`allowlist`, `ratelimit_profiles`, `static_rules` и `limits` разбираются в разделе
+[Тонкая настройка и справочник](/docs/dataplane-tuning). Чтобы поднять плоскость, их можно вовсе не
+указывать.
+
+## 4. Скажите группе использовать её
+
+Само по себе подключение программы ничего не отбрасывает — метод должна выбрать детекция. Дайте
+группе ступень лестницы, которая это делает:
+
+```yaml
+hostgroups:
+  - name: game-servers
+    networks: ["203.0.113.32/27"]
+    escalation:
+      - { after_seconds: 0,   action: dataplane }   # drop locally first
+      - { after_seconds: 120, action: flowspec }    # ask the router if that was not enough
+      - { after_seconds: 600, action: blackhole }
+```
+
+Лестница может только удерживать или усиливать ответ (`none < dataplane < flowspec < divert <
+blackhole`), поэтому ступень `dataplane` может следовать за ступенью «только оповещение», но никогда
+— за `flowspec`, `divert` или `blackhole`.
+
+Если нужен единственный метод без лестницы, задайте группе `mitigation: dataplane`. В любом случае
+настройка действия `dataplane` **без** блока `dataplane` отклоняется при запуске, а не молча ничего
+не делает.
+
+## 5. Запуститесь в режиме dry-run и наблюдайте
+
+Для первого запуска оставьте [dry-run](/docs/safety) включённым — это значение по умолчанию у
+Kapkan, и оно распространяется на плоскость данных ровно так же, как на BGP. Пока `dry_run: true`,
+программа подключается и оценивает каждый пакет, **но ни одно правило не устанавливается и ничего не
+отбрасывается**. Правила, которые Kapkan *установил бы*, пишутся в лог и показываются у блокировки в
+`/api/v1/bans`, так что вы можете сверить их с реальными атаками, прежде чем переходить к применению.
+
+Убедитесь, что подключение прошло успешно:
+
+```sh
+kapkan dataplane status
+```
+
+Вы ищете программу, подключённую к вашему(им) интерфейсу(ам), режим подключения (`native` или
+`generic`) и — поскольку вы в режиме dry-run — явную пометку о том, что вердикты «отбросить»
+переписываются в «пропустить». Как читать этот вывод целиком и за чем следить после перехода к
+применению — в разделе [Эксплуатация и мониторинг](/docs/dataplane-operate).
+
+Когда вы будете довольны тем, что она *отбросила бы*, выключите dry-run (глобально, в настройках
+[безопасности](/docs/safety)), чтобы начать применение.
