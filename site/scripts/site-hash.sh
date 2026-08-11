@@ -24,6 +24,13 @@ cd "$ROOT/frontend" 2>/dev/null || exit 0
   find ../../docs -type f \
     ! -name '.DS_Store' ! -name 'Thumbs.db' ! -name '*.swp' ! -name '*~' ! -name '.#*' \
     -print0 2>/dev/null
+  # The monorepo CHANGELOG: lib/version.server.ts reads the newest released
+  # heading out of it at build time for the landing's version badge, so cutting a
+  # release changes what the site renders without touching anything under
+  # frontend/. Omit it and the auto-release hook sees no change, never redeploys,
+  # and the badge keeps advertising the previous version — which is the exact
+  # staleness deriving it from this file was meant to end.
+  [ -f ../../CHANGELOG.md ] && printf '%s\0' ../../CHANGELOG.md
   # Build-affecting config files at the frontend root.
   for f in mdx-components.tsx next.config.ts package.json package-lock.json \
            tsconfig.json postcss.config.mjs eslint.config.mjs; do

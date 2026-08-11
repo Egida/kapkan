@@ -2,6 +2,7 @@ import Link from "next/link";
 import { site } from "@/lib/site";
 import type { Locale } from "@/lib/i18n";
 import { landing } from "@/lib/landing-i18n";
+import { latestReleasedVersion } from "@/lib/version.server";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -163,7 +164,7 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
                 <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-3 py-1 backdrop-blur-sm">
                   <span className="h-2 w-2 rounded-full bg-green-500" />
                   <span className="font-mono text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                    {t.hero.eyebrow} · v{site.version}
+                    {t.hero.eyebrow} · v{latestReleasedVersion()}
                   </span>
                 </div>
                 <h1 className="mb-6 text-4xl font-bold leading-[1.1] tracking-tight sm:text-5xl lg:text-6xl">
