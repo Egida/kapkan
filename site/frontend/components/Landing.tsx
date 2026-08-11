@@ -287,6 +287,12 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
                   <p className={`text-sm leading-relaxed text-muted-foreground ${i === WIDE_CARD_INDEX ? "max-w-4xl" : ""}`}>
                     {f.body}
                   </p>
+                  {i === WIDE_CARD_INDEX && (
+                    <Link href={`${basePath}/xdp`} className="group mt-4 inline-flex items-center gap-1 text-sm font-medium text-accent transition-colors hover:opacity-80">
+                      {t.features.learnMore}
+                      <Icon name="arrowRight" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                    </Link>
+                  )}
                 </div>
               ))}
             </div>

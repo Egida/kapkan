@@ -22,7 +22,7 @@ export type LandingDict = {
   hero: { eyebrow: string; h1a: string; h1b: string; sub: string; trust: string[] };
   stats: string[];
   how: { heading: string; sub: string; steps: { title: string; body: string }[] };
-  features: { heading: string; sub: string; safetyTag: string; cards: { title: string; body: string }[] };
+  features: { heading: string; sub: string; safetyTag: string; learnMore: string; cards: { title: string; body: string }[] };
   showcase: { heading: string; sub: string };
   compare: {
     heading: string;
@@ -104,6 +104,7 @@ const en: LandingDict = {
     heading: "Enterprise-grade capabilities, free.",
     sub: "The feature set commercial flow-DDoS products charge thousands for, packaged in a single Apache 2.0 binary.",
     safetyTag: "SAFETY",
+    learnMore: "How in-kernel mitigation works",
     cards: [
       { title: "Multi-protocol flow ingest", body: "sFlow, NetFlow v5/v9, IPFIX over UDP, in library mode — no extra daemon required." },
       { title: "Sub-second volumetric detection", body: "Sampling-corrected pps/Mbps/flows thresholds over a sliding window, ≥20M flows/sec/core." },
@@ -217,6 +218,7 @@ const ru: LandingDict = {
     heading: "Корпоративные возможности — бесплатно.",
     sub: "Набор функций, за который коммерческие flow-DDoS продукты берут тысячи, — в одном бинаре под Apache 2.0.",
     safetyTag: "БЕЗОПАСНОСТЬ",
+    learnMore: "Как работает подавление в ядре",
     cards: [
       { title: "Мультипротокольный приём потоков", body: "sFlow, NetFlow v5/v9, IPFIX по UDP в режиме библиотеки — без дополнительного демона." },
       { title: "Обнаружение объёмных атак за доли секунды", body: "Пороги pps/Mbps/потоков с поправкой на сэмплинг по скользящему окну, ≥20M потоков/с/ядро." },
@@ -330,6 +332,7 @@ const de: LandingDict = {
     heading: "Enterprise-Funktionen, kostenlos.",
     sub: "Der Funktionsumfang, für den kommerzielle Flow-DDoS-Produkte Tausende verlangen — in einer einzigen Apache-2.0-Binary.",
     safetyTag: "SICHERHEIT",
+    learnMore: "Wie die Mitigation im Kernel funktioniert",
     cards: [
       { title: "Multiprotokoll-Flow-Aufnahme", body: "sFlow, NetFlow v5/v9, IPFIX über UDP im Library-Modus — kein zusätzlicher Daemon nötig." },
       { title: "Volumetrische Erkennung im Subsekundenbereich", body: "Sampling-korrigierte pps/Mbps/Flows-Schwellen über ein gleitendes Fenster, ≥20M Flows/s/Kern." },
@@ -443,6 +446,7 @@ const fr: LandingDict = {
     heading: "Des capacités de niveau entreprise, gratuites.",
     sub: "L'ensemble de fonctionnalités facturé des milliers par les produits flow-DDoS commerciaux, réuni dans un seul binaire Apache 2.0.",
     safetyTag: "SÛRETÉ",
+    learnMore: "Comment fonctionne la mitigation dans le noyau",
     cards: [
       { title: "Ingestion de flux multi-protocole", body: "sFlow, NetFlow v5/v9, IPFIX sur UDP en mode bibliothèque — aucun daemon supplémentaire requis." },
       { title: "Détection volumétrique en moins d'une seconde", body: "Seuils pps/Mbps/flux corrigés de l'échantillonnage sur une fenêtre glissante, ≥20M flux/s/cœur." },
@@ -556,6 +560,7 @@ const es: LandingDict = {
     heading: "Capacidades de nivel empresarial, gratis.",
     sub: "El conjunto de funciones por el que los productos comerciales de flow-DDoS cobran miles, en un único binario Apache 2.0.",
     safetyTag: "SEGURIDAD",
+    learnMore: "Cómo funciona la mitigación en el kernel",
     cards: [
       { title: "Ingesta de flujo multiprotocolo", body: "sFlow, NetFlow v5/v9, IPFIX sobre UDP en modo biblioteca — sin daemon adicional." },
       { title: "Detección volumétrica en menos de un segundo", body: "Umbrales de pps/Mbps/flujos corregidos por muestreo sobre una ventana deslizante, ≥20M flujos/s/núcleo." },
