@@ -54,6 +54,14 @@ static_rules:
     profile: icmp_cap
 ```
 
+Every `name` here — on a rule and on a profile — is a label you invent, not a
+keyword; it is what the rule is called in counters, logs and the console. The
+only fixed vocabulary is the enumerated fields: `action` is `pass`, `drop` or
+`ratelimit`; `match.proto` is `tcp`, `udp`, `icmp` or `icmp6` (unset means any,
+and ports are rejected for `icmp`/`icmp6`); `match` also takes `src`, `src_port`
+and `dst_port`. The [configuration reference](/docs/configuration) lists every
+field and its allowed values in one table.
+
 **Dynamic rules** are generated per attack, from the same classification that drives FlowSpec — the
 protocol, the reflected source port of an amplification vector, TCP SYN flags, fragmentation, and
 the dominant attacker sources in the traffic sample. You do not write them and cannot edit them;
@@ -74,6 +82,12 @@ ratelimit_profiles:
   - { name: icmp_cap, mbps: 10 }      # each source: 10 Mbps
   - { name: dns_reply, pps: 50000 }   # each source: 50k pps
 ```
+
+`icmp_cap` and `dns_reply` are names you chose, not keywords — a profile is just
+a named ceiling, and a static rule invokes one through its `profile:` field
+(`cap_icmp` above uses `icmp_cap`). A profile needs at least one of `pps` or
+`mbps`; set both and whichever is reached first stops admitting the source's
+packets. A profile that no rule references is dropped on the next reload.
 
 <Callout type="info" title="This is the one thing FlowSpec cannot express">
 A FlowSpec `traffic-rate` applies to the flow the rule matches, so a rule covering a victim

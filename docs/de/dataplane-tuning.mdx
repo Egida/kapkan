@@ -57,6 +57,8 @@ static_rules:
     profile: icmp_cap
 ```
 
+Jeder `name` hier — an einer Regel wie an einem Profil — ist eine Bezeichnung, die Sie selbst vergeben, kein Schlüsselwort; so heißt die Regel in Zählern, Logs und der Konsole. Festes Vokabular haben nur die Aufzählungsfelder: `action` ist `pass`, `drop` oder `ratelimit`; `match.proto` ist `tcp`, `udp`, `icmp` oder `icmp6` (nicht gesetzt heißt beliebig, und für `icmp`/`icmp6` werden Ports abgelehnt); `match` nimmt außerdem `src`, `src_port` und `dst_port`. Die [Konfigurationsreferenz](/docs/configuration) listet jedes Feld und seine zulässigen Werte in einer Tabelle.
+
 **Dynamische Regeln** werden pro Angriff generiert, aus derselben Klassifizierung, die auch FlowSpec
 antreibt — das Protokoll, der reflektierte Quell-Port eines Amplifikationsvektors, TCP-SYN-Flags,
 Fragmentierung und die dominierenden Angreiferquellen in der Verkehrsstichprobe. Sie schreiben sie
@@ -78,6 +80,8 @@ ratelimit_profiles:
   - { name: icmp_cap, mbps: 10 }      # each source: 10 Mbps
   - { name: dns_reply, pps: 50000 }   # each source: 50k pps
 ```
+
+`icmp_cap` und `dns_reply` sind Namen, die Sie gewählt haben, keine Schlüsselwörter — ein Profil ist nur eine benannte Obergrenze, und eine statische Regel ruft es über ihr Feld `profile:` auf (`cap_icmp` oben verwendet `icmp_cap`). Ein Profil braucht mindestens `pps` oder `mbps`; setzen Sie beide, stoppt das zuerst erreichte die Pakete der Quelle. Ein Profil, das keine Regel referenziert, wird beim nächsten Reload verworfen.
 
 <Callout type="info" title="Das ist die eine Sache, die FlowSpec nicht ausdrücken kann">
 Eine FlowSpec-`traffic-rate` gilt für den Flow, auf den die Regel passt, sodass eine Regel, die ein
