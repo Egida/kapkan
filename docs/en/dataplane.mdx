@@ -1,308 +1,95 @@
 export const metadata = {
   title: "In-kernel data plane",
   description:
-    "Drop attack traffic in the Linux kernel with XDP/eBPF, on the box Kapkan already runs on — the surgical rung below FlowSpec, and the only one that needs no router cooperation.",
+    "Drop attack traffic in the Linux kernel with XDP, on the box Kapkan already runs on. Start here: what it is, the one deployment question that decides whether it applies to you, and where to go next.",
 };
 
 # In-kernel data plane
 
-Every other mitigation method Kapkan has is a request: [RTBH](/docs/mitigation) and
-[FlowSpec](/docs/flowspec) ask your routers to drop traffic, and [divert](/docs/scrubbing) asks
-them to send it somewhere else. All three depend on a peer that is willing and able to honour
-the announcement.
+Every other mitigation method Kapkan has is a request. [RTBH](/docs/mitigation) and
+[FlowSpec](/docs/flowspec) ask your routers to drop traffic; [diversion](/docs/scrubbing) asks them
+to send it somewhere else. All three depend on a peer that is willing and able to act on the
+announcement.
 
 The data plane drops packets itself. Kapkan loads a small [XDP](/docs/glossary) program into the
-Linux kernel on the machine it is running on, and the rules the detector already synthesizes for
-FlowSpec are written into kernel maps instead of being announced. Nothing has to propagate and no
-peer has to accept it.
+Linux kernel of the machine it runs on, and the rules the detector already builds for FlowSpec are
+written into kernel maps instead of being announced. Nothing has to propagate, and no peer has to
+accept anything.
 
-<Callout type="warning" title="It only sees traffic that reaches this NIC">
-An XDP filter runs on packets that have already arrived on this machine's interface. If a flood
-has saturated the uplink *upstream* of the box, the pipe is full before the filter ever sees a
-packet, and dropping locally changes nothing. That is what the rungs above it are for — the data
-plane is the most surgical response in an [escalation ladder](/docs/escalation), not a
-replacement for the blunt ones.
+This page is the overview. It answers three questions in order — is this for me, does it work, and
+where do I go next — and the rest of the section is the how:
+
+- **[Installing the data plane](/docs/dataplane-install)** — the kernel and capability
+  requirements, the config block, and how to bring it up safely in dry-run.
+- **[Operating & monitoring](/docs/dataplane-operate)** — reading its status, the counters and
+  metrics to watch, the one alert you must set, and what to do when something is wrong.
+- **[Tuning & reference](/docs/dataplane-tuning)** — the packet-evaluation order, static policy,
+  per-source rate limiting, attach modes, and the map-sizing limits.
+
+## Is it for you? The one question that decides it
+
+The data plane can only drop packets that **reach the machine Kapkan runs on**. That single fact
+decides whether the feature applies to your deployment, so answer it before anything else.
+
+It helps when Kapkan runs **in the traffic path**:
+
+- on a Linux border router or a bump-in-the-wire box the traffic already crosses;
+- on the host being attacked, protecting itself;
+- on a dedicated scrubbing node that [diversion](/docs/scrubbing) steers traffic to.
+
+It does **nothing** when Kapkan runs **off-path** — the classic deployment, where a Kapkan VM
+receives NetFlow or sFlow from your routers and speaks BGP back to them. No attack traffic flows
+through that VM, so there is nothing there for it to drop. In that topology, keep using RTBH and
+FlowSpec, and reach for the data plane only on a scrubbing node.
+
+<Callout type="warning" title="It cannot un-saturate an upstream link">
+An XDP filter runs on packets that have already arrived on this machine's NIC. If a flood has
+already filled the pipe *upstream* of the box, the link is congested before the filter sees a
+packet, and dropping locally changes nothing. That is what the blunt rungs are for. The data plane
+is the most surgical response in an [escalation ladder](/docs/escalation) — not a replacement for
+the ones that move the drop upstream.
 </Callout>
 
-## When this helps, and when it does not
+## Does it work? Measured, not asserted
 
-It helps when Kapkan runs **in the traffic path**: on a Linux border router, on a bump-in-the-wire
-box, or on the host being attacked. It also helps when FlowSpec is not a real option for you —
-plenty of transit providers decline it, and some routing stacks will accept FlowSpec routes into
-the RIB without enforcing them in the forwarding plane, which looks like success and drops nothing.
+Every release replays eighteen attack captures end to end — synthetic telemetry into the real
+detector and classifier, the rules it generates compiled into real kernel maps, then the captured
+frames replayed through the program. Each capture runs a stream of legitimate traffic alongside the
+attack, because a block rate measured without one means nothing.
 
-It does not help when Kapkan runs **off-path** — the classic deployment, where a VM receives
-NetFlow/sFlow from your routers and speaks BGP back to them. No attack traffic flows through that
-VM, so there is nothing for it to drop. In that topology the data plane is only useful on a
-separate scrubbing node that BGP diversion steers traffic to.
-
-## Requirements
-
-Four things, each with a one-line check:
-
-| Requirement | Check | Notes |
-| --- | --- | --- |
-| Linux 5.15 or newer | `uname -r` | The full test suite runs on 5.15, 6.1, 6.6 and 6.12 on every change. Debian 12, Ubuntu 22.04/24.04, RHEL 9 and their rebuilds qualify. **RHEL/Alma/Rocky 8 does not** — it ships 4.18 and is supported into 2029, so check before assuming. |
-| Kernel BTF | `ls /sys/kernel/btf/vmlinux` | Present on every distro kernel that meets the floor above. |
-| A mounted bpffs | `mount \| grep ' /sys/fs/bpf '` | Kapkan pins its program and maps under `pin_path` so policy survives a restart of the process. |
-| A NIC driver with XDP support | `ethtool -i eth0` and check the driver | Optional — without it the kernel's generic path is used instead. See [Attach modes](#attach-modes). |
-
-The process also needs `CAP_BPF` and `CAP_NET_ADMIN` to load and attach the program, write access
-to the bpffs mount, and `AF_NETLINK`.
-
-<Callout type="warning" title="The packaged unit does not grant these by default">
-Kapkan's systemd unit is deliberately hardened, and as shipped it blocks an XDP attach: no
-`AmbientCapabilities`, `ProtectSystem=strict` leaving `/sys/fs/bpf` read-only, and
-`RestrictAddressFamilies` without `AF_NETLINK`. That is the right default — most Kapkan boxes never
-run a data plane, and handing every one of them `CAP_BPF` to save the few that do is a bad trade.
-
-The packages ship the override at `/usr/share/kapkan/kapkan-dataplane.conf`. Install it deliberately:
-
-```sh
-sudo mkdir -p /etc/systemd/system/kapkan.service.d
-sudo cp /usr/share/kapkan/kapkan-dataplane.conf /etc/systemd/system/kapkan.service.d/
-sudo systemctl daemon-reload && sudo systemctl restart kapkan
-```
-</Callout>
-
-Nothing needs a compiler on the box. The BPF program is compiled when Kapkan is built and shipped
-inside the binary.
-
-## Enabling it
-
-The `dataplane` block is optional. Absent, the feature does not exist and the binary behaves
-exactly as it does without it.
-
-```yaml
-dataplane:
-  interfaces: [eth0]            # NICs to attach to (at least one; restart to change)
-  xdp_mode: auto                # auto | native | generic
-  pin_path: /sys/fs/bpf/kapkan  # policy survives a restart of this process
-  on_exit: keep                 # keep the program attached on shutdown, or detach
-  drop_malformed: false         # unparseable frames pass and are counted
-
-  allowlist:                    # SOURCE prefixes that always pass
-    - "198.51.100.7/32"         #   monitoring
-    - "192.0.2.0/24"            #   management network
-
-  ratelimit_profiles:           # named ceilings, referenced by static rules
-    - { name: icmp_cap, mbps: 10 }
-    - { name: dns_reply, pps: 50000 }
-
-  static_rules:                 # always-on operator policy
-    - name: drop_chargen
-      match: { proto: udp, src_port: 19 }
-      action: drop
-    - name: cap_icmp
-      match: { proto: icmp }
-      action: ratelimit
-      profile: icmp_cap
-
-  limits:
-    max_dynamic_rules: 4096
-    max_static_rules: 256
-    max_ratelimit_sources: 1048576
-```
-
-Then give a group a ladder rung that uses it:
-
-```yaml
-hostgroups:
-  - name: game-servers
-    networks: ["203.0.113.32/27"]
-    escalation:
-      - { after_seconds: 0,   action: dataplane }   # drop locally first
-      - { after_seconds: 120, action: flowspec }    # ask the router if that was not enough
-      - { after_seconds: 600, action: blackhole }
-```
-
-Severity runs `none < dataplane < flowspec < divert < blackhole`, and a ladder may only hold or
-strengthen, so `dataplane` may follow an alert-only rung but never `flowspec`, `divert` or
-`blackhole`. Configuring the rung without a `dataplane` block — or with `enabled: false` — is
-rejected at startup rather than silently doing nothing.
-
-You can also set `mitigation: dataplane` as a group's single method, with no ladder, when local
-dropping is the only response you want.
-
-## What the kernel evaluates, in order
-
-The order is fixed and not configurable:
-
-1. **Source allowlist** — `dataplane.allowlist`. A hit passes immediately.
-2. **Protected destinations** — your `protected_whitelist`, mirrored into the kernel. A hit passes
-   immediately.
-3. **Static rules** — your always-on policy, first match wins.
-4. **Dynamic source rules** — per-attacker entries the detector installed.
-5. **Dynamic victim rules** — the attack's match rules, at most eight per attack, first match wins.
-6. **Default: pass.**
-
-<Callout type="info" title="Two allowlists, two different axes">
-`dataplane.allowlist` is a list of **sources** that may always send. `protected_whitelist` is a
-list of **destinations** that are never banned. They are not interchangeable, and both are
-enforced in the kernel: keeping the destination guarantee in userspace alone would leave a window
-where a rule installed a moment earlier could still drop traffic to a protected host.
-</Callout>
-
-The default verdict is always **pass**. There is no default-deny anywhere in the program, no mode
-in which adding a rule changes what happens to unmatched traffic, and no automatic dropping of
-fragments or unusual protocols. A packet that cannot be parsed passes and is counted, unless you
-opt in with `drop_malformed: true`. This is a mitigation executor, not a firewall: it drops what
-it was told to drop and forwards everything else.
-
-## Static policy and generated rules
-
-**Static rules** are what you write: always on, independent of any attack, useful for the traffic
-you never want (`drop_chargen` above) and for standing ceilings (`cap_icmp`). Rule names are
-required and must be unique, so two rules can never quietly address the same entry.
-
-**Dynamic rules** are generated per attack from the same classification that drives FlowSpec — the
-protocol, the reflected source port of an amplification vector, TCP SYN flags, fragmentation, and
-the dominant attacker sources from the traffic sample. You do not write them and cannot edit them;
-they appear in `/api/v1/bans` on the ban that owns them, and they expire with it.
-
-Reloading the configuration replaces static policy atomically: Kapkan builds the new rule set
-alongside the live one and switches between them in a single write, so no packet is ever evaluated
-against a half-applied policy.
-
-What cannot change under a running program is anything that attaches or sizes the kernel objects:
-`interfaces`, `xdp_mode`, `pin_path`, `on_exit`, `limits`, and `enabled` itself. A reload that
-touches any of them is rejected outright and the previous configuration stays active — so restart
-the process for those, and expect the allowlist, static rules and profiles to reload in place.
-
-## Per-source rate limiting
-
-A rate-limit action here is enforced **per source address**, not across the victim's traffic as a
-whole. Each attacker gets its own token bucket, so a limit of *N* packets per second means every
-individual source is held to *N* — a distributed flood is throttled per participant rather than
-being allowed to share one aggregate ceiling.
-
-This is something BGP FlowSpec structurally cannot express. A FlowSpec `traffic-rate` applies to
-the flow the rule matches, so a rule covering a victim rate-limits all of that victim's matching
-traffic collectively, and legitimate clients compete with attackers for the same allowance. Where
-that distinction matters, the data plane can enforce a policy your routers cannot.
-
-`max_ratelimit_sources` bounds how many source buckets exist at once. It is a least-recently-used
-table: past the limit, the least active sources are evicted, which under a very wide flood means
-some sources are re-admitted briefly before being throttled again.
-
-## Dry-run
-
-[Dry-run](/docs/safety) covers the data plane exactly as it covers BGP, and it is checked before
-anything reaches the kernel: while `dry_run: true`, no rule is installed and no packet is dropped.
-The rules Kapkan *would* have installed are logged and visible on the ban in `/api/v1/bans`, so
-you can review them against real attacks before enabling enforcement.
-
-## Attack rules expire inside the kernel
-
-Every generated rule carries its own expiry timestamp, and the kernel program treats an expired
-rule as absent. This is deliberate and load-bearing: if the Kapkan process dies, is killed, or
-hangs, the rules it installed still stop applying on schedule. A dead control plane cannot leave a
-victim's legitimate traffic being dropped indefinitely.
-
-On a clean shutdown, `on_exit` decides what remains. The default, `keep`, leaves the program
-attached so your static policy keeps enforcing across a restart or upgrade while dynamic rules age
-out on their own. `detach` removes the program entirely, which passes all traffic.
-
-## Attach modes
-
-There are two places the kernel can run the program, and the difference is where in the receive
-path it sits:
-
-- **native** — the driver calls it as packets come off the NIC, before the kernel allocates an
-  `sk_buff` for them. Requires driver support.
-- **generic** — the kernel calls it after the `sk_buff` has been allocated. Works on any
-  interface, including virtio, and does more work per packet to get there.
-
-`xdp_mode: auto` (the default) uses native where the driver supports it and generic where it does
-not. `native` refuses to start rather than fall back, which is what you want when you have sized
-for the driver hook and would rather find out at boot. `generic` forces the second mode; it is
-mainly useful under virtio and in test environments.
-
-<Callout type="warning" title="The fallback is silent">
-Under `auto`, a driver change, a kernel upgrade or moving to a different NIC can move you from
-native to generic without any error. The mode actually in use is reported by
-`kapkan dataplane status` and exported as a metric — check it after any change to the host, and
-alert on it if you have sized for native.
-</Callout>
-
-## What it blocks, measured
-
-Every release runs eighteen attack captures end to end — synthetic telemetry into the real
-detector, the real classifier, the rules it generates, compiled into real kernel maps, then the
-captured frames replayed through the program. Each capture carries a stream of legitimate traffic
-alongside the attack, because a block rate without one measures nothing.
-
-| | |
+| Measured over 18 captures | Result |
 | --- | --- |
-| Attack traffic dropped | **100%** on seventeen of eighteen captures; **98.5%** on the per-source rate-limit capture, where each attacking source is allowed its first frame before its bucket empties |
-| Legitimate traffic dropped | **zero**, in all eighteen |
-| Allowlisted traffic dropped | **zero**, in all eighteen |
+| Attack traffic dropped | **100%** on 17 of 18; **98.5%** on the per-source rate-limit capture, where each source is allowed its first frame before its bucket empties |
+| Legitimate traffic dropped | **zero**, in all 18 |
+| Allowlisted traffic dropped | **zero**, in all 18 |
 
-The captures cover UDP and SYN floods on IPv4 and IPv6, DNS, NTP, CLDAP, SSDP, memcached and
-chargen amplification, ICMP and fragment floods, a TCP ACK flood, a multi-vector mix, a
-carpet-bombed `/24`, a source flood, VLAN-tagged frames and IPv6 with extension headers.
+The captures cover UDP and SYN floods over IPv4 and IPv6; DNS, NTP, CLDAP, SSDP, memcached and
+chargen amplification; ICMP and fragment floods; a TCP ACK flood; a multi-vector mix; a
+carpet-bombed `/24`; a source flood; VLAN-tagged frames; and IPv6 with extension headers. The full
+suite also runs on real 5.15, 6.1, 6.6 and 6.12 kernels on every change.
 
-<Callout type="info" title="These are not throughput numbers">
-A block rate says what fraction of an attack the rules catch. It says nothing about how much
-traffic a given box can absorb, which depends on your NIC, your driver, your CPU and whether the
-program attached in native or generic mode. Size a deployment on your own hardware.
+<Callout type="info" title="A block rate is not a throughput number">
+These numbers say what fraction of an attack the rules catch. They say nothing about how many
+packets a given box can absorb — that depends on your NIC, driver and CPU, and on whether the
+program attached in native or generic mode. Size a deployment on your own hardware; do not read
+capacity off this table.
 </Callout>
 
-## The one thing it does not inspect
+## How it fits the rest of Kapkan
 
-An IPv6 packet may carry a chain of extension headers before its TCP or UDP header. Walking that
-chain costs the kernel program instructions it does not have without a bound, so it walks at most
-**eight** — and a packet carrying more is **forwarded without a single rule being evaluated**.
-Sixty-four bytes of padding is enough to build one.
+The data plane is a mitigation *method*, alongside RTBH, FlowSpec and diversion, and it inherits
+everything the others do. Detection is unchanged. The [safety model](/docs/safety) — dry-run,
+whitelists, TTLs and blast-radius caps — applies exactly as it does to a BGP announcement, because
+the data plane sits below the same seam. What changes is only the last step: instead of an
+announcement leaving the box, rules are written into the kernel.
 
-This is deliberate. A parse limit that dropped packets would be a default-deny hiding inside a
-parser, and one malformed-looking chain would take a customer offline. The data plane's default
-verdict is always pass, and this is no exception.
+Severity runs `none < dataplane < flowspec < divert < blackhole`. On an
+[escalation ladder](/docs/escalation) a `dataplane` rung is the gentlest real action — drop locally
+first, and escalate to the router-based methods only if that was not enough.
 
-But it is also a way around your filter, so it is counted and surfaced rather than buried:
+## Where to go next
 
-```
-kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}
-```
-
-No legitimate traffic chains eight extension headers. **Any movement on that counter is worth
-looking at** — `kapkan dataplane status` prints a block when it is non-zero, and the console shows
-a banner. If it moves during an attack, drop or normalise long extension-header chains upstream,
-where a router can do it without a per-packet budget.
-
-## Limits and memory
-
-`limits` sizes the kernel maps, which are allocated once when the program attaches:
-
-| Key | Default | What it bounds |
-| --- | --- | --- |
-| `max_dynamic_rules` | 4096 | Rules the detector may install. Each ban contributes up to 8. |
-| `max_static_rules` | 256 | Your own always-on rules. |
-| `max_ratelimit_sources` | 1048576 | Per-source token buckets. |
-
-`max_dynamic_rules` must be **at least** `ban.max_active_bans × 8`; Kapkan refuses a configuration
-where it is smaller, because the alternative is installs beginning to fail in the middle of an
-attack and quietly degrading to a blackhole. Note that the defaults sit exactly on that boundary
-at 512 active bans.
-
-Map memory is charged to the service's memory cgroup (kernel 5.11 and newer), so if you set a
-`MemoryMax=` on the unit, size it with the maps in mind — the per-source bucket table dominates.
-
-## Troubleshooting
-
-`kapkan dataplane status` reports the running policy: which interfaces are attached, the attach
-mode, the active generation, rule counts, and per-rule counters. It reads the pinned state
-directly, so it also works when the daemon is not running — it is the first thing to collect for
-any support request.
-
-Common cases are covered in [Troubleshooting](/docs/troubleshooting): the program failing to
-attach, counters rising while traffic still arrives (usually generic mode, or a filter on the
-wrong interface), and a full rule map.
-
-## Related
-
-- [Mitigation methods](/docs/mitigation) — RTBH, and the ban lifecycle every method shares.
-- [FlowSpec](/docs/flowspec) — the same generated rules, announced to your routers instead.
-- [Escalation ladders](/docs/escalation) — combining the local drop with the upstream methods.
-- [Safety model](/docs/safety) — dry-run, whitelists, TTLs and the caps that bound every action.
-- [Configuration reference](/docs/configuration) · [Metrics](/docs/metrics) · [Deployment](/docs/deployment)
+New to it? Read [Installing the data plane](/docs/dataplane-install) and bring it up in dry-run,
+then [Operating & monitoring](/docs/dataplane-operate) to learn what to watch. Reach for
+[Tuning & reference](/docs/dataplane-tuning) when you want static policy, per-source rate limiting,
+or to understand exactly how a packet is evaluated.

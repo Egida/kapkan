@@ -1,0 +1,135 @@
+export const metadata = {
+  title: "Operating & monitoring",
+  description:
+    "Run the in-kernel data plane day to day: read kapkan dataplane status, watch the per-verdict counters and metrics, set the two alerts that matter, and fix the common failures.",
+};
+
+# Operating & monitoring
+
+The data plane is running. This page is what you do from here: how to read its state, what to watch,
+the alerts to set, and how to diagnose the handful of things that go wrong. If you have not brought
+it up yet, start with [Installing the data plane](/docs/dataplane-install).
+
+## Reading `kapkan dataplane status`
+
+`kapkan dataplane status` is the first thing to run and the first thing to attach to any support
+request. It reads the pinned kernel state directly, so it **works even when the daemon is stopped** —
+which is exactly when you need it most.
+
+It reports:
+
+- **Attachments** — which interfaces the program is on, and the attach mode (`native` or `generic`)
+  for each.
+- **State** — enforcing or dry-run, and whether the program is degraded (attached but not filtering
+  on some interface).
+- **Rules** — static rules encoded, and dynamic rules the detector has installed, with the active
+  policy generation.
+- **Verdicts** — the per-verdict packet and byte counters, described next.
+- **Maps** — how full each kernel map is against its limit.
+
+The same state is on the **Settings** page of the console, and per-ban drop counts appear on each
+ban in **Bans / Mitigation** and in `/api/v1/bans`.
+
+## The verdict counters
+
+Every packet the program sees ends in exactly one **terminal** verdict, so those counters sum to the
+total packet count:
+
+| Verdict | Meaning |
+| --- | --- |
+| `pass_default` | Matched no rule — forwarded. On a healthy box this is almost everything. |
+| `pass_not_ip` | Not IPv4/IPv6 (ARP, and so on) — forwarded. |
+| `drop_static` | Dropped by one of your static rules. |
+| `drop_dyn_src` / `drop_dyn_dst` | Dropped by a detector-installed source or victim rule. |
+| `drop_rl` | Dropped because a per-source rate-limit bucket was empty. |
+| `drop_malformed` | Dropped as unparseable — only ever non-zero if you set `drop_malformed: true`. |
+
+The **drop\_** counters climbing during an attack while `pass_default` keeps flowing is the healthy
+picture: the attack is being dropped and everything else is getting through. If a drop counter is
+climbing but the attack traffic is *still arriving at the host behind Kapkan*, the program is
+attached to the wrong interface, or it is in generic mode on a path the traffic does not take —
+see [Troubleshooting](#troubleshooting).
+
+## The two alerts that matter
+
+Most `kapkan_dataplane_*` metrics are worth graphing. Two are worth **alerting** on, because each is
+silent otherwise and each means the filter is not doing what you think.
+
+### 1. Attach mode fell back to generic
+
+`xdp_mode: auto` uses the fast native path where the driver supports it and the slower generic path
+where it does not — and it makes that choice **silently**. A driver change, a kernel upgrade, or
+moving to a different NIC can drop you from native to generic with no error, quietly cutting the
+capacity you sized for.
+
+The mode in use is on `kapkan dataplane status` and exported as a metric. If you sized for native,
+alert on any interface reporting generic. (If you would rather fail loudly at boot than fall back,
+set `xdp_mode: native` — it refuses to start instead of running slow. See
+[attach modes](/docs/dataplane-tuning#attach-modes).)
+
+### 2. Traffic bypassed the filter uninspected
+
+One IPv6 packet shape is forwarded **without any rule being evaluated**: a packet carrying more than
+eight extension headers before its L4 header. Walking a longer chain would cost the kernel program
+an instruction budget it does not have, so it stops at eight and passes the rest. This is
+deliberate — a parse limit that *dropped* would be a default-deny hiding inside a parser, and one
+odd-looking chain would take a customer offline — but it is also a way around your filter, so it is
+counted rather than buried:
+
+```
+kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}
+```
+
+No legitimate traffic chains eight extension headers, so **any movement on this counter is worth
+looking at**. `kapkan dataplane status` prints a block when it is non-zero and the console shows a
+banner. If it moves during an attack, drop or normalise long extension-header chains upstream, where
+a router can do it without a per-packet budget.
+
+## Reloading configuration
+
+Reloading (`kapkan -s reload`) replaces static policy atomically: Kapkan builds the new rule set
+beside the live one and switches between them in a single write, so no packet is ever evaluated
+against a half-applied policy. The `allowlist`, `static_rules` and `ratelimit_profiles` reload in
+place.
+
+Anything that attaches or sizes kernel objects — `interfaces`, `xdp_mode`, `pin_path`, `on_exit`,
+`limits`, and `enabled` itself — **cannot** change under a running program. A reload that touches
+one is rejected outright and the previous configuration stays active. Restart the process to change
+those.
+
+## What survives a restart
+
+Because the program and maps are pinned under `pin_path`, they outlive the Kapkan process:
+
+- **Static policy keeps enforcing** across a process restart or upgrade — there is no window where
+  your always-on rules are absent.
+- **Dynamic rules age out on their own.** Every generated rule carries its own in-kernel expiry, and
+  the program treats an expired rule as absent, so a Kapkan that is killed, hung or upgraded cannot
+  leave a victim's traffic dropped. When it comes back, it re-adopts the pinned maps and resumes
+  managing them.
+
+On a *clean* shutdown, `on_exit` decides what remains: `keep` (the default) leaves the program
+attached; `detach` removes it entirely, passing all traffic.
+
+## Troubleshooting
+
+**The program will not attach.** Almost always a missing capability or a read-only bpffs — re-check
+[step 2 of installing](/docs/dataplane-install#2-grant-the-capabilities-systemd). The daemon log
+names what it could not get.
+
+**A drop counter climbs but the attack still reaches the host.** The program is inspecting the wrong
+traffic. Confirm it is attached to the interface the attack actually arrives on
+(`kapkan dataplane status`), and check whether it fell back to generic mode on a path the traffic
+does not traverse.
+
+**The rule map is full.** `max_dynamic_rules` is too low for the number of active bans — installs
+begin to fail mid-attack. Raise it (it must be at least `ban.max_active_bans × 8`); see
+[limits and memory](/docs/dataplane-tuning#limits-and-memory).
+
+More cases, shared across every mitigation method, are in [Troubleshooting](/docs/troubleshooting).
+
+## Related
+
+- [Metrics](/docs/metrics) — every `kapkan_dataplane_*` family and its labels.
+- [Tuning & reference](/docs/dataplane-tuning) — attach modes, rate limiting and map sizing.
+- [Safety model](/docs/safety) — dry-run, whitelists and the caps behind every method.

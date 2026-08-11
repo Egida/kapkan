@@ -152,8 +152,8 @@ off.
 The cause is a parse budget: the datapath walks at most eight IPv6 extension headers, and a
 packet carrying more is passed on unexamined. That it is passed and not dropped is deliberate —
 a parse limit must never become a default-deny — which means this counter is the entire
-mitigation. [The one thing it does not inspect](/docs/dataplane#the-one-thing-it-does-not-inspect)
-covers the mechanism and what to do about it.
+mitigation. [Operating & monitoring](/docs/dataplane-operate#the-two-alerts-that-matter) covers the
+mechanism and what to do about it.
 
 No legitimate traffic chains eight extension headers, so the alert threshold is zero rather
 than some rate you tune:

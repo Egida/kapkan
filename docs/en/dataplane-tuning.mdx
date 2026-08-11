@@ -1,0 +1,144 @@
+export const metadata = {
+  title: "Tuning & reference",
+  description:
+    "Reference for the in-kernel data plane: the exact order a packet is evaluated, static policy versus generated rules, per-source rate limiting, native versus generic attach, and how the limits size kernel memory.",
+};
+
+# Tuning & reference
+
+The precise reference behind the data plane: how a packet is evaluated, the difference between the
+policy you write and the rules the detector generates, the one capability FlowSpec cannot express,
+and how the limits translate into kernel memory. If you are still bringing it up, start with
+[Installing the data plane](/docs/dataplane-install).
+
+## What the kernel evaluates, in order
+
+For every packet, the program walks a **fixed, non-configurable** order and stops at the first
+verdict:
+
+1. **Source allowlist** — `dataplane.allowlist`. A hit passes immediately.
+2. **Protected destinations** — your `protected_whitelist`, mirrored into the kernel. A hit passes
+   immediately.
+3. **Static rules** — your always-on policy, first match wins.
+4. **Dynamic source rules** — per-attacker entries the detector installed.
+5. **Dynamic victim rules** — the attack's match rules, at most eight per attack, first match wins.
+6. **Default: pass.**
+
+<Callout type="info" title="Two allowlists, two different axes">
+`dataplane.allowlist` is a list of **sources** that may always send. `protected_whitelist` is a
+list of **destinations** that are never banned. They are not interchangeable, and both are enforced
+in the kernel — keeping the destination guarantee in userspace alone would leave a window where a
+rule installed a moment earlier could still drop traffic to a protected host.
+</Callout>
+
+The default verdict is always **pass**. There is no default-deny anywhere in the program, no mode in
+which adding a rule changes what happens to unmatched traffic, and no automatic dropping of
+fragments or unusual protocols. A packet that cannot be parsed passes and is counted, unless you opt
+in with `drop_malformed: true`. This is a mitigation executor, not a firewall: it drops what it was
+told to drop and forwards everything else.
+
+## Static policy versus generated rules
+
+**Static rules** are what you write. They are always on, independent of any attack, and useful for
+traffic you never want (`drop_chargen`) and for standing ceilings (`cap_icmp`). Names are required
+and must be unique, so two rules can never quietly address the same entry.
+
+```yaml
+static_rules:
+  - name: drop_chargen
+    match: { proto: udp, src_port: 19 }
+    action: drop
+  - name: cap_icmp
+    match: { proto: icmp }
+    action: ratelimit
+    profile: icmp_cap
+```
+
+**Dynamic rules** are generated per attack, from the same classification that drives FlowSpec — the
+protocol, the reflected source port of an amplification vector, TCP SYN flags, fragmentation, and
+the dominant attacker sources in the traffic sample. You do not write them and cannot edit them;
+they appear in `/api/v1/bans` on the ban that owns them, and they expire with it.
+
+The two never collide: static rules occupy their own map (step 3 above), dynamic rules occupy
+another (steps 4–5), and each is sized by its own limit.
+
+## Per-source rate limiting
+
+A `ratelimit` action is enforced **per source address**, not across the victim's traffic as a
+whole. Each source gets its own token bucket, so a limit of *N* packets per second holds every
+individual source to *N* — a distributed flood is throttled per participant, rather than letting a
+thousand sources share (and exhaust) one aggregate ceiling.
+
+```yaml
+ratelimit_profiles:
+  - { name: icmp_cap, mbps: 10 }      # each source: 10 Mbps
+  - { name: dns_reply, pps: 50000 }   # each source: 50k pps
+```
+
+<Callout type="info" title="This is the one thing FlowSpec cannot express">
+A FlowSpec `traffic-rate` applies to the flow the rule matches, so a rule covering a victim
+rate-limits all of that victim's matching traffic collectively — and legitimate clients compete with
+attackers for the same allowance. Per-source buckets are not a faster version of something the
+announcer already did; they are something it structurally could not do at all.
+</Callout>
+
+`max_ratelimit_sources` bounds how many source buckets exist at once. It is a least-recently-used
+table: past the limit, the least active sources are evicted, which under a very wide flood means
+some sources are briefly re-admitted before being throttled again.
+
+## Attach modes
+
+There are two places in the receive path the kernel can run the program:
+
+- **native** — the driver calls it as packets come off the NIC, before an `sk_buff` is allocated.
+  Requires driver support, and does the least work per packet.
+- **generic** — the kernel calls it after the `sk_buff` is allocated. Works on any interface,
+  including virtio, and does more work per packet to get there.
+
+`xdp_mode: auto` (the default) uses native where the driver supports it and generic where it does
+not. `native` refuses to start rather than fall back — what you want when you have sized for the
+driver hook and would rather find out at boot. `generic` forces the second mode; it is mainly for
+virtio and test environments.
+
+<Callout type="warning" title="Under auto, the fallback is silent">
+A driver change, kernel upgrade or new NIC can move you from native to generic with no error, and
+generic does far less per core. Whichever mode each interface actually got is reported by
+`kapkan dataplane status` and exported as a metric — if you sized for native, alert on it. See
+[the alert in Operating](/docs/dataplane-operate#the-two-alerts-that-matter).
+</Callout>
+
+## Rule expiry and shutdown
+
+Every generated rule carries its own expiry timestamp, and the kernel program treats an expired rule
+as absent. This is load-bearing: if the Kapkan process dies, is killed or hangs, the rules it
+installed still stop applying on schedule — a dead control plane cannot leave a victim's legitimate
+traffic dropped indefinitely.
+
+On a clean shutdown, `on_exit` decides what remains. The default, `keep`, leaves the program
+attached so static policy keeps enforcing across a restart or upgrade while dynamic rules age out on
+their own. `detach` removes the program entirely, which passes all traffic.
+
+## Limits and memory
+
+`limits` sizes the kernel maps, which are allocated **once**, when the program attaches:
+
+| Key | Default | What it bounds |
+| --- | --- | --- |
+| `max_dynamic_rules` | 4096 | Rules the detector may install. Each ban contributes up to 8. |
+| `max_static_rules` | 256 | Your own always-on rules. |
+| `max_ratelimit_sources` | 1048576 | Per-source token buckets. |
+
+`max_dynamic_rules` must be **at least** `ban.max_active_bans × 8`; Kapkan refuses a smaller
+configuration, because the alternative is installs beginning to fail in the middle of an attack and
+quietly degrading to a blackhole. The defaults sit exactly on that boundary at 512 active bans.
+
+Because the maps are allocated up front, the memory is reserved whether or not an attack is under
+way, and the per-source bucket table dominates the total. Map memory is charged to the service's
+memory cgroup (kernel 5.11+), so if you set `MemoryMax=` on the unit, size it with the maps in mind.
+
+## Related
+
+- [Operating & monitoring](/docs/dataplane-operate) — the counters and alerts these settings drive.
+- [FlowSpec](/docs/flowspec) — the same generated rules, announced to your routers instead.
+- [Configuration reference](/docs/configuration) — every `dataplane` key in one table.
+- [Escalation ladders](/docs/escalation) — combining the local drop with upstream methods.
