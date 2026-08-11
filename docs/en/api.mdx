@@ -119,9 +119,9 @@ hold `Attack` objects.
 | `tenant` | string | The owning group's tenant, when one is labeled (see [Multi-tenancy](/docs/multi-tenancy)). |
 | `direction` | string | `incoming` or `outgoing`. |
 | `metric` | string | The metric that tripped, e.g. `pps`, `mbps`, `tcp_syn_pps`. |
-| `rate` | number | The observed rate at detection, in the metric's unit. |
+| `rate` | number | The rate of the tripping metric, in its unit: the engine's current measurement while the attack is active, the last one before it ended afterwards. |
 | `threshold` | number | The threshold that was crossed. |
-| `rates` | object | Full per-protocol rate breakdown (see below). |
+| `rates` | object | Full per-protocol rate breakdown (see below), from the same measurement as `rate`. |
 | `active` | bool | `true` while ongoing. |
 | `ban_state` | string | `active`, `withdrawn`, or `rejected`. Omitted when no ban. |
 | `method` | string | Mitigation method: `blackhole`, `flowspec`, or `divert`. Omitted when no ban. |
@@ -182,6 +182,12 @@ hold `Attack` objects.
   "recent": []
 }
 ```
+
+While an attack is active, `rate` and `rates` are re-read from the engine on every
+request, so they follow the attack instead of reporting the instant it was detected —
+when the sliding window held a single second and understated a sustained flood
+several-fold. `metric` and `threshold` stay as captured at detection: they name what
+tripped, and the engine judges the attack's end against the thresholds frozen at its start.
 
 The `rates` object carries the base trio (`pps`, `mbps`, `flows_per_sec`) plus the
 per-protocol fields that are nonzero: `tcp_pps`, `tcp_mbps`, `udp_pps`, `udp_mbps`,
