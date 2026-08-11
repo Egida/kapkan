@@ -71,17 +71,20 @@ function Pipeline({ t }: { t: (typeof xdp)[Locale]["how"]["diagram"] }) {
             <line x1="360" y1="70" x2="422" y2="70" />
             <line x1="570" y1="70" x2="632" y2="70" />
           </g>
-          {/* nodes */}
+          {/* nodes. textLength + lengthAdjust makes every label render at the
+              same width regardless of locale — "Rule encoder" and "Codificador
+              de reglas" both fill the box, so a longer translation compresses to
+              fit instead of overflowing. No sub-labels: they would be English
+              under a translated title on every non-English page. */}
           {[
-            { x: 20, label: t.detect, sub: "threshold · classifier" },
-            { x: 230, label: t.compile, sub: "victim-anchored rules" },
-            { x: 440, label: t.maps, sub: "double-buffered" },
-            { x: 650, label: t.verdict, sub: "per packet" },
+            { x: 20, label: t.detect },
+            { x: 230, label: t.compile },
+            { x: 440, label: t.maps },
+            { x: 650, label: t.verdict },
           ].map((n) => (
             <g key={n.x}>
               <rect x={n.x} y="40" width="130" height="60" rx="10" strokeWidth="1.4" className={box} />
-              <text x={n.x + 65} y="66" textAnchor="middle" className="fill-[var(--foreground)]" fontSize="14" fontWeight="600">{n.label}</text>
-              <text x={n.x + 65} y="85" textAnchor="middle" className="fill-[var(--muted-foreground)]" fontSize="10.5">{n.sub}</text>
+              <text x={n.x + 65} y="75" textAnchor="middle" textLength="112" lengthAdjust="spacingAndGlyphs" className="fill-[var(--foreground)]" fontSize="14" fontWeight="600">{n.label}</text>
             </g>
           ))}
           {/* verdict branch */}
@@ -91,9 +94,9 @@ function Pipeline({ t }: { t: (typeof xdp)[Locale]["how"]["diagram"] }) {
           </g>
           <g>
             <rect x="285" y="158" width="150" height="34" rx="8" strokeWidth="1.4" className="fill-[color-mix(in_srgb,#22c55e_12%,transparent)] stroke-[#22c55e]" />
-            <text x="360" y="180" textAnchor="middle" className="fill-[#22c55e]" fontSize="12.5" fontWeight="600">{t.pass}</text>
+            <text x="360" y="180" textAnchor="middle" textLength="132" lengthAdjust="spacingAndGlyphs" className="fill-[#22c55e]" fontSize="12.5" fontWeight="600">{t.pass}</text>
             <rect x="640" y="178" width="150" height="34" rx="8" strokeWidth="1.4" className="fill-[color-mix(in_srgb,#ef4444_12%,transparent)] stroke-[#ef4444]" />
-            <text x="715" y="200" textAnchor="middle" className="fill-[#ef4444]" fontSize="12.5" fontWeight="600">{t.drop}</text>
+            <text x="715" y="200" textAnchor="middle" textLength="132" lengthAdjust="spacingAndGlyphs" className="fill-[#ef4444]" fontSize="12.5" fontWeight="600">{t.drop}</text>
           </g>
         </svg>
       </div>
