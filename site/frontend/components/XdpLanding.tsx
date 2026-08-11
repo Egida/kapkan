@@ -295,7 +295,7 @@ export function XdpLanding({ locale, basePath }: { locale: Locale; basePath: str
 
         {/* --------------------------------------------------------- showcase */}
         <section className="mx-auto max-w-5xl px-6 py-24">
-          <Shot src="/assets/screenshots/xdp/dataplane-live.png" alt={t.showcaseCaption} w={1440} h={1283} />
+          <Shot src="/assets/screenshots/xdp/attack-detail-xdp.png" alt={t.showcaseCaption} w={1440} h={962} />
           <p className="mx-auto mt-5 max-w-2xl text-center text-sm text-muted-foreground">{t.showcaseCaption}</p>
         </section>
 

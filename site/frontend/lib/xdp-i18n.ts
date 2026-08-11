@@ -196,7 +196,7 @@ const en: XdpDict = {
     ],
   },
   showcaseCaption:
-    "The data-plane card in the console, live: the program attached to eth0, three detections installed as three kernel rules, and the map memory it reserved up front.",
+    "One live detection, expanded in the console: the escalation ladder holding at In-kernel drop (XDP), and the exact rule it compiled into the kernel — dst 203.0.113.45/32, proto udp → discard.",
   cta: {
     heading: "Drop it yourself.",
     sub: "Add a dataplane block, leave dry-run on, and watch what it would drop before it drops anything.",
@@ -364,7 +364,7 @@ const ru: XdpDict = {
       }
     ]
   },
-  "showcaseCaption": "Карточка плоскости данных в консоли, вживую: программа подключена к eth0, три обнаружения установлены как три правила в ядре, и память под карты, которую она зарезервировала заранее."
+  "showcaseCaption": "Одно активное обнаружение, раскрытое в консоли: лестница эскалации удерживается на «отбрасывании в ядре (XDP)», и точное правило, которое оно скомпилировало в ядро, — dst 203.0.113.45/32, proto udp → discard."
 };
 
 const de: XdpDict = {
@@ -520,7 +520,7 @@ const de: XdpDict = {
       "Nichts zu bauen. Das XDP-Objekt wird vorab kompiliert und in die Kapkan-Binärdatei eingebettet."
     ]
   },
-  "showcaseCaption": "Die Datenebenen-Karte in der Konsole, live: das Programm an eth0 angehängt, drei Erkennungen als drei Kernel-Regeln installiert, und der Map-Speicher, den es vorab reserviert hat.",
+  "showcaseCaption": "Eine aktive Erkennung, in der Konsole aufgeklappt: die Eskalationsstufe hält bei In-kernel drop (XDP), samt der genauen Regel, die sie in den Kernel kompiliert hat — dst 203.0.113.45/32, proto udp → discard.",
   "cta": {
     "heading": "Verwerfen Sie ihn selbst.",
     "sub": "Fügen Sie einen dataplane-Block hinzu, lassen Sie dry-run aktiviert und beobachten Sie, was es verwerfen würde, bevor es irgendetwas verwirft.",
@@ -688,7 +688,7 @@ const fr: XdpDict = {
       }
     ]
   },
-  "showcaseCaption": "La carte du plan de données dans la console, en direct : le programme attaché à eth0, trois détections installées sous forme de trois règles du noyau, et la mémoire de maps qu'il a réservée d'avance."
+  "showcaseCaption": "Une détection active, dépliée dans la console : l'échelle d'escalade se maintient à In-kernel drop (XDP), et la règle exacte qu'elle a compilée dans le noyau — dst 203.0.113.45/32, proto udp → discard."
 };
 
 const es: XdpDict = {
@@ -844,7 +844,7 @@ const es: XdpDict = {
       "Nada que compilar. El objeto XDP se compila con antelación y se incrusta en el binario de Kapkan."
     ]
   },
-  "showcaseCaption": "La tarjeta del plano de datos en la consola, en vivo: el programa adjuntado a eth0, tres detecciones instaladas como tres reglas del kernel, y la memoria de mapas que reservó por adelantado.",
+  "showcaseCaption": "Una detección activa, expandida en la consola: la escalera de escalado se mantiene en In-kernel drop (XDP), y la regla exacta que compiló en el kernel — dst 203.0.113.45/32, proto udp → discard.",
   "cta": {
     "heading": "Descártalo tú mismo.",
     "sub": "Añade un bloque dataplane, deja dry-run activado, y observa lo que descartaría antes de que descarte nada.",
