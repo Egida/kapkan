@@ -18,6 +18,7 @@ export type LandingDict = {
     viewGithub: string;
     menu: string;
     docFull: string;
+    underAttack: string;
   };
   hero: { eyebrow: string; h1a: string; h1b: string; sub: string; trust: string[] };
   stats: string[];
@@ -56,7 +57,7 @@ const en: LandingDict = {
   meta: {
     title: "Kapkan — Free, open-source DDoS detection & mitigation",
     description:
-      "Kapkan is a single Go binary that ingests NetFlow/IPFIX/sFlow telemetry, detects volumetric DDoS attacks in seconds, and either announces automated BGP RTBH and FlowSpec mitigation or drops the attack itself in the Linux kernel with XDP. Free and open source.",
+      "Kapkan is one Go binary. It reads the traffic stats your routers already export (NetFlow, IPFIX, sFlow), spots a DDoS flood against the IPs you protect in seconds, and stops it — by telling your router to drop it (BGP RTBH/FlowSpec) or by dropping it itself in the Linux kernel (XDP). Free and open source.",
   },
   nav: {
     features: "Features",
@@ -69,85 +70,86 @@ const en: LandingDict = {
     viewGithub: "View on GitHub",
     menu: "Menu",
     docFull: "View full documentation",
+    underAttack: "Under attack now?",
   },
   hero: {
     eyebrow: "Open Source · Apache 2.0",
-    h1a: "Stop volumetric DDoS in seconds —",
-    h1b: "on a single binary.",
-    sub: "Kapkan ingests NetFlow, IPFIX and sFlow from your routers, detects volumetric attacks against the prefixes you protect, and triggers automated BGP blackhole or surgical FlowSpec mitigation — or drops the attack itself, in the Linux kernel, with XDP. Free, open-source, dry-run by default.",
-    trust: ["Single Go binary", "No sidecar", "Dry-run by default", "IPv4 + IPv6"],
+    h1a: "Stop DDoS floods in seconds —",
+    h1b: "with one binary.",
+    sub: "Kapkan reads the traffic stats your routers already export (NetFlow, IPFIX, sFlow), spots a flood against the IPs you protect within seconds, and stops it — by telling your router to drop the attack, or by dropping it itself in the Linux kernel. Free, open source, and in safe watch-only mode until you say otherwise.",
+    trust: ["One Go binary", "Nothing else to install", "Watch-only by default", "IPv4 + IPv6"],
   },
-  stats: ["≥20M flows/sec/core", "Detects in seconds", "/32 + /128 RTBH", "FlowSpec RFC 8955/8956", "Single static binary"],
+  stats: ["≥20M flows/sec/core", "Detects in seconds", "IPv4 + IPv6 blackhole", "FlowSpec RFC 8955/8956", "One static binary"],
   how: {
-    heading: "The story in four verbs.",
-    sub: "A streamlined architecture with no sidecars, message queues or external dependencies. Just run the binary.",
+    heading: "How it works, in four steps.",
+    sub: "One binary, nothing else to run — no extra services, no message queue, no database. Point your routers at it and go.",
     steps: [
       {
         title: "INGEST",
-        body: "Point your routers' flow exporters at Kapkan. sFlow v5, NetFlow v5/v9 and IPFIX over UDP, parsed entirely in-process — no sidecar daemons.",
+        body: "Point your routers at Kapkan. They already send a summary of every traffic flow — NetFlow, IPFIX or sFlow — so just aim it at Kapkan's port. One process reads it all; there's nothing else to install.",
       },
       {
         title: "DETECT",
-        body: "Per-destination, sampling-corrected pps / Mbps / flows-per-second thresholds over a sliding window — plus per-protocol limits and learned baselines.",
+        body: "Kapkan counts packets, bits and connections per second for each IP you protect. Cross a limit you set — or one it learned from that host's normal traffic — and that's an attack, flagged within seconds.",
       },
       {
         title: "MITIGATE",
-        body: "An embedded BGP speaker announces /32 or /128 blackhole routes, or distributes surgical FlowSpec rules that drop only the attack vector. Auto-withdrawn when safe.",
+        body: "Kapkan tells your router to drop the attack over BGP. It can null-route the whole target IP (RTBH), or drop only the attack traffic and keep the rest flowing (FlowSpec). Once the flood stops, it removes the rule itself.",
       },
       {
         title: "DROP",
-        body: "Or skip the router entirely: the same rules compile into Linux kernel maps and Kapkan drops the attack itself with XDP, before the packets reach the network stack. Every rule carries its own in-kernel deadline, so a stopped Kapkan cannot keep dropping traffic.",
+        body: "Or skip the router: if the traffic crosses the machine Kapkan runs on, it can drop the attack itself inside the Linux kernel (XDP), the moment packets arrive. Every rule has an expiry the kernel enforces, so a crashed Kapkan can't keep dropping your traffic.",
       },
     ],
   },
   features: {
-    heading: "Enterprise-grade capabilities, free.",
-    sub: "The feature set commercial flow-DDoS products charge thousands for, packaged in a single Apache 2.0 binary.",
+    heading: "The features others charge for — free.",
+    sub: "What commercial flow-DDoS products bundle and charge thousands for, in one Apache 2.0 binary: detection, mitigation, an operator console, and the safety rails to run it in production.",
     safetyTag: "SAFETY",
-    learnMore: "How in-kernel mitigation works",
+    learnMore: "See how in-kernel drop works",
     cards: [
-      { title: "Multi-protocol flow ingest", body: "sFlow, NetFlow v5/v9, IPFIX over UDP, in library mode — no extra daemon required." },
-      { title: "Sub-second volumetric detection", body: "Sampling-corrected pps/Mbps/flows thresholds over a sliding window, ≥20M flows/sec/core." },
-      { title: "RTBH + surgical FlowSpec", body: "Blackhole the whole host, or drop only the attack vector. IPv6 FlowSpec at full parity with IPv4." },
-      { title: "Attack classification", body: "Amplification (NTP/DNS/memcached), SYN/UDP/ICMP floods — with a 'why this fired' breakdown." },
-      { title: "Continuous learned baselines", body: "Kapkan learns each host's normal traffic online and tightens thresholds automatically. Stop tuning by hand." },
-      { title: "Safe by construction", body: "Dry-run by default, TTL auto-withdraw, active-ban caps, and a protected whitelist that is NEVER banned." },
-      { title: "Carpet-bombing detection", body: "Catches low-per-host floods spread across a whole prefix that slip past per-IP thresholds." },
-      { title: "Full observability", body: "REST API, Prometheus /metrics, plus Telegram, Slack, email, webhook and exec-hook notifications." },
-      { title: "Multi-tenant & audited", body: "Per-tenant scoping, role-based API tokens (viewer/operator), and an operator-attributed audit log." },
+      { title: "Reads the flows you already export", body: "sFlow v5, NetFlow v5/v9 and IPFIX over UDP, read by Kapkan itself — no extra service to run." },
+      { title: "Spots floods in under a second", body: "Packet, bit and flow-per-second limits over a sliding window, corrected for sampling — ≥20M flows/sec per core." },
+      { title: "Blackhole, or drop just the attack", body: "Null-route the whole target IP (RTBH), or drop only the attack traffic and keep the rest (FlowSpec). Full IPv6 support, on par with IPv4." },
+      { title: "Tells you what kind of attack", body: "Amplification (NTP/DNS/memcached), SYN/UDP/ICMP floods — each with a plain 'why this fired' breakdown." },
+      { title: "Learns each host's normal", body: "Kapkan learns what normal traffic looks like for every host and tightens the limits on its own. No hand-tuning." },
+      { title: "Hard to misfire", body: "Starts in watch-only mode. Every block has an expiry and lifts itself, a cap limits how many hosts can be blocked at once, and your protected list is never blocked — not by Kapkan, not by you." },
+      { title: "Catches carpet-bombing", body: "Spots low-and-slow floods spread across a whole IP range that stay under any single host's limit." },
+      { title: "Watch it from anywhere", body: "REST API, Prometheus /metrics, and alerts over Telegram, Slack, email, webhook or a script you run." },
+      { title: "Multi-tenant & audited", body: "Scope access per tenant, hand out viewer/operator API tokens, and get an audit log that names who did what." },
       {
         title: "In-kernel mitigation with XDP",
-        body: "Kapkan can enforce a detection itself instead of asking a router to. The same rules it would announce as FlowSpec are compiled into Linux kernel maps and applied by an XDP program — including per-source rate limiting, which BGP FlowSpec structurally cannot express. Linux 5.15+, nothing to compile on the box, and every rule expires inside the kernel, so a Kapkan that dies cannot leave your traffic dropped. Dry-run is still the default.",
+        body: "Instead of asking a router to drop the attack, Kapkan can do it itself. The same rules it would announce as FlowSpec load straight into the Linux kernel and run there (XDP) — including a separate rate limit for each attacking source, which BGP FlowSpec can't do. Needs Linux 5.15+, compiles nothing on the box, and every rule expires inside the kernel, so a crashed Kapkan can't leave your traffic dropped. Still watch-only by default.",
       },
     ],
   },
   showcase: {
-    heading: "A real operator console, included for free.",
-    sub: "No hunting through raw logs. Kapkan ships with a built-in, reactive UI for the SOC war-room — attacks, hosts and mitigation in one place.",
+    heading: "A real operator console, included — free.",
+    sub: "No digging through raw logs. Kapkan ships with a live web console for your on-call — attacks, hosts and blocks in one place.",
   },
   compare: {
-    heading: "How we stack up.",
-    sub: "Built to replace expensive legacy flow analyzers with a modern, single-binary approach.",
+    heading: "How we compare.",
+    sub: "A modern, single-binary replacement for pricey legacy flow analyzers.",
     colFeature: "Feature",
     colKapkan: "Kapkan",
     colThem: "Commercial tools",
     rows: [
-      { feature: "License model", kapkan: "Free & open source (Apache 2.0)", them: "Paid license / volume-based" },
-      { feature: "Operator dashboard", kapkan: "Included free", them: "Paid add-on" },
-      { feature: "IPv6 FlowSpec parity", kapkan: "Full parity with IPv4", them: "Unsupported / roadmap" },
-      { feature: "Continuous baselines", kapkan: "Online, automatic tuning", them: "Offline calculator, copy-paste" },
-      { feature: "Automation logic", kapkan: "Declarative escalation ladders", them: "Custom bash / callback scripts" },
-      { feature: "Architecture", kapkan: "Single static binary, no sidecar", them: "Multi-daemon setup" },
+      { feature: "License", kapkan: "Free & open source (Apache 2.0)", them: "Paid license / volume-based" },
+      { feature: "Operator console", kapkan: "Included free", them: "Paid add-on" },
+      { feature: "IPv6 support", kapkan: "Full, same as IPv4", them: "Missing or planned" },
+      { feature: "Threshold tuning", kapkan: "Learns automatically", them: "Offline calculator, copy-paste" },
+      { feature: "Automation", kapkan: "Escalation rules in config", them: "Custom bash scripts" },
+      { feature: "Architecture", kapkan: "One static binary, no extras", them: "Several daemons to run" },
     ],
   },
   quickstart: {
-    heading: "Up and running in minutes — dry-run first.",
+    heading: "Running in minutes — watch-only first.",
     bodyBefore:
-      "Kapkan is safe to deploy by default. Every would-be blackhole or FlowSpec announcement is logged and exposed via the API, but never announced to your BGP peers until you explicitly flip ",
+      "Kapkan is safe to run out of the box. It logs every block it would make and shows it in the API and console, but never announces anything to your routers until you explicitly set ",
     bodyAfter: ".",
     cta: "View full documentation",
   },
-  cta: { heading: "Set the trap. Protect your network.", sub: "Free forever. Apache 2.0. Deploy in an afternoon." },
+  cta: { heading: "Set the trap. Protect your network.", sub: "Free forever. Apache 2.0. Up and running in an afternoon." },
   footer: {
     tagline: "Free, open-source DDoS detection & mitigation — announce it, or drop it yourself.",
     product: "Product",
@@ -168,9 +170,9 @@ const en: LandingDict = {
 
 const ru: LandingDict = {
   meta: {
-    title: "Kapkan — бесплатное open-source обнаружение и митигация DDoS",
+    title: "Kapkan — бесплатное open-source обнаружение и подавление DDoS",
     description:
-      "Kapkan — единый Go-бинарь: принимает телеметрию NetFlow/IPFIX/sFlow, за секунды обнаруживает объёмные DDoS-атаки и либо запускает автоматическую митигацию через BGP RTBH и FlowSpec, либо сам отбрасывает атаку в ядре Linux через XDP. Бесплатно и с открытым кодом.",
+      "Kapkan — один Go-бинарник. Он читает статистику трафика, которую ваши маршрутизаторы и так экспортируют (NetFlow, IPFIX, sFlow), за секунды замечает DDoS-флуд на защищаемые вами адреса и останавливает его — командой маршрутизатору сбросить трафик (BGP RTBH/FlowSpec) или сбрасывая его сам в ядре Linux (XDP). Бесплатно и с открытым кодом.",
   },
   nav: {
     features: "Возможности",
@@ -183,85 +185,86 @@ const ru: LandingDict = {
     viewGithub: "Открыть на GitHub",
     menu: "Меню",
     docFull: "Вся документация",
+    underAttack: "Идёт атака?",
   },
   hero: {
     eyebrow: "Open Source · Apache 2.0",
-    h1a: "Останавливайте объёмный DDoS за секунды —",
-    h1b: "в одном бинаре.",
-    sub: "Kapkan принимает NetFlow, IPFIX и sFlow с ваших маршрутизаторов, за секунды обнаруживает объёмные атаки на защищаемые префиксы и запускает автоматический BGP-blackhole или хирургичную митигацию через FlowSpec — либо сам отбрасывает атаку, в ядре Linux, через XDP. Бесплатно, open-source, dry-run по умолчанию.",
-    trust: ["Один Go-бинарь", "Без сайдкаров", "Dry-run по умолчанию", "IPv4 + IPv6"],
+    h1a: "Останавливайте DDoS-флуд за секунды —",
+    h1b: "одним бинарником.",
+    sub: "Kapkan читает статистику трафика, которую ваши маршрутизаторы и так экспортируют (NetFlow, IPFIX, sFlow), за секунды замечает флуд на защищаемые вами адреса и останавливает его — командой маршрутизатору сбросить атаку или сбрасывая её сам, прямо в ядре Linux. Бесплатно, открытый код, и в безопасном режиме «только наблюдение», пока вы не решите иначе.",
+    trust: ["Один Go-бинарник", "Больше ничего ставить не нужно", "«Только наблюдение» по умолчанию", "IPv4 + IPv6"],
   },
-  stats: ["≥20M потоков/с/ядро", "Обнаружение за секунды", "/32 + /128 RTBH", "FlowSpec RFC 8955/8956", "Один статический бинарь"],
+  stats: ["≥20M потоков/с/ядро", "Обнаружение за секунды", "Blackhole для IPv4 + IPv6", "FlowSpec RFC 8955/8956", "Один статический бинарник"],
   how: {
-    heading: "Вся суть в четырёх глаголах.",
-    sub: "Упрощённая архитектура без сайдкаров, очередей сообщений и внешних зависимостей. Просто запустите бинарь.",
+    heading: "Как это работает — четыре шага.",
+    sub: "Один бинарник и больше ничего — ни лишних сервисов, ни очереди сообщений, ни базы данных. Направьте на него маршрутизаторы — и всё.",
     steps: [
       {
         title: "ПРИЁМ",
-        body: "Направьте экспортёры потоков ваших маршрутизаторов в Kapkan. sFlow v5, NetFlow v5/v9 и IPFIX по UDP, разбор полностью in-process — без отдельных демонов.",
+        body: "Направьте маршрутизаторы на Kapkan. Они и так отправляют сводку по каждому потоку трафика — NetFlow, IPFIX или sFlow, — просто нацельте её на порт Kapkan. Всё читает один процесс; ставить больше ничего не нужно.",
       },
       {
         title: "ОБНАРУЖЕНИЕ",
-        body: "Пороги pps / Mbps / потоков-в-секунду на каждый адрес назначения с поправкой на сэмплинг по скользящему окну — плюс пер-протокольные лимиты и обучаемые baseline.",
+        body: "Kapkan считает пакеты, биты и соединения в секунду для каждого защищаемого адреса. Превышен заданный вами предел — или тот, что Kapkan выучил из обычного трафика хоста, — это атака, и она видна за секунды.",
       },
       {
-        title: "МИТИГАЦИЯ",
-        body: "Встроенный BGP-спикер анонсирует blackhole-маршруты /32 или /128 либо рассылает хирургичные правила FlowSpec, отбрасывающие только вектор атаки. Снимаются автоматически.",
+        title: "ПОДАВЛЕНИЕ",
+        body: "Kapkan командует маршрутизатору сбросить атаку по BGP. Можно закрыть весь адрес-жертву целиком (RTBH) или сбросить только атакующий трафик, оставив остальной (FlowSpec). Когда флуд стихает, правило снимается само.",
       },
       {
-        title: "ОТБРАСЫВАНИЕ",
-        body: "Или вообще без маршрутизатора: те же правила компилируются в карты ядра Linux, и Kapkan сам отбрасывает атаку через XDP — до того, как пакеты дойдут до сетевого стека. У каждого правила свой срок жизни внутри ядра, поэтому остановленный Kapkan не может продолжать отбрасывать трафик.",
+        title: "ОТБРОС",
+        body: "Или без маршрутизатора: если трафик идёт через машину с Kapkan, он может сбросить атаку сам, прямо в ядре Linux (XDP), в тот же миг, как приходят пакеты. У каждого правила есть срок, за которым следит ядро, — упавший Kapkan не сможет и дальше резать ваш трафик.",
       },
     ],
   },
   features: {
-    heading: "Корпоративные возможности — бесплатно.",
-    sub: "Набор функций, за который коммерческие flow-DDoS продукты берут тысячи, — в одном бинаре под Apache 2.0.",
+    heading: "Возможности, за которые другие берут деньги, — бесплатно.",
+    sub: "Всё, что коммерческие flow-DDoS продукты собирают вместе и берут за это тысячи, — в одном бинарнике под Apache 2.0: обнаружение, подавление, операторская консоль и защита от собственных ошибок.",
     safetyTag: "БЕЗОПАСНОСТЬ",
-    learnMore: "Как работает подавление в ядре",
+    learnMore: "Как работает отброс в ядре",
     cards: [
-      { title: "Мультипротокольный приём потоков", body: "sFlow, NetFlow v5/v9, IPFIX по UDP в режиме библиотеки — без дополнительного демона." },
-      { title: "Обнаружение объёмных атак за доли секунды", body: "Пороги pps/Mbps/потоков с поправкой на сэмплинг по скользящему окну, ≥20M потоков/с/ядро." },
-      { title: "RTBH + хирургичный FlowSpec", body: "Blackhole целого хоста или сброс только вектора атаки. IPv6 FlowSpec на полном паритете с IPv4." },
-      { title: "Классификация атак", body: "Усиление (NTP/DNS/memcached), SYN/UDP/ICMP-флуды — с разбором «почему сработало»." },
-      { title: "Непрерывно обучаемые baseline", body: "Kapkan онлайн изучает нормальный трафик каждого хоста и автоматически ужесточает пороги. Хватит крутить вручную." },
-      { title: "Безопасность by design", body: "Dry-run по умолчанию, авто-снятие по TTL, лимиты активных банов и защищённый whitelist, который НИКОГДА не банится." },
-      { title: "Обнаружение carpet-bombing", body: "Ловит распределённые по всему префиксу низко-интенсивные флуды, проскальзывающие мимо пер-IP порогов." },
-      { title: "Полная наблюдаемость", body: "REST API, Prometheus /metrics, а также уведомления в Telegram, Slack, email, webhook и exec-hook." },
-      { title: "Мультиарендность и аудит", body: "Разграничение по арендаторам, ролевые API-токены (viewer/operator) и журнал аудита с привязкой к оператору." },
+      { title: "Читает потоки, которые вы уже экспортируете", body: "sFlow v5, NetFlow v5/v9 и IPFIX по UDP — читает сам Kapkan, без отдельного сервиса." },
+      { title: "Замечает флуд меньше чем за секунду", body: "Пределы по пакетам, битам и потокам в секунду на скользящем окне, с поправкой на сэмплинг — ≥20M потоков/с на ядро." },
+      { title: "Blackhole или только атаку", body: "Закрыть весь адрес-жертву (RTBH) или сбросить только атакующий трафик, оставив остальной (FlowSpec). Полная поддержка IPv6, наравне с IPv4." },
+      { title: "Говорит, что за атака", body: "Усиление (NTP/DNS/memcached), SYN/UDP/ICMP-флуды — и по каждой понятный разбор «почему сработало»." },
+      { title: "Учит норму каждого хоста", body: "Kapkan сам изучает, как выглядит обычный трафик каждого хоста, и подтягивает пределы. Руками крутить не нужно." },
+      { title: "Трудно выстрелить себе в ногу", body: "Стартует в режиме «только наблюдение». У каждой блокировки есть срок, и она снимается сама; лимит ограничивает, сколько адресов можно заблокировать разом; а защищённый список не блокируется никогда — ни Kapkan, ни вами." },
+      { title: "Ловит ковровые атаки", body: "Замечает слабые флуды, размазанные по целому диапазону адресов, которые не дотягивают до предела ни на одном хосте." },
+      { title: "Следите откуда угодно", body: "REST API, метрики Prometheus /metrics и оповещения в Telegram, Slack, на почту, вебхук или в ваш скрипт." },
+      { title: "Мультиарендность и аудит", body: "Разграничение доступа по арендаторам, API-токены с ролями (наблюдатель/оператор) и журнал аудита, где видно, кто что сделал." },
       {
-        title: "Отбрасывание в ядре через XDP",
-        body: "Kapkan может применить решение сам, а не просить об этом маршрутизатор. Те же правила, которые он анонсировал бы как FlowSpec, компилируются в карты ядра Linux и применяются XDP-программой — включая ограничение скорости по каждому источнику, которое BGP FlowSpec структурно выразить не может. Linux 5.15+, ничего компилировать на машине не нужно, и каждое правило истекает внутри ядра, поэтому упавший Kapkan не оставит ваш трафик отброшенным. Dry-run по-прежнему по умолчанию.",
+        title: "Подавление в ядре через XDP",
+        body: "Вместо того чтобы просить маршрутизатор сбросить атаку, Kapkan может сделать это сам. Те же правила, что он анонсировал бы как FlowSpec, загружаются прямо в ядро Linux и работают там (XDP) — включая отдельный лимит скорости для каждого атакующего источника, чего BGP FlowSpec не умеет. Нужен Linux 5.15+, на машине ничего компилировать не надо, и каждое правило истекает прямо в ядре — упавший Kapkan не оставит ваш трафик отброшенным. По умолчанию по-прежнему «только наблюдение».",
       },
     ],
   },
   showcase: {
-    heading: "Настоящая операторская консоль — в комплекте и бесплатно.",
-    sub: "Не нужно копаться в сырых логах. Kapkan поставляется со встроенным реактивным UI для SOC — атаки, хосты и митигация в одном месте.",
+    heading: "Настоящая операторская консоль — в комплекте, бесплатно.",
+    sub: "Не нужно копаться в сырых логах. Kapkan идёт с живой веб-консолью для дежурной смены — атаки, хосты и блокировки в одном месте.",
   },
   compare: {
     heading: "Чем мы отличаемся.",
-    sub: "Создан, чтобы заменить дорогие устаревшие flow-анализаторы современным подходом «один бинарь».",
+    sub: "Современная замена дорогим устаревшим flow-анализаторам — один бинарник.",
     colFeature: "Возможность",
     colKapkan: "Kapkan",
     colThem: "Коммерческие продукты",
     rows: [
-      { feature: "Модель лицензии", kapkan: "Бесплатно и open-source (Apache 2.0)", them: "Платная лицензия / по объёму" },
-      { feature: "Операторская панель", kapkan: "Включена бесплатно", them: "Платное дополнение" },
-      { feature: "Паритет IPv6 FlowSpec", kapkan: "Полный паритет с IPv4", them: "Не поддерживается / в планах" },
-      { feature: "Непрерывные baseline", kapkan: "Онлайн, автоматическая настройка", them: "Офлайн-калькулятор, копипаст" },
-      { feature: "Логика автоматизации", kapkan: "Декларативные лестницы эскалации", them: "Самописные bash/callback-скрипты" },
-      { feature: "Архитектура", kapkan: "Один статический бинарь, без сайдкаров", them: "Множество демонов" },
+      { feature: "Лицензия", kapkan: "Бесплатно, открытый код (Apache 2.0)", them: "Платная лицензия / по объёму" },
+      { feature: "Операторская консоль", kapkan: "Входит бесплатно", them: "Платное дополнение" },
+      { feature: "Поддержка IPv6", kapkan: "Полная, как для IPv4", them: "Нет или в планах" },
+      { feature: "Настройка порогов", kapkan: "Учится сама", them: "Офлайн-калькулятор, копипаст" },
+      { feature: "Автоматизация", kapkan: "Правила эскалации в конфиге", them: "Самописные bash-скрипты" },
+      { feature: "Архитектура", kapkan: "Один статический бинарник, без довесков", them: "Несколько демонов" },
     ],
   },
   quickstart: {
-    heading: "Запуск за минуты — сначала dry-run.",
+    heading: "Запуск за минуты — сначала «только наблюдение».",
     bodyBefore:
-      "Kapkan безопасен для развёртывания по умолчанию. Каждый потенциальный blackhole или анонс FlowSpec логируется и доступен через API, но никогда не анонсируется вашим BGP-пирам, пока вы явно не переключите ",
+      "Kapkan безопасен из коробки. Он записывает каждую блокировку, которую сделал бы, и показывает её в API и консоли, но ничего не анонсирует вашим маршрутизаторам, пока вы явно не поставите ",
     bodyAfter: ".",
     cta: "Вся документация",
   },
-  cta: { heading: "Поставьте капкан. Защитите свою сеть.", sub: "Бесплатно навсегда. Apache 2.0. Разверните за один вечер." },
+  cta: { heading: "Поставьте капкан. Защитите свою сеть.", sub: "Бесплатно навсегда. Apache 2.0. Развернёте за один вечер." },
   footer: {
     tagline: "Бесплатное open-source обнаружение DDoS — анонсировать маршрут или отбросить самому.",
     product: "Продукт",
@@ -281,345 +284,537 @@ const ru: LandingDict = {
 };
 
 const de: LandingDict = {
-  meta: {
-    title: "Kapkan — kostenlose Open-Source-DDoS-Erkennung & -Mitigation",
-    description:
-      "Kapkan ist eine einzige Go-Binary: Sie nimmt NetFlow/IPFIX/sFlow-Telemetrie auf, erkennt volumetrische DDoS-Angriffe in Sekunden und löst entweder automatische BGP-RTBH- und FlowSpec-Mitigation aus oder verwirft den Angriff selbst im Linux-Kernel mit XDP. Kostenlos und quelloffen.",
+  "meta": {
+    "title": "Kapkan — kostenlose Open-Source-DDoS-Erkennung und -Abwehr",
+    "description": "Kapkan ist eine einzige Go-Binary. Es liest die Verkehrsstatistik, die Ihre Router ohnehin schon exportieren (NetFlow, IPFIX, sFlow), erkennt in Sekunden eine DDoS-Flut gegen die IPs, die Sie schützen, und stoppt sie — indem es Ihren Router anweist, den Angriff zu verwerfen (BGP RTBH/FlowSpec), oder indem es ihn selbst im Linux-Kernel verwirft (XDP). Kostenlos und quelloffen."
   },
-  nav: {
-    features: "Funktionen",
-    how: "Funktionsweise",
-    compare: "Vergleich",
-    docs: "Doku",
-    star: "Auf GitHub favorisieren",
-    readDocs: "Zur Doku",
-    buildConfig: "Config erstellen",
-    viewGithub: "Auf GitHub ansehen",
-    menu: "Menü",
-    docFull: "Vollständige Doku ansehen",
+  "nav": {
+    "features": "Funktionen",
+    "how": "So funktioniert's",
+    "compare": "Vergleich",
+    "docs": "Doku",
+    "star": "Star auf GitHub",
+    "readDocs": "Doku lesen",
+    "buildConfig": "Konfiguration erstellen",
+    "viewGithub": "Auf GitHub ansehen",
+    "menu": "Menü",
+    "docFull": "Vollständige Doku ansehen",
+    "underAttack": "Gerade unter Angriff?"
   },
-  hero: {
-    eyebrow: "Open Source · Apache 2.0",
-    h1a: "Volumetrische DDoS in Sekunden stoppen —",
-    h1b: "mit einer einzigen Binary.",
-    sub: "Kapkan nimmt NetFlow, IPFIX und sFlow von Ihren Routern auf, erkennt volumetrische Angriffe auf die von Ihnen geschützten Präfixe und löst automatisches BGP-Blackholing oder chirurgische FlowSpec-Mitigation aus — oder verwirft den Angriff selbst, im Linux-Kernel, mit XDP. Kostenlos, quelloffen, standardmäßig Dry-Run.",
-    trust: ["Eine Go-Binary", "Kein Sidecar", "Standardmäßig Dry-Run", "IPv4 + IPv6"],
+  "hero": {
+    "eyebrow": "Open Source · Apache 2.0",
+    "h1a": "Stoppen Sie DDoS-Fluten in Sekunden —",
+    "h1b": "mit einer einzigen Binary.",
+    "sub": "Kapkan liest die Verkehrsstatistik, die Ihre Router ohnehin schon exportieren (NetFlow, IPFIX, sFlow), erkennt binnen Sekunden eine Flut gegen die IPs, die Sie schützen, und stoppt sie — indem es Ihren Router anweist, den Angriff zu verwerfen, oder indem es ihn selbst im Linux-Kernel verwirft. Kostenlos, quelloffen und im sicheren Modus „nur beobachten“, bis Sie es anders entscheiden.",
+    "trust": [
+      "Eine Go-Binary",
+      "Sonst nichts zu installieren",
+      "Standardmäßig „nur beobachten“",
+      "IPv4 + IPv6"
+    ]
   },
-  stats: ["≥20M Flows/s/Kern", "Erkennung in Sekunden", "/32 + /128 RTBH", "FlowSpec RFC 8955/8956", "Eine statische Binary"],
-  how: {
-    heading: "Die Geschichte in vier Verben.",
-    sub: "Eine schlanke Architektur ohne Sidecars, Message-Queues oder externe Abhängigkeiten. Einfach die Binary starten.",
-    steps: [
+  "stats": [
+    "≥20M Flows/s/Kern",
+    "Erkennung in Sekunden",
+    "Blackhole für IPv4 + IPv6",
+    "FlowSpec RFC 8955/8956",
+    "Eine statische Binary"
+  ],
+  "how": {
+    "heading": "So funktioniert es — in vier Schritten.",
+    "sub": "Eine Binary, sonst nichts — keine zusätzlichen Dienste, keine Message-Queue, keine Datenbank. Richten Sie Ihre Router darauf und legen Sie los.",
+    "steps": [
       {
-        title: "ERFASSEN",
-        body: "Richten Sie die Flow-Exporter Ihrer Router auf Kapkan. sFlow v5, NetFlow v5/v9 und IPFIX über UDP, vollständig in-process verarbeitet — ohne Sidecar-Daemons.",
+        "title": "ERFASSEN",
+        "body": "Richten Sie Ihre Router auf Kapkan. Eine Zusammenfassung jedes Verkehrsflusses schicken sie ohnehin schon — NetFlow, IPFIX oder sFlow —, lassen Sie sie also einfach auf den Port von Kapkan zeigen. Ein einziger Prozess liest alles; sonst ist nichts zu installieren."
       },
       {
-        title: "ERKENNEN",
-        body: "Pro Ziel sampling-korrigierte pps-/Mbps-/Flows-pro-Sekunde-Schwellen über ein gleitendes Fenster — plus protokollspezifische Limits und gelernte Baselines.",
+        "title": "ERKENNEN",
+        "body": "Kapkan zählt Pakete, Bits und Verbindungen pro Sekunde für jede IP, die Sie schützen. Wird ein Grenzwert überschritten, den Sie gesetzt haben — oder einer, den Kapkan aus dem normalen Verkehr dieses Hosts gelernt hat —, ist das ein Angriff, binnen Sekunden gemeldet."
       },
       {
-        title: "ABWEHREN",
-        body: "Ein eingebetteter BGP-Speaker kündigt /32- oder /128-Blackhole-Routen an oder verteilt chirurgische FlowSpec-Regeln, die nur den Angriffsvektor verwerfen. Automatischer Rückzug.",
+        "title": "ABWEHREN",
+        "body": "Kapkan weist Ihren Router per BGP an, den Angriff zu verwerfen. Es kann die komplette Ziel-IP ins Leere routen (RTBH) oder nur den Angriffsverkehr verwerfen und den Rest weiterlaufen lassen (FlowSpec). Sobald die Flut abklingt, entfernt es die Regel von selbst."
       },
       {
-        title: "VERWERFEN",
-        body: "Oder ganz ohne Router: Dieselben Regeln werden in Linux-Kernel-Maps kompiliert, und Kapkan verwirft den Angriff selbst mit XDP — bevor die Pakete den Netzwerk-Stack erreichen. Jede Regel trägt ihre eigene Frist im Kernel, ein gestopptes Kapkan kann also nicht weiter Traffic verwerfen.",
-      },
-    ],
+        "title": "VERWERFEN",
+        "body": "Oder ganz ohne Router: Läuft der Verkehr über die Maschine, auf der Kapkan sitzt, kann es den Angriff selbst im Linux-Kernel verwerfen (XDP), sobald die Pakete ankommen. Jede Regel hat ein Ablaufdatum, das der Kernel durchsetzt — ein abgestürztes Kapkan kann Ihren Verkehr also nicht endlos weiter verwerfen."
+      }
+    ]
   },
-  features: {
-    heading: "Enterprise-Funktionen, kostenlos.",
-    sub: "Der Funktionsumfang, für den kommerzielle Flow-DDoS-Produkte Tausende verlangen — in einer einzigen Apache-2.0-Binary.",
-    safetyTag: "SICHERHEIT",
-    learnMore: "Wie die Mitigation im Kernel funktioniert",
-    cards: [
-      { title: "Multiprotokoll-Flow-Aufnahme", body: "sFlow, NetFlow v5/v9, IPFIX über UDP im Library-Modus — kein zusätzlicher Daemon nötig." },
-      { title: "Volumetrische Erkennung im Subsekundenbereich", body: "Sampling-korrigierte pps/Mbps/Flows-Schwellen über ein gleitendes Fenster, ≥20M Flows/s/Kern." },
-      { title: "RTBH + chirurgischer FlowSpec", body: "Den ganzen Host blackholen oder nur den Angriffsvektor verwerfen. IPv6-FlowSpec auf voller Parität mit IPv4." },
-      { title: "Angriffsklassifizierung", body: "Amplification (NTP/DNS/memcached), SYN-/UDP-/ICMP-Floods — mit einer „Warum ausgelöst“-Aufschlüsselung." },
-      { title: "Kontinuierlich gelernte Baselines", body: "Kapkan lernt online den Normalverkehr jedes Hosts und verschärft Schwellen automatisch. Schluss mit manuellem Tuning." },
-      { title: "Sicher by Design", body: "Standardmäßig Dry-Run, automatischer TTL-Rückzug, Limits für aktive Sperren und eine geschützte Whitelist, die NIEMALS gesperrt wird." },
-      { title: "Carpet-Bombing-Erkennung", body: "Erkennt über ein ganzes Präfix verteilte schwache Floods, die an Per-IP-Schwellen vorbeischlüpfen." },
-      { title: "Volle Beobachtbarkeit", body: "REST-API, Prometheus /metrics sowie Telegram-, Slack-, E-Mail-, Webhook- und Exec-Hook-Benachrichtigungen." },
-      { title: "Mandantenfähig & auditiert", body: "Pro-Mandant-Scoping, rollenbasierte API-Tokens (viewer/operator) und ein dem Operator zugeordnetes Audit-Log." },
+  "features": {
+    "heading": "Die Funktionen, für die andere Geld verlangen — kostenlos.",
+    "sub": "Was kommerzielle Flow-DDoS-Produkte zusammenpacken und für Tausende verkaufen — in einer einzigen Binary unter Apache 2.0: Erkennung, Abwehr, eine Operator-Konsole und die Sicherheitsleitplanken für den Produktivbetrieb.",
+    "safetyTag": "SICHERHEIT",
+    "learnMore": "So funktioniert das Verwerfen im Kernel",
+    "cards": [
       {
-        title: "Mitigation im Kernel mit XDP",
-        body: "Kapkan kann eine Erkennung selbst durchsetzen, statt einen Router darum zu bitten. Dieselben Regeln, die es als FlowSpec ankündigen würde, werden in Linux-Kernel-Maps kompiliert und von einem XDP-Programm angewendet — inklusive Ratenbegrenzung pro Quelle, die BGP FlowSpec strukturell nicht ausdrücken kann. Linux 5.15+, nichts auf der Maschine zu kompilieren, und jede Regel läuft im Kernel selbst ab, ein abgestürztes Kapkan kann Ihren Traffic also nicht verworfen zurücklassen. Dry-Run bleibt der Standard.",
+        "title": "Liest die Flows, die Sie ohnehin exportieren",
+        "body": "sFlow v5, NetFlow v5/v9 und IPFIX über UDP, von Kapkan selbst gelesen — kein zusätzlicher Dienst nötig."
       },
-    ],
+      {
+        "title": "Erkennt Fluten in unter einer Sekunde",
+        "body": "Sampling-korrigierte Grenzwerte für Pakete, Bits und Flows pro Sekunde über ein gleitendes Fenster — ≥20M Flows/s pro Kern."
+      },
+      {
+        "title": "Blackhole — oder nur den Angriff verwerfen",
+        "body": "Die komplette Ziel-IP ins Leere routen (RTBH) oder nur den Angriffsverkehr verwerfen und den Rest behalten (FlowSpec). Volle IPv6-Unterstützung, gleichauf mit IPv4."
+      },
+      {
+        "title": "Sagt Ihnen die Angriffsart",
+        "body": "Amplification (NTP/DNS/memcached), SYN-/UDP-/ICMP-Fluten — jeweils mit einer klaren Aufschlüsselung „warum das ausgelöst hat“."
+      },
+      {
+        "title": "Lernt, was für jeden Host normal ist",
+        "body": "Kapkan lernt, wie normaler Verkehr für jeden Host aussieht, und zieht die Grenzwerte von selbst nach. Kein Tuning von Hand."
+      },
+      {
+        "title": "Schwer, falsch auszulösen",
+        "body": "Startet im Modus „nur beobachten“. Jede Sperre hat ein Ablaufdatum und hebt sich von selbst auf, eine Obergrenze deckelt die Zahl gleichzeitig gesperrter Hosts, und Ihre geschützte Liste wird nie gesperrt — weder von Kapkan noch von Ihnen."
+      },
+      {
+        "title": "Erkennt Carpet-Bombing",
+        "body": "Erkennt schwache, langsame Fluten, die über einen ganzen IP-Bereich verteilt sind und unter dem Grenzwert jedes einzelnen Hosts bleiben."
+      },
+      {
+        "title": "Überwachen Sie es von überall",
+        "body": "REST API, Prometheus /metrics und Benachrichtigungen über Telegram, Slack, E-Mail, Webhook oder ein Skript, das Sie ausführen."
+      },
+      {
+        "title": "Mandantenfähig & auditiert",
+        "body": "Zugriff pro Mandant abgrenzen, API-Tokens mit Rollen (viewer/operator) vergeben und ein Audit-Log erhalten, das benennt, wer was getan hat."
+      },
+      {
+        "title": "Abwehr im Kernel mit XDP",
+        "body": "Statt einen Router zu bitten, den Angriff zu verwerfen, kann Kapkan es selbst tun. Dieselben Regeln, die es als FlowSpec ankündigen würde, werden direkt in den Linux-Kernel geladen und laufen dort (XDP) — samt einem eigenen Rate-Limit für jede angreifende Quelle, was BGP FlowSpec nicht kann. Braucht Linux 5.15+, kompiliert nichts auf der Maschine, und jede Regel läuft im Kernel selbst ab — ein abgestürztes Kapkan kann Ihren Verkehr also nicht verworfen zurücklassen. Weiterhin standardmäßig „nur beobachten“."
+      }
+    ]
   },
-  showcase: {
-    heading: "Eine echte Operator-Konsole, kostenlos inklusive.",
-    sub: "Kein Wühlen in Rohlogs. Kapkan bringt eine eingebaute, reaktive UI für den SOC-Kriegsraum mit — Angriffe, Hosts und Mitigation an einem Ort.",
+  "showcase": {
+    "heading": "Eine echte Operator-Konsole, inklusive — kostenlos.",
+    "sub": "Kein Wühlen in rohen Logs. Kapkan bringt eine Live-Web-Konsole für Ihre Rufbereitschaft mit — Angriffe, Hosts und Sperren an einem Ort."
   },
-  compare: {
-    heading: "So schneiden wir ab.",
-    sub: "Entwickelt, um teure Legacy-Flow-Analyzer durch einen modernen Single-Binary-Ansatz zu ersetzen.",
-    colFeature: "Funktion",
-    colKapkan: "Kapkan",
-    colThem: "Kommerzielle Tools",
-    rows: [
-      { feature: "Lizenzmodell", kapkan: "Kostenlos & quelloffen (Apache 2.0)", them: "Kostenpflichtige Lizenz / volumenbasiert" },
-      { feature: "Operator-Dashboard", kapkan: "Kostenlos enthalten", them: "Kostenpflichtiges Add-on" },
-      { feature: "IPv6-FlowSpec-Parität", kapkan: "Volle Parität mit IPv4", them: "Nicht unterstützt / Roadmap" },
-      { feature: "Kontinuierliche Baselines", kapkan: "Online, automatisches Tuning", them: "Offline-Rechner, Copy-Paste" },
-      { feature: "Automatisierungslogik", kapkan: "Deklarative Eskalationsstufen", them: "Eigene Bash-/Callback-Skripte" },
-      { feature: "Architektur", kapkan: "Eine statische Binary, kein Sidecar", them: "Setup mit mehreren Daemons" },
-    ],
+  "compare": {
+    "heading": "Wie wir abschneiden.",
+    "sub": "Ein moderner Ersatz für teure Legacy-Flow-Analyzer — als eine einzige Binary.",
+    "colFeature": "Funktion",
+    "colKapkan": "Kapkan",
+    "colThem": "Kommerzielle Tools",
+    "rows": [
+      {
+        "feature": "Lizenz",
+        "kapkan": "Kostenlos & quelloffen (Apache 2.0)",
+        "them": "Kostenpflichtige Lizenz / volumenbasiert"
+      },
+      {
+        "feature": "Operator-Konsole",
+        "kapkan": "Kostenlos enthalten",
+        "them": "Kostenpflichtiges Add-on"
+      },
+      {
+        "feature": "IPv6-Unterstützung",
+        "kapkan": "Voll, wie bei IPv4",
+        "them": "Fehlt oder geplant"
+      },
+      {
+        "feature": "Schwellenwerte einstellen",
+        "kapkan": "Lernt automatisch",
+        "them": "Offline-Rechner, Copy-Paste"
+      },
+      {
+        "feature": "Automatisierung",
+        "kapkan": "Eskalationsregeln in der Config",
+        "them": "Eigene Bash-Skripte"
+      },
+      {
+        "feature": "Architektur",
+        "kapkan": "Eine statische Binary, kein Drumherum",
+        "them": "Mehrere Daemons zu betreiben"
+      }
+    ]
   },
-  quickstart: {
-    heading: "In Minuten einsatzbereit — zuerst Dry-Run.",
-    bodyBefore:
-      "Kapkan ist standardmäßig sicher im Betrieb. Jedes potenzielle Blackhole bzw. jede FlowSpec-Ankündigung wird protokolliert und über die API bereitgestellt, aber niemals an Ihre BGP-Peers angekündigt, bis Sie explizit ",
-    bodyAfter: " umlegen.",
-    cta: "Vollständige Doku ansehen",
+  "quickstart": {
+    "heading": "In Minuten startklar — erst „nur beobachten“.",
+    "bodyBefore": "Kapkan ist von Haus aus sicher im Betrieb. Es protokolliert jede Sperre, die es verhängen würde, und zeigt sie in der API und der Konsole an, kündigt Ihren Routern aber nichts an, bis Sie ausdrücklich ",
+    "bodyAfter": " setzen.",
+    "cta": "Vollständige Doku ansehen"
   },
-  cta: { heading: "Stell die Falle. Schütze dein Netzwerk.", sub: "Für immer kostenlos. Apache 2.0. An einem Nachmittag ausgerollt." },
-  footer: {
-    tagline: "Kostenlose Open-Source-DDoS-Erkennung & -Mitigation — ankündigen oder selbst verwerfen.",
-    product: "Produkt",
-    docsCol: "Doku",
-    project: "Projekt",
-    features: "Funktionen",
-    compare: "Vergleich",
-    configBuilder: "Config-Builder",
-    quickstart: "Schnellstart",
-    configuration: "Konfiguration",
-    api: "API",
-    safety: "Sicherheitsmodell",
-    github: "GitHub",
-    releases: "Releases",
-    license: "Lizenz (Apache 2.0)",
+  "cta": {
+    "heading": "Stellen Sie die Falle. Schützen Sie Ihr Netzwerk.",
+    "sub": "Für immer kostenlos. Apache 2.0. An einem Nachmittag startklar."
   },
+  "footer": {
+    "tagline": "Kostenlose Open-Source-DDoS-Erkennung und -Abwehr — ankündigen oder selbst verwerfen.",
+    "product": "Produkt",
+    "docsCol": "Doku",
+    "project": "Projekt",
+    "features": "Funktionen",
+    "compare": "Vergleich",
+    "configBuilder": "Config-Builder",
+    "quickstart": "Schnellstart",
+    "configuration": "Konfiguration",
+    "api": "API",
+    "safety": "Sicherheitsmodell",
+    "github": "GitHub",
+    "releases": "Releases",
+    "license": "Lizenz (Apache 2.0)"
+  }
 };
 
 const fr: LandingDict = {
-  meta: {
-    title: "Kapkan — détection et mitigation DDoS open source et gratuites",
-    description:
-      "Kapkan est un binaire Go unique : il ingère la télémétrie NetFlow/IPFIX/sFlow, détecte les attaques DDoS volumétriques en quelques secondes et déclenche soit une mitigation automatique BGP RTBH et FlowSpec, soit rejette l'attaque lui-même dans le noyau Linux avec XDP. Gratuit et open source.",
+  "meta": {
+    "title": "Kapkan — détection et mitigation DDoS gratuites et open source",
+    "description": "Kapkan tient dans un seul binaire Go. Il lit les statistiques de trafic que vos routeurs exportent déjà (NetFlow, IPFIX, sFlow), repère en quelques secondes un flood DDoS visant les IP que vous protégez, et l'arrête — en demandant à votre routeur de le rejeter (BGP RTBH/FlowSpec) ou en le rejetant lui-même dans le noyau Linux (XDP). Gratuit et open source."
   },
-  nav: {
-    features: "Fonctionnalités",
-    how: "Fonctionnement",
-    compare: "Comparer",
-    docs: "Docs",
-    star: "Star sur GitHub",
-    readDocs: "Lire la doc",
-    buildConfig: "Créer une config",
-    viewGithub: "Voir sur GitHub",
-    menu: "Menu",
-    docFull: "Voir toute la documentation",
+  "nav": {
+    "features": "Fonctionnalités",
+    "how": "Fonctionnement",
+    "compare": "Comparer",
+    "docs": "Docs",
+    "star": "Star sur GitHub",
+    "readDocs": "Lire la doc",
+    "buildConfig": "Créer une config",
+    "viewGithub": "Voir sur GitHub",
+    "menu": "Menu",
+    "docFull": "Voir toute la documentation",
+    "underAttack": "Attaque en cours ?"
   },
-  hero: {
-    eyebrow: "Open Source · Apache 2.0",
-    h1a: "Stoppez le DDoS volumétrique en quelques secondes —",
-    h1b: "avec un seul binaire.",
-    sub: "Kapkan ingère NetFlow, IPFIX et sFlow depuis vos routeurs, détecte les attaques volumétriques contre les préfixes que vous protégez et déclenche un blackhole BGP automatique ou une mitigation FlowSpec chirurgicale — ou rejette l'attaque lui-même, dans le noyau Linux, avec XDP. Gratuit, open source, dry-run par défaut.",
-    trust: ["Un seul binaire Go", "Sans sidecar", "Dry-run par défaut", "IPv4 + IPv6"],
+  "hero": {
+    "eyebrow": "Open Source · Apache 2.0",
+    "h1a": "Stoppez les floods DDoS en quelques secondes —",
+    "h1b": "avec un seul binaire.",
+    "sub": "Kapkan lit les statistiques de trafic que vos routeurs exportent déjà (NetFlow, IPFIX, sFlow), repère en quelques secondes un flood visant les IP que vous protégez, et l'arrête — en demandant à votre routeur de rejeter l'attaque, ou en la rejetant lui-même dans le noyau Linux. Gratuit, open source, et en mode « observation seule », sans risque, jusqu'à ce que vous en décidiez autrement.",
+    "trust": [
+      "Un seul binaire Go",
+      "Rien d'autre à installer",
+      "« Observation seule » par défaut",
+      "IPv4 + IPv6"
+    ]
   },
-  stats: ["≥20M flux/s/cœur", "Détection en quelques secondes", "/32 + /128 RTBH", "FlowSpec RFC 8955/8956", "Un binaire statique unique"],
-  how: {
-    heading: "Tout tient en quatre verbes.",
-    sub: "Une architecture épurée, sans sidecar, sans file de messages ni dépendance externe. Lancez simplement le binaire.",
-    steps: [
+  "stats": [
+    "≥20M flux/s/cœur",
+    "Détection en quelques secondes",
+    "Blackhole IPv4 + IPv6",
+    "FlowSpec RFC 8955/8956",
+    "Un seul binaire statique"
+  ],
+  "how": {
+    "heading": "Comment ça marche, en quatre étapes.",
+    "sub": "Un seul binaire, rien d'autre à faire tourner — pas de services en plus, pas de file de messages, pas de base de données. Pointez vos routeurs dessus, c'est parti.",
+    "steps": [
       {
-        title: "INGÉRER",
-        body: "Pointez les exportateurs de flux de vos routeurs vers Kapkan. sFlow v5, NetFlow v5/v9 et IPFIX sur UDP, traités entièrement in-process — sans daemon sidecar.",
+        "title": "INGÉRER",
+        "body": "Pointez vos routeurs vers Kapkan. Ils envoient déjà un résumé de chaque flux de trafic — NetFlow, IPFIX ou sFlow — alors dirigez-le simplement vers le port de Kapkan. Un seul processus lit tout ; il n'y a rien d'autre à installer."
       },
       {
-        title: "DÉTECTER",
-        body: "Seuils pps / Mbps / flux-par-seconde par destination, corrigés de l'échantillonnage sur une fenêtre glissante — plus des limites par protocole et des baselines apprises.",
+        "title": "DÉTECTER",
+        "body": "Kapkan compte les paquets, les bits et les connexions par seconde pour chaque IP que vous protégez. Franchissez une limite que vous avez fixée — ou une limite qu'il a apprise du trafic normal de l'hôte — et c'est une attaque, signalée en quelques secondes."
       },
       {
-        title: "ATTÉNUER",
-        body: "Un locuteur BGP intégré annonce des routes blackhole /32 ou /128, ou distribue des règles FlowSpec chirurgicales ne supprimant que le vecteur d'attaque. Retrait automatique.",
+        "title": "ATTÉNUER",
+        "body": "Kapkan demande à votre routeur de rejeter l'attaque via BGP. Il peut envoyer toute l'IP visée dans un trou noir (RTBH), ou ne rejeter que le trafic d'attaque en laissant passer le reste (FlowSpec). Une fois le flood retombé, il retire la règle lui-même."
       },
       {
-        title: "REJETER",
-        body: "Ou sans routeur du tout : les mêmes règles sont compilées dans les maps du noyau Linux, et Kapkan rejette l'attaque lui-même avec XDP — avant que les paquets n'atteignent la pile réseau. Chaque règle porte sa propre échéance dans le noyau : un Kapkan arrêté ne peut donc pas continuer à rejeter du trafic.",
-      },
-    ],
+        "title": "REJETER",
+        "body": "Ou passez-vous du routeur : si le trafic traverse la machine où tourne Kapkan, il peut rejeter l'attaque lui-même dans le noyau Linux (XDP), dès l'arrivée des paquets. Chaque règle a une échéance que le noyau fait respecter : un Kapkan qui a planté ne peut donc pas continuer à rejeter votre trafic."
+      }
+    ]
   },
-  features: {
-    heading: "Des capacités de niveau entreprise, gratuites.",
-    sub: "L'ensemble de fonctionnalités facturé des milliers par les produits flow-DDoS commerciaux, réuni dans un seul binaire Apache 2.0.",
-    safetyTag: "SÛRETÉ",
-    learnMore: "Comment fonctionne la mitigation dans le noyau",
-    cards: [
-      { title: "Ingestion de flux multi-protocole", body: "sFlow, NetFlow v5/v9, IPFIX sur UDP en mode bibliothèque — aucun daemon supplémentaire requis." },
-      { title: "Détection volumétrique en moins d'une seconde", body: "Seuils pps/Mbps/flux corrigés de l'échantillonnage sur une fenêtre glissante, ≥20M flux/s/cœur." },
-      { title: "RTBH + FlowSpec chirurgical", body: "Blackholer l'hôte entier, ou ne supprimer que le vecteur d'attaque. FlowSpec IPv6 à pleine parité avec IPv4." },
-      { title: "Classification des attaques", body: "Amplification (NTP/DNS/memcached), floods SYN/UDP/ICMP — avec une explication « pourquoi déclenché »." },
-      { title: "Baselines apprises en continu", body: "Kapkan apprend en ligne le trafic normal de chaque hôte et resserre les seuils automatiquement. Fini le réglage manuel." },
-      { title: "Sûr par conception", body: "Dry-run par défaut, retrait automatique par TTL, plafonds de bans actifs et une whitelist protégée JAMAIS bannie." },
-      { title: "Détection du carpet-bombing", body: "Repère les floods faibles répartis sur tout un préfixe qui échappent aux seuils par IP." },
-      { title: "Observabilité complète", body: "API REST, Prometheus /metrics, plus notifications Telegram, Slack, e-mail, webhook et exec-hook." },
-      { title: "Multi-locataire & audité", body: "Cloisonnement par locataire, jetons d'API par rôle (viewer/operator) et journal d'audit attribué à l'opérateur." },
+  "features": {
+    "heading": "Les fonctionnalités que les autres font payer — gratuites.",
+    "sub": "Tout ce que les produits flow-DDoS commerciaux regroupent et facturent des milliers, réuni dans un seul binaire Apache 2.0 : détection, mitigation, une console opérateur et les garde-fous pour l'exploiter en production.",
+    "safetyTag": "SÛRETÉ",
+    "learnMore": "Voir comment fonctionne le rejet dans le noyau",
+    "cards": [
       {
-        title: "Mitigation dans le noyau avec XDP",
-        body: "Kapkan peut appliquer une détection lui-même au lieu de le demander à un routeur. Les mêmes règles qu'il annoncerait en FlowSpec sont compilées dans les maps du noyau Linux et appliquées par un programme XDP — y compris une limitation de débit par source, que BGP FlowSpec ne peut structurellement pas exprimer. Linux 5.15+, rien à compiler sur la machine, et chaque règle expire dans le noyau : un Kapkan qui meurt ne peut pas laisser votre trafic rejeté. Le dry-run reste la valeur par défaut.",
+        "title": "Lit les flux que vous exportez déjà",
+        "body": "sFlow v5, NetFlow v5/v9 et IPFIX sur UDP, lus par Kapkan lui-même — aucun service supplémentaire à faire tourner."
       },
-    ],
+      {
+        "title": "Repère les floods en moins d'une seconde",
+        "body": "Limites de paquets, de bits et de flux par seconde sur une fenêtre glissante, corrigées de l'échantillonnage — ≥20M flux/s par cœur."
+      },
+      {
+        "title": "Trou noir, ou rejeter juste l'attaque",
+        "body": "Envoyez toute l'IP visée dans un trou noir (RTBH), ou ne rejetez que le trafic d'attaque en gardant le reste (FlowSpec). Prise en charge complète d'IPv6, à parité avec IPv4."
+      },
+      {
+        "title": "Vous dit quel type d'attaque",
+        "body": "Amplification (NTP/DNS/memcached), floods SYN/UDP/ICMP — chacun avec une explication claire du « pourquoi ça s'est déclenché »."
+      },
+      {
+        "title": "Apprend la normale de chaque hôte",
+        "body": "Kapkan apprend à quoi ressemble le trafic normal de chaque hôte et resserre les limites tout seul. Aucun réglage à la main."
+      },
+      {
+        "title": "Difficile de se tromper de cible",
+        "body": "Démarre en mode « observation seule ». Chaque blocage a une échéance et se lève tout seul, un plafond limite le nombre d'hôtes pouvant être bloqués à la fois, et votre liste protégée n'est jamais bloquée — ni par Kapkan, ni par vous."
+      },
+      {
+        "title": "Attrape le carpet-bombing",
+        "body": "Repère les floods lents et diffus, étalés sur toute une plage d'IP, qui restent sous la limite de chaque hôte pris isolément."
+      },
+      {
+        "title": "Surveillez-le d'où vous voulez",
+        "body": "REST API, Prometheus /metrics, et des alertes par Telegram, Slack, e-mail, webhook ou un script que vous lancez."
+      },
+      {
+        "title": "Multi-locataire et audité",
+        "body": "Cloisonnez l'accès par locataire, distribuez des jetons d'API viewer/operator, et obtenez un journal d'audit qui nomme qui a fait quoi."
+      },
+      {
+        "title": "Mitigation dans le noyau avec XDP",
+        "body": "Au lieu de demander à un routeur de rejeter l'attaque, Kapkan peut le faire lui-même. Les mêmes règles qu'il annoncerait en FlowSpec se chargent directement dans le noyau Linux et s'exécutent là (XDP) — y compris une limite de débit distincte pour chaque source attaquante, ce que BGP FlowSpec ne sait pas faire. Nécessite Linux 5.15+, ne compile rien sur la machine, et chaque règle expire dans le noyau : un Kapkan qui a planté ne peut pas laisser votre trafic rejeté. Toujours en « observation seule » par défaut."
+      }
+    ]
   },
-  showcase: {
-    heading: "Une vraie console opérateur, incluse gratuitement.",
-    sub: "Fini de fouiller les logs bruts. Kapkan embarque une UI réactive pour la war-room du SOC — attaques, hôtes et mitigation au même endroit.",
+  "showcase": {
+    "heading": "Une vraie console opérateur, incluse — gratuite.",
+    "sub": "Fini de fouiller dans les logs bruts. Kapkan est livré avec une console web en direct pour votre astreinte — attaques, hôtes et blocages au même endroit."
   },
-  compare: {
-    heading: "Comment nous nous situons.",
-    sub: "Conçu pour remplacer les coûteux analyseurs de flux hérités par une approche moderne à binaire unique.",
-    colFeature: "Fonctionnalité",
-    colKapkan: "Kapkan",
-    colThem: "Outils commerciaux",
-    rows: [
-      { feature: "Modèle de licence", kapkan: "Gratuit & open source (Apache 2.0)", them: "Licence payante / au volume" },
-      { feature: "Tableau de bord opérateur", kapkan: "Inclus gratuitement", them: "Option payante" },
-      { feature: "Parité FlowSpec IPv6", kapkan: "Pleine parité avec IPv4", them: "Non pris en charge / roadmap" },
-      { feature: "Baselines continues", kapkan: "En ligne, réglage automatique", them: "Calculateur hors ligne, copier-coller" },
-      { feature: "Logique d'automatisation", kapkan: "Échelles d'escalade déclaratives", them: "Scripts bash/callback maison" },
-      { feature: "Architecture", kapkan: "Un binaire statique, sans sidecar", them: "Installation multi-daemon" },
-    ],
+  "compare": {
+    "heading": "Comment on se situe.",
+    "sub": "Un remplacement moderne, à binaire unique, des coûteux analyseurs de flux hérités.",
+    "colFeature": "Fonctionnalité",
+    "colKapkan": "Kapkan",
+    "colThem": "Outils commerciaux",
+    "rows": [
+      {
+        "feature": "Licence",
+        "kapkan": "Gratuit et open source (Apache 2.0)",
+        "them": "Licence payante / au volume"
+      },
+      {
+        "feature": "Console opérateur",
+        "kapkan": "Incluse gratuitement",
+        "them": "Option payante"
+      },
+      {
+        "feature": "Prise en charge d'IPv6",
+        "kapkan": "Complète, comme IPv4",
+        "them": "Absente ou prévue"
+      },
+      {
+        "feature": "Réglage des seuils",
+        "kapkan": "Apprend tout seul",
+        "them": "Calculateur hors ligne, copier-coller"
+      },
+      {
+        "feature": "Automatisation",
+        "kapkan": "Règles d'escalade dans la config",
+        "them": "Scripts bash maison"
+      },
+      {
+        "feature": "Architecture",
+        "kapkan": "Un binaire statique, sans extras",
+        "them": "Plusieurs daemons à faire tourner"
+      }
+    ]
   },
-  quickstart: {
-    heading: "Opérationnel en quelques minutes — dry-run d'abord.",
-    bodyBefore:
-      "Kapkan est sûr à déployer par défaut. Chaque blackhole potentiel ou annonce FlowSpec est journalisé et exposé via l'API, mais jamais annoncé à vos pairs BGP tant que vous ne basculez pas explicitement ",
-    bodyAfter: ".",
-    cta: "Voir toute la documentation",
+  "quickstart": {
+    "heading": "Opérationnel en quelques minutes — « observation seule » d'abord.",
+    "bodyBefore": "Kapkan est sûr dès l'installation. Il journalise chaque blocage qu'il ferait et l'affiche dans l'API et la console, mais n'annonce jamais rien à vos routeurs tant que vous ne définissez pas explicitement ",
+    "bodyAfter": ".",
+    "cta": "Voir toute la documentation"
   },
-  cta: { heading: "Tendez le piège. Protégez votre réseau.", sub: "Gratuit pour toujours. Apache 2.0. Déployé en un après-midi." },
-  footer: {
-    tagline: "Détection et mitigation DDoS open source et gratuites — annoncer, ou rejeter soi-même.",
-    product: "Produit",
-    docsCol: "Docs",
-    project: "Projet",
-    features: "Fonctionnalités",
-    compare: "Comparer",
-    configBuilder: "Générateur de config",
-    quickstart: "Démarrage rapide",
-    configuration: "Configuration",
-    api: "API",
-    safety: "Modèle de sûreté",
-    github: "GitHub",
-    releases: "Versions",
-    license: "Licence (Apache 2.0)",
+  "cta": {
+    "heading": "Tendez le piège. Protégez votre réseau.",
+    "sub": "Gratuit pour toujours. Apache 2.0. Opérationnel en un après-midi."
   },
+  "footer": {
+    "tagline": "Détection et mitigation DDoS gratuites et open source — annoncez-la, ou rejetez-la vous-même.",
+    "product": "Produit",
+    "docsCol": "Docs",
+    "project": "Projet",
+    "features": "Fonctionnalités",
+    "compare": "Comparer",
+    "configBuilder": "Générateur de config",
+    "quickstart": "Démarrage rapide",
+    "configuration": "Configuration",
+    "api": "API",
+    "safety": "Modèle de sûreté",
+    "github": "GitHub",
+    "releases": "Versions",
+    "license": "Licence (Apache 2.0)"
+  }
 };
 
 const es: LandingDict = {
-  meta: {
-    title: "Kapkan — detección y mitigación de DDoS gratuita y de código abierto",
-    description:
-      "Kapkan es un único binario Go: ingiere telemetría NetFlow/IPFIX/sFlow, detecta ataques DDoS volumétricos en segundos y o dispara mitigación automática BGP RTBH y FlowSpec, o descarta el ataque él mismo en el kernel de Linux con XDP. Gratis y de código abierto.",
+  "meta": {
+    "title": "Kapkan — detección y mitigación de DDoS gratis y de código abierto",
+    "description": "Kapkan es un único binario Go. Lee las estadísticas de tráfico que tus routers ya exportan (NetFlow, IPFIX, sFlow), detecta en segundos un ataque DDoS contra las IPs que proteges y lo detiene — diciéndole a tu router que lo descarte (BGP RTBH/FlowSpec) o descartándolo él mismo en el kernel de Linux (XDP). Gratis y de código abierto."
   },
-  nav: {
-    features: "Funciones",
-    how: "Cómo funciona",
-    compare: "Comparar",
-    docs: "Docs",
-    star: "Estrella en GitHub",
-    readDocs: "Leer la documentación",
-    buildConfig: "Crear configuración",
-    viewGithub: "Ver en GitHub",
-    menu: "Menú",
-    docFull: "Ver toda la documentación",
+  "nav": {
+    "features": "Funciones",
+    "how": "Cómo funciona",
+    "compare": "Comparar",
+    "docs": "Docs",
+    "star": "Estrella en GitHub",
+    "readDocs": "Leer la documentación",
+    "buildConfig": "Crear una configuración",
+    "viewGithub": "Ver en GitHub",
+    "menu": "Menú",
+    "docFull": "Ver toda la documentación",
+    "underAttack": "¿Bajo ataque ahora?"
   },
-  hero: {
-    eyebrow: "Open Source · Apache 2.0",
-    h1a: "Detén el DDoS volumétrico en segundos —",
-    h1b: "con un solo binario.",
-    sub: "Kapkan ingiere NetFlow, IPFIX y sFlow desde tus routers, detecta ataques volumétricos contra los prefijos que proteges y dispara blackhole BGP automático o mitigación FlowSpec quirúrgica — o descarta el ataque él mismo, en el kernel de Linux, con XDP. Gratis, de código abierto, dry-run por defecto.",
-    trust: ["Un solo binario Go", "Sin sidecar", "Dry-run por defecto", "IPv4 + IPv6"],
+  "hero": {
+    "eyebrow": "Open Source · Apache 2.0",
+    "h1a": "Detén los ataques DDoS en segundos —",
+    "h1b": "con un solo binario.",
+    "sub": "Kapkan lee las estadísticas de tráfico que tus routers ya exportan (NetFlow, IPFIX, sFlow), detecta en segundos una avalancha contra las IPs que proteges y la detiene — diciéndole a tu router que descarte el ataque, o descartándolo él mismo en el kernel de Linux. Gratis, de código abierto y en modo seguro «solo observación» hasta que decidas otra cosa.",
+    "trust": [
+      "Un solo binario Go",
+      "Nada más que instalar",
+      "«Solo observación» por defecto",
+      "IPv4 + IPv6"
+    ]
   },
-  stats: ["≥20M flujos/s/núcleo", "Detección en segundos", "/32 + /128 RTBH", "FlowSpec RFC 8955/8956", "Un único binario estático"],
-  how: {
-    heading: "Todo en cuatro verbos.",
-    sub: "Una arquitectura simplificada sin sidecars, colas de mensajes ni dependencias externas. Solo ejecuta el binario.",
-    steps: [
+  "stats": [
+    "≥20M flujos/s/núcleo",
+    "Detecta en segundos",
+    "Blackhole IPv4 + IPv6",
+    "FlowSpec RFC 8955/8956",
+    "Un binario estático"
+  ],
+  "how": {
+    "heading": "Cómo funciona, en cuatro pasos.",
+    "sub": "Un solo binario, nada más que ejecutar — sin servicios extra, sin cola de mensajes, sin base de datos. Apunta tus routers hacia él y listo.",
+    "steps": [
       {
-        title: "INGERIR",
-        body: "Apunta los exportadores de flujo de tus routers a Kapkan. sFlow v5, NetFlow v5/v9 e IPFIX sobre UDP, procesados completamente in-process — sin daemons sidecar.",
+        "title": "RECIBIR",
+        "body": "Apunta tus routers a Kapkan. Ya envían un resumen de cada flujo de tráfico — NetFlow, IPFIX o sFlow —, así que solo tienes que dirigirlo al puerto de Kapkan. Un único proceso lo lee todo; no hay nada más que instalar."
       },
       {
-        title: "DETECTAR",
-        body: "Umbrales de pps / Mbps / flujos-por-segundo por destino, corregidos por muestreo sobre una ventana deslizante — además de límites por protocolo y baselines aprendidas.",
+        "title": "DETECTAR",
+        "body": "Kapkan cuenta los paquetes, bits y conexiones por segundo de cada IP que proteges. Si se cruza un límite que fijaste — o uno que aprendió del tráfico normal de ese host —, es un ataque, y lo marca en segundos."
       },
       {
-        title: "MITIGAR",
-        body: "Un speaker BGP integrado anuncia rutas blackhole /32 o /128, o distribuye reglas FlowSpec quirúrgicas que descartan solo el vector de ataque. Se retiran automáticamente.",
+        "title": "MITIGAR",
+        "body": "Kapkan le dice a tu router que descarte el ataque por BGP. Puede descartar todo el tráfico de la IP atacada (RTBH), o descartar solo el tráfico del ataque y dejar pasar el resto (FlowSpec). Cuando la avalancha cesa, retira la regla él mismo."
       },
       {
-        title: "DESCARTAR",
-        body: "O sin router alguno: las mismas reglas se compilan en mapas del kernel de Linux y Kapkan descarta el ataque él mismo con XDP — antes de que los paquetes lleguen a la pila de red. Cada regla lleva su propio plazo dentro del kernel, así que un Kapkan detenido no puede seguir descartando tráfico.",
-      },
-    ],
+        "title": "DESCARTAR",
+        "body": "O sáltate el router: si el tráfico pasa por la máquina donde se ejecuta Kapkan, puede descartar el ataque él mismo dentro del kernel de Linux (XDP), en cuanto llegan los paquetes. Cada regla tiene una caducidad que el kernel hace cumplir, así que un Kapkan caído no puede seguir descartando tu tráfico."
+      }
+    ]
   },
-  features: {
-    heading: "Capacidades de nivel empresarial, gratis.",
-    sub: "El conjunto de funciones por el que los productos comerciales de flow-DDoS cobran miles, en un único binario Apache 2.0.",
-    safetyTag: "SEGURIDAD",
-    learnMore: "Cómo funciona la mitigación en el kernel",
-    cards: [
-      { title: "Ingesta de flujo multiprotocolo", body: "sFlow, NetFlow v5/v9, IPFIX sobre UDP en modo biblioteca — sin daemon adicional." },
-      { title: "Detección volumétrica en menos de un segundo", body: "Umbrales de pps/Mbps/flujos corregidos por muestreo sobre una ventana deslizante, ≥20M flujos/s/núcleo." },
-      { title: "RTBH + FlowSpec quirúrgico", body: "Blackhole del host completo, o descartar solo el vector de ataque. FlowSpec IPv6 con plena paridad con IPv4." },
-      { title: "Clasificación de ataques", body: "Amplificación (NTP/DNS/memcached), floods SYN/UDP/ICMP — con un desglose de «por qué se disparó»." },
-      { title: "Baselines aprendidas en continuo", body: "Kapkan aprende en línea el tráfico normal de cada host y ajusta los umbrales automáticamente. Deja de calibrar a mano." },
-      { title: "Seguro por diseño", body: "Dry-run por defecto, retirada automática por TTL, topes de bans activos y una whitelist protegida que NUNCA se banea." },
-      { title: "Detección de carpet-bombing", body: "Detecta floods de baja intensidad repartidos por todo un prefijo que se escapan de los umbrales por IP." },
-      { title: "Observabilidad completa", body: "API REST, Prometheus /metrics, además de notificaciones por Telegram, Slack, email, webhook y exec-hook." },
-      { title: "Multiinquilino y auditado", body: "Aislamiento por inquilino, tokens de API por rol (viewer/operator) y un registro de auditoría atribuido al operador." },
+  "features": {
+    "heading": "Las funciones por las que otros cobran — gratis.",
+    "sub": "Lo que los productos comerciales de flow-DDoS empaquetan y por lo que cobran miles, en un único binario Apache 2.0: detección, mitigación, una consola de operador y las salvaguardas para operarlo en producción.",
+    "safetyTag": "SEGURIDAD",
+    "learnMore": "Mira cómo funciona el descarte en el kernel",
+    "cards": [
       {
-        title: "Mitigación en el kernel con XDP",
-        body: "Kapkan puede aplicar una detección él mismo en lugar de pedírselo a un router. Las mismas reglas que anunciaría como FlowSpec se compilan en mapas del kernel de Linux y las aplica un programa XDP — incluida la limitación de tasa por origen, que BGP FlowSpec no puede expresar estructuralmente. Linux 5.15+, nada que compilar en la máquina, y cada regla expira dentro del kernel, así que un Kapkan que muere no puede dejar tu tráfico descartado. El dry-run sigue siendo el valor por defecto.",
+        "title": "Lee los flujos que ya exportas",
+        "body": "sFlow v5, NetFlow v5/v9 e IPFIX sobre UDP, leídos por el propio Kapkan — sin ningún servicio extra que ejecutar."
       },
-    ],
+      {
+        "title": "Detecta avalanchas en menos de un segundo",
+        "body": "Límites de paquetes, bits y flujos por segundo sobre una ventana deslizante, corregidos por muestreo — ≥20M flujos/s por núcleo."
+      },
+      {
+        "title": "Blackhole, o descartar solo el ataque",
+        "body": "Descarta todo el tráfico de la IP atacada (RTBH), o descarta solo el tráfico del ataque y deja pasar el resto (FlowSpec). Soporte completo de IPv6, a la par de IPv4."
+      },
+      {
+        "title": "Te dice de qué tipo es el ataque",
+        "body": "Amplificación (NTP/DNS/memcached), avalanchas SYN/UDP/ICMP — cada una con un desglose claro de «por qué saltó»."
+      },
+      {
+        "title": "Aprende lo normal de cada host",
+        "body": "Kapkan aprende cómo es el tráfico normal de cada host y ajusta los límites por su cuenta. Sin calibrado manual."
+      },
+      {
+        "title": "Difícil que se dispare por error",
+        "body": "Arranca en modo «solo observación». Cada bloqueo tiene una caducidad y se levanta solo, un tope limita cuántos hosts pueden bloquearse a la vez, y tu lista protegida no se bloquea nunca — ni por Kapkan, ni por ti."
+      },
+      {
+        "title": "Detecta el carpet-bombing",
+        "body": "Detecta avalanchas de baja intensidad repartidas por todo un rango de IPs que se quedan por debajo del límite de cada host."
+      },
+      {
+        "title": "Vigílalo desde cualquier sitio",
+        "body": "REST API, Prometheus /metrics y alertas por Telegram, Slack, correo, webhook o un script que tú ejecutes."
+      },
+      {
+        "title": "Multiinquilino y auditado",
+        "body": "Acota el acceso por inquilino, reparte tokens de API de viewer/operator y consigue un registro de auditoría que deja constancia de quién hizo qué."
+      },
+      {
+        "title": "Mitigación en el kernel con XDP",
+        "body": "En lugar de pedirle a un router que descarte el ataque, Kapkan puede hacerlo él mismo. Las mismas reglas que anunciaría como FlowSpec se cargan directamente en el kernel de Linux y se ejecutan allí (XDP) — incluido un límite de tasa aparte para cada origen atacante, algo que BGP FlowSpec no puede hacer. Necesita Linux 5.15+, no compila nada en la máquina, y cada regla expira dentro del kernel, así que un Kapkan caído no puede dejar tu tráfico descartado. Sigue en «solo observación» por defecto."
+      }
+    ]
   },
-  showcase: {
-    heading: "Una consola de operador real, incluida gratis.",
-    sub: "Sin rebuscar en logs en bruto. Kapkan incluye una UI reactiva para la sala de guerra del SOC — ataques, hosts y mitigación en un solo lugar.",
+  "showcase": {
+    "heading": "Una consola de operador de verdad, incluida — gratis.",
+    "sub": "Sin escarbar en logs en bruto. Kapkan viene con una consola web en vivo para tu equipo de guardia — ataques, hosts y bloqueos en un solo lugar."
   },
-  compare: {
-    heading: "Cómo nos comparamos.",
-    sub: "Creado para reemplazar los costosos analizadores de flujo heredados con un enfoque moderno de un solo binario.",
-    colFeature: "Función",
-    colKapkan: "Kapkan",
-    colThem: "Herramientas comerciales",
-    rows: [
-      { feature: "Modelo de licencia", kapkan: "Gratis y de código abierto (Apache 2.0)", them: "Licencia de pago / por volumen" },
-      { feature: "Panel de operador", kapkan: "Incluido gratis", them: "Complemento de pago" },
-      { feature: "Paridad FlowSpec IPv6", kapkan: "Plena paridad con IPv4", them: "No soportado / en la hoja de ruta" },
-      { feature: "Baselines continuas", kapkan: "En línea, ajuste automático", them: "Calculadora offline, copiar y pegar" },
-      { feature: "Lógica de automatización", kapkan: "Escaleras de escalado declarativas", them: "Scripts bash/callback propios" },
-      { feature: "Arquitectura", kapkan: "Un binario estático, sin sidecar", them: "Configuración con múltiples daemons" },
-    ],
+  "compare": {
+    "heading": "Cómo nos comparamos.",
+    "sub": "Un reemplazo moderno, de un solo binario, para los caros analizadores de flujo heredados.",
+    "colFeature": "Función",
+    "colKapkan": "Kapkan",
+    "colThem": "Herramientas comerciales",
+    "rows": [
+      {
+        "feature": "Licencia",
+        "kapkan": "Gratis y de código abierto (Apache 2.0)",
+        "them": "Licencia de pago / por volumen"
+      },
+      {
+        "feature": "Consola de operador",
+        "kapkan": "Incluida gratis",
+        "them": "Complemento de pago"
+      },
+      {
+        "feature": "Soporte de IPv6",
+        "kapkan": "Completo, igual que IPv4",
+        "them": "Ausente o previsto"
+      },
+      {
+        "feature": "Ajuste de umbrales",
+        "kapkan": "Aprende automáticamente",
+        "them": "Calculadora offline, copiar y pegar"
+      },
+      {
+        "feature": "Automatización",
+        "kapkan": "Reglas de escalado en la configuración",
+        "them": "Scripts bash propios"
+      },
+      {
+        "feature": "Arquitectura",
+        "kapkan": "Un binario estático, sin extras",
+        "them": "Varios daemons que ejecutar"
+      }
+    ]
   },
-  quickstart: {
-    heading: "En marcha en minutos — primero dry-run.",
-    bodyBefore:
-      "Kapkan es seguro de desplegar por defecto. Cada posible blackhole o anuncio FlowSpec se registra y se expone vía la API, pero nunca se anuncia a tus pares BGP hasta que cambies explícitamente ",
-    bodyAfter: ".",
-    cta: "Ver toda la documentación",
+  "quickstart": {
+    "heading": "En marcha en minutos — primero «solo observación».",
+    "bodyBefore": "Kapkan es seguro desde el primer momento. Registra cada bloqueo que haría y lo muestra en la API y la consola, pero nunca anuncia nada a tus routers hasta que establezcas explícitamente ",
+    "bodyAfter": ".",
+    "cta": "Ver toda la documentación"
   },
-  cta: { heading: "Tiende la trampa. Protege tu red.", sub: "Gratis para siempre. Apache 2.0. Despliega en una tarde." },
-  footer: {
-    tagline: "Detección y mitigación de DDoS gratuita y de código abierto — anunciar, o descartar tú mismo.",
-    product: "Producto",
-    docsCol: "Docs",
-    project: "Proyecto",
-    features: "Funciones",
-    compare: "Comparar",
-    configBuilder: "Generador de configuración",
-    quickstart: "Inicio rápido",
-    configuration: "Configuración",
-    api: "API",
-    safety: "Modelo de seguridad",
-    github: "GitHub",
-    releases: "Versiones",
-    license: "Licencia (Apache 2.0)",
+  "cta": {
+    "heading": "Tiende la trampa. Protege tu red.",
+    "sub": "Gratis para siempre. Apache 2.0. Funcionando en una tarde."
   },
+  "footer": {
+    "tagline": "Detección y mitigación de DDoS gratis y de código abierto — anúncialo, o descártalo tú mismo.",
+    "product": "Producto",
+    "docsCol": "Docs",
+    "project": "Proyecto",
+    "features": "Funciones",
+    "compare": "Comparar",
+    "configBuilder": "Generador de configuración",
+    "quickstart": "Inicio rápido",
+    "configuration": "Configuración",
+    "api": "API",
+    "safety": "Modelo de seguridad",
+    "github": "GitHub",
+    "releases": "Versiones",
+    "license": "Licencia (Apache 2.0)"
+  }
 };
 
 export const landing: Record<Locale, LandingDict> = { en, ru, de, fr, es };

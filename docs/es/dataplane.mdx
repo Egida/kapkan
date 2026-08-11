@@ -45,8 +45,8 @@ FlowSpec, y recurre al plano de datos solo en un nodo de scrubbing.
 <Callout type="warning" title="No puede des-saturar un enlace ascendente">
 Un filtro XDP se ejecuta sobre paquetes que ya han llegado a la NIC de esta máquina. Si una inundación ya
 ha llenado la tubería *aguas arriba* de la caja, el enlace está congestionado antes de que el filtro vea un
-paquete, y descartar localmente no cambia nada. Para eso están los peldaños contundentes. El plano de datos
-es la respuesta más quirúrgica de una [escalera de escalado](/docs/escalation) — no un reemplazo de
+paquete, y descartar localmente no cambia nada. Para eso están los métodos más contundentes aguas arriba. El plano de datos
+es la respuesta más precisa de una [escalera de escalado](/docs/escalation) — no un reemplazo de
 los que mueven el descarte aguas arriba.
 </Callout>
 
@@ -80,7 +80,7 @@ la capacidad de esta tabla.
 El plano de datos es un *método* de mitigación, junto a RTBH, FlowSpec y la desviación, y hereda
 todo lo que hacen los demás. La detección no cambia. El [modelo de seguridad](/docs/safety) — dry-run,
 listas blancas, TTLs y topes de radio de impacto — se aplica exactamente igual que a un anuncio BGP, porque
-el plano de datos se sitúa por debajo de la misma costura. Lo único que cambia es el último paso: en lugar de un
+el plano de datos se conecta en el mismo punto. Lo único que cambia es el último paso: en lugar de un
 anuncio saliendo de la caja, las reglas se escriben en el kernel.
 
 La severidad va `none < dataplane < flowspec < divert < blackhole`. En una

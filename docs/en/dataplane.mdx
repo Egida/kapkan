@@ -45,9 +45,9 @@ FlowSpec, and reach for the data plane only on a scrubbing node.
 <Callout type="warning" title="It cannot un-saturate an upstream link">
 An XDP filter runs on packets that have already arrived on this machine's NIC. If a flood has
 already filled the pipe *upstream* of the box, the link is congested before the filter sees a
-packet, and dropping locally changes nothing. That is what the blunt rungs are for. The data plane
-is the most surgical response in an [escalation ladder](/docs/escalation) — not a replacement for
-the ones that move the drop upstream.
+packet, and dropping locally changes nothing. That is what the heavier, upstream steps are for. In
+an [escalation ladder](/docs/escalation) the data plane is the most precise response — not a
+replacement for the ones that move the drop upstream.
 </Callout>
 
 ## Does it work? Measured, not asserted
@@ -80,7 +80,7 @@ capacity off this table.
 The data plane is a mitigation *method*, alongside RTBH, FlowSpec and diversion, and it inherits
 everything the others do. Detection is unchanged. The [safety model](/docs/safety) — dry-run,
 whitelists, TTLs and blast-radius caps — applies exactly as it does to a BGP announcement, because
-the data plane sits below the same seam. What changes is only the last step: instead of an
+the data plane plugs in at the same point. What changes is only the last step: instead of an
 announcement leaving the box, rules are written into the kernel.
 
 Severity runs `none < dataplane < flowspec < divert < blackhole`. On an

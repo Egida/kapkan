@@ -47,8 +47,8 @@ verwenden Sie weiterhin RTBH und FlowSpec und greifen nur auf einem Scrubbing-Kn
 <Callout type="warning" title="Sie kann eine überlastete Upstream-Leitung nicht entlasten">
 Ein XDP-Filter läuft auf Paketen, die bereits an der NIC dieser Maschine angekommen sind. Wenn eine
 Flut die Leitung bereits *upstream* der Box gefüllt hat, ist die Verbindung überlastet, bevor der
-Filter ein Paket sieht, und lokales Verwerfen ändert nichts. Dafür sind die groben Sprossen da. Die
-Datenebene ist die chirurgischste Reaktion auf einer [Eskalationsleiter](/docs/escalation) — kein
+Filter ein Paket sieht, und lokales Verwerfen ändert nichts. Dafür sind die gröberen Upstream-Methoden da. Die
+Datenebene ist die präziseste Reaktion auf einer [Eskalationsleiter](/docs/escalation) — kein
 Ersatz für jene, die das Verwerfen nach upstream verlagern.
 </Callout>
 
@@ -84,7 +84,7 @@ Deployment anhand Ihrer eigenen Hardware; lesen Sie die Kapazität nicht aus die
 Die Datenebene ist eine *Mitigationsmethode*, neben RTBH, FlowSpec und Umleitung, und sie erbt alles,
 was die anderen tun. Die Erkennung bleibt unverändert. Das [Sicherheitsmodell](/docs/safety) — dry-run,
 Whitelists, TTLs und Blast-Radius-Grenzen — gilt genau so wie für eine BGP-Ankündigung, denn die
-Datenebene sitzt unterhalb derselben Nahtstelle. Es ändert sich nur der letzte Schritt: Statt dass eine
+Datenebene setzt am selben Punkt an. Es ändert sich nur der letzte Schritt: Statt dass eine
 Ankündigung die Box verlässt, werden Regeln in den Kernel geschrieben.
 
 Die Schwere verläuft `none < dataplane < flowspec < divert < blackhole`. Auf einer

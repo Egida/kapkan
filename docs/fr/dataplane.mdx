@@ -51,7 +51,7 @@ d'attaque ne transite par cette VM, il n'y a donc rien à y supprimer. Dans cett
 Un filtre XDP s'exécute sur des paquets qui sont déjà arrivés sur la NIC de cette machine. Si un
 flood a déjà rempli le tuyau *en amont* de la machine, le lien est congestionné avant même que le
 filtre ne voie un paquet, et supprimer localement n'y change rien. C'est à cela que servent les
-paliers plus grossiers. Le plan de données est la réponse la plus chirurgicale d'un
+méthodes plus grossières en amont. Le plan de données est la réponse la plus précise d'un
 [palier d'escalade](/docs/escalation) — pas un remplacement de ceux qui déplacent la suppression en
 amont.
 </Callout>
@@ -88,8 +88,8 @@ déploiement sur votre propre matériel ; ne lisez pas la capacité sur ce table
 Le plan de données est une *méthode* de mitigation, aux côtés du RTBH, de FlowSpec et de la
 déviation, et il hérite de tout ce que font les autres. La détection est inchangée. Le
 [modèle de sécurité](/docs/safety) — dry-run, listes blanches, TTL et plafonds de rayon d'impact —
-s'applique exactement comme pour une annonce BGP, car le plan de données se situe sous la même
-couture. Ce qui change n'est que la dernière étape : au lieu qu'une annonce quitte la machine, les
+s'applique exactement comme pour une annonce BGP, car le plan de données s'insère au même
+point. Ce qui change n'est que la dernière étape : au lieu qu'une annonce quitte la machine, les
 règles sont écrites dans le noyau.
 
 La sévérité s'ordonne `none < dataplane < flowspec < divert < blackhole`. Sur un
