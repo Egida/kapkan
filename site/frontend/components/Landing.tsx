@@ -95,10 +95,14 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
   const t = landing[locale];
   const docsHref = `${basePath}/docs`;
   const configHref = `${basePath}/config`;
+  const underAttackHref = `${docsHref}/under-attack`;
 
   const navLinks: NavLink[] = [
     { label: t.nav.features, href: "#features" },
     { label: t.nav.how, href: "#how-it-works" },
+    // "XDP" is an acronym — the same in every locale, so it carries no t.nav
+    // entry. It is a page link (like Docs), not an in-page anchor.
+    { label: "XDP", href: `${basePath}/xdp` },
     { label: t.nav.compare, href: "#compare" },
     { label: t.nav.docs, href: docsHref },
   ];
@@ -178,6 +182,19 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
                   <a href={site.repo} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-full border border-border bg-surface px-6 py-3 font-medium transition-colors hover:bg-muted">
                     <Icon name="github" className="h-5 w-5" /> {t.nav.viewGithub}
                   </a>
+                  {/* Emergency lane: the one on-ramp a panicking operator needs.
+                      No competitor surfaces an "under attack right now" path — we
+                      already have the runbook, so we point straight at it. */}
+                  <Link
+                    href={underAttackHref}
+                    className="flex items-center gap-2 rounded-full border border-red-500/40 bg-red-500/5 px-5 py-3 font-medium text-red-500 transition-colors hover:bg-red-500/10"
+                  >
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
+                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+                    </span>
+                    {t.nav.underAttack}
+                  </Link>
                   <Link href={configHref} className="group ml-1 flex items-center gap-1 text-sm font-medium text-accent transition-colors hover:opacity-80">
                     {t.nav.buildConfig}
                     <Icon name="arrowRight" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
@@ -287,6 +304,12 @@ export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: 
                   <p className={`text-sm leading-relaxed text-muted-foreground ${i === WIDE_CARD_INDEX ? "max-w-4xl" : ""}`}>
                     {f.body}
                   </p>
+                  {i === WIDE_CARD_INDEX && (
+                    <Link href={`${basePath}/xdp`} className="group mt-4 inline-flex items-center gap-1 text-sm font-medium text-accent transition-colors hover:opacity-80">
+                      {t.features.learnMore}
+                      <Icon name="arrowRight" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                    </Link>
+                  )}
                 </div>
               ))}
             </div>

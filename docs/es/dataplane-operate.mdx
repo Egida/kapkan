@@ -1,0 +1,139 @@
+export const metadata = {
+  title: "Operación y monitoreo",
+  description:
+    "Opera el plano de datos en el kernel en el día a día: lee kapkan dataplane status, vigila los contadores y métricas por veredicto, configura las dos alertas que importan y corrige los fallos habituales.",
+};
+
+# Operación y monitoreo
+
+El plano de datos está en marcha. Esta página es lo que haces a partir de aquí: cómo leer su estado,
+qué vigilar, qué alertas configurar y cómo diagnosticar el puñado de cosas que fallan. Si aún no lo
+has puesto en marcha, empieza por [Instalar el plano de datos](/docs/dataplane-install).
+
+## Leer `kapkan dataplane status`
+
+`kapkan dataplane status` es lo primero que hay que ejecutar y lo primero que adjuntar a cualquier
+solicitud de soporte. Lee directamente el estado fijado en el kernel, así que **funciona incluso
+cuando el demonio está detenido** — que es justo cuando más lo necesitas.
+
+Informa de:
+
+- **Conexiones** — en qué interfaces está el programa, y el modo de conexión (`native` o `generic`)
+  de cada una.
+- **Estado** — aplicando o en dry-run, y si el programa está degradado (conectado pero sin filtrar
+  en alguna interfaz).
+- **Reglas** — las reglas estáticas codificadas, y las reglas dinámicas que el detector ha
+  instalado, con la generación de política activa.
+- **Veredictos** — los contadores de paquetes y bytes por veredicto, descritos a continuación.
+- **Mapas** — cómo de lleno está cada mapa del kernel frente a su límite.
+
+El mismo estado está en la página de **Ajustes** de la consola, y los recuentos de descarte por
+baneo aparecen en cada baneo en **Baneos / Mitigación** y en `/api/v1/bans`.
+
+## Los contadores de veredicto
+
+Cada paquete que ve el programa termina en exactamente un veredicto **terminal**, así que esos
+contadores suman el total de paquetes:
+
+| Veredicto | Significado |
+| --- | --- |
+| `pass_default` | No coincidió con ninguna regla — reenviado. En una máquina sana esto es casi todo. |
+| `pass_not_ip` | No es IPv4/IPv6 (ARP, etcétera) — reenviado. |
+| `drop_static` | Descartado por una de tus reglas estáticas. |
+| `drop_dyn_src` / `drop_dyn_dst` | Descartado por una regla de origen o de víctima instalada por el detector. |
+| `drop_rl` | Descartado porque una cubeta de limitación de velocidad por origen estaba vacía. |
+| `drop_malformed` | Descartado por no ser analizable — solo es distinto de cero si estableces `drop_malformed: true`. |
+
+Que los contadores **drop\_** suban durante un ataque mientras `pass_default` sigue fluyendo es la
+imagen sana: el ataque se está descartando y todo lo demás pasa. Si un contador de descarte sube
+pero el tráfico de ataque *sigue llegando al host tras Kapkan*, el programa está conectado a la
+interfaz equivocada, o está en modo generic en una ruta que el tráfico no toma —
+consulta [Solución de problemas](#solución-de-problemas).
+
+## Las dos alertas que importan
+
+Merece la pena graficar la mayoría de las métricas `kapkan_dataplane_*`. Dos merecen una **alerta**,
+porque cada una es silenciosa de otro modo y cada una significa que el filtro no está haciendo lo
+que crees.
+
+### 1. El modo de conexión recayó en generic
+
+`xdp_mode: auto` usa la ruta native rápida allí donde el driver lo soporta y la ruta generic más
+lenta donde no — y toma esa decisión **en silencio**. Un cambio de driver, una actualización del
+kernel o pasar a otra NIC pueden llevarte de native a generic sin ningún error, recortando en
+silencio la capacidad para la que dimensionaste.
+
+El modo en uso aparece en `kapkan dataplane status` y se exporta como métrica. Si dimensionaste para
+native, alerta ante cualquier interfaz que informe generic. (Si prefieres fallar de forma ruidosa en
+el arranque a recaer en el otro modo, establece `xdp_mode: native` — se niega a arrancar en lugar de
+correr lento. Consulta [modos de conexión](/docs/dataplane-tuning).)
+
+### 2. El tráfico eludió el filtro sin ser inspeccionado
+
+Un tipo de paquete IPv6 se reenvía **sin que se evalúe ninguna regla**: un paquete que lleva más de
+ocho cabeceras de extensión antes de su cabecera L4. Recorrer una cadena más larga le costaría al
+programa del kernel un presupuesto de instrucciones del que no dispone, así que se detiene en ocho y
+deja pasar el resto. Esto es deliberado — un límite de análisis que *descartara* sería una
+denegación por defecto escondida dentro de un analizador, y una sola cadena de aspecto extraño
+dejaría a un cliente sin servicio — pero también es una forma de rodear tu filtro, así que se cuenta
+en lugar de ocultarse:
+
+```
+kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}
+```
+
+Ningún tráfico legítimo encadena ocho cabeceras de extensión, así que **cualquier movimiento de este
+contador merece que lo mires**. `kapkan dataplane status` imprime un bloque cuando es distinto de
+cero y la consola muestra un banner. Si se mueve durante un ataque, descarta o normaliza las cadenas
+largas de cabeceras de extensión aguas arriba, donde un router puede hacerlo sin un presupuesto por
+paquete.
+
+## Recargar la configuración
+
+La recarga (`kapkan -s reload`) reemplaza la política estática de forma atómica: Kapkan construye el
+nuevo conjunto de reglas junto al que está en vivo y cambia entre ambos en una sola escritura, de
+modo que ningún paquete se evalúa nunca contra una política aplicada a medias. `allowlist`,
+`static_rules` y `ratelimit_profiles` se recargan en caliente.
+
+Todo lo que conecta o dimensiona objetos del kernel — `interfaces`, `xdp_mode`, `pin_path`,
+`on_exit`, `limits` y el propio `enabled` — **no puede** cambiar con un programa en ejecución. Una
+recarga que toque alguno se rechaza de plano y la configuración anterior sigue activa. Reinicia el
+proceso para cambiarlos.
+
+## Qué sobrevive a un reinicio
+
+Como el programa y los mapas están anclados bajo `pin_path`, sobreviven al proceso de Kapkan:
+
+- **La política estática sigue aplicándose** durante un reinicio o una actualización del proceso —
+  no hay ninguna ventana en la que tus reglas permanentes estén ausentes.
+- **Las reglas dinámicas caducan por sí solas.** Cada regla generada lleva su propia caducidad en el
+  kernel, y el programa trata una regla caducada como ausente, así que un Kapkan que se mate, se
+  cuelgue o se actualice no puede dejar el tráfico de una víctima descartándose. Cuando vuelve,
+  readopta los mapas anclados y retoma su gestión.
+
+En un apagado *limpio*, `on_exit` decide qué queda: `keep` (el predeterminado) deja el programa
+conectado; `detach` lo retira por completo, dejando pasar todo el tráfico.
+
+## Solución de problemas
+
+**El programa no se conecta.** Casi siempre es una capability que falta o un bpffs de solo lectura —
+vuelve a revisar [el paso 2 de la instalación](/docs/dataplane-install). El registro del demonio
+indica qué no pudo obtener.
+
+**Un contador de descarte sube pero el ataque sigue llegando al host.** El programa está
+inspeccionando el tráfico equivocado. Confirma que está conectado a la interfaz por la que el ataque
+llega realmente (`kapkan dataplane status`), y comprueba si recayó en modo generic en una ruta que
+el tráfico no atraviesa.
+
+**El mapa de reglas está lleno.** `max_dynamic_rules` es demasiado bajo para el número de baneos
+activos — las instalaciones empiezan a fallar en mitad del ataque. Súbelo (debe ser como mínimo
+`ban.max_active_bans × 8`); consulta [límites y memoria](/docs/dataplane-tuning).
+
+Hay más casos, comunes a todos los métodos de mitigación, en [Solución de problemas](/docs/troubleshooting).
+
+## Relacionado
+
+- [Métricas](/docs/metrics) — cada familia `kapkan_dataplane_*` y sus etiquetas.
+- [Ajuste y referencia](/docs/dataplane-tuning) — modos de conexión, limitación de velocidad y
+  dimensionado de mapas.
+- [Modelo de seguridad](/docs/safety) — dry-run, listas de permitidos y los topes tras cada método.

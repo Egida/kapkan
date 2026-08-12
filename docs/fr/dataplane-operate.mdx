@@ -1,0 +1,145 @@
+export const metadata = {
+  title: "Exploitation & surveillance",
+  description:
+    "Faites tourner le plan de données intégré au noyau au quotidien : lire kapkan dataplane status, surveiller les compteurs et métriques par verdict, régler les deux alertes qui comptent et corriger les pannes courantes.",
+};
+
+# Exploitation & surveillance
+
+Le plan de données tourne. Cette page décrit ce que vous faites à partir de là : comment lire son
+état, quoi surveiller, les alertes à régler, et comment diagnostiquer la poignée de choses qui
+tournent mal. Si vous ne l'avez pas encore mis en route, commencez par
+[Installer le plan de données](/docs/dataplane-install).
+
+## Lire `kapkan dataplane status`
+
+`kapkan dataplane status` est la première chose à lancer et la première à joindre à toute demande de
+support. Il lit directement l'état épinglé du noyau, donc il **fonctionne même quand le démon est
+arrêté** — ce qui est précisément le moment où vous en avez le plus besoin.
+
+Il rapporte :
+
+- **Attachements** — sur quelles interfaces le programme est présent, et le mode d'attachement
+  (`native` ou `generic`) pour chacune.
+- **État** — application ou dry-run, et si le programme est dégradé (attaché mais ne filtrant pas
+  sur une interface).
+- **Règles** — les règles statiques encodées, et les règles dynamiques que le détecteur a
+  installées, avec la génération de politique active.
+- **Verdicts** — les compteurs de paquets et d'octets par verdict, décrits ci-après.
+- **Maps** — le taux de remplissage de chaque map du noyau par rapport à sa limite.
+
+Le même état figure sur la page **Settings** de la console, et les compteurs de rejets par
+bannissement apparaissent sur chaque bannissement dans **Bans / Mitigation** et dans `/api/v1/bans`.
+
+## Les compteurs de verdict
+
+Chaque paquet que voit le programme se termine par exactement un verdict **terminal**, de sorte que
+ces compteurs totalisent le nombre total de paquets :
+
+| Verdict | Signification |
+| --- | --- |
+| `pass_default` | N'a correspondu à aucune règle — transmis. Sur une machine saine, c'est presque tout. |
+| `pass_not_ip` | Pas de l'IPv4/IPv6 (ARP, etc.) — transmis. |
+| `drop_static` | Rejeté par l'une de vos règles statiques. |
+| `drop_dyn_src` / `drop_dyn_dst` | Rejeté par une règle source ou victime installée par le détecteur. |
+| `drop_rl` | Rejeté parce qu'un seau de limitation de débit par source était vide. |
+| `drop_malformed` | Rejeté comme non analysable — jamais non nul sauf si vous réglez `drop_malformed: true`. |
+
+Que les compteurs **drop\_** grimpent pendant une attaque tandis que `pass_default` continue de
+s'écouler, c'est l'image saine : l'attaque est rejetée et tout le reste passe. Si un compteur de
+rejets grimpe mais que le trafic d'attaque *arrive toujours à l'hôte derrière Kapkan*, le programme
+est attaché à la mauvaise interface, ou il est en mode generic sur un chemin que le trafic
+n'emprunte pas — voir [Dépannage](#dépannage).
+
+## Les deux alertes qui comptent
+
+La plupart des métriques `kapkan_dataplane_*` valent la peine d'être tracées. Deux valent la peine
+d'une **alerte**, car chacune est autrement silencieuse et chacune signifie que le filtre ne fait
+pas ce que vous croyez.
+
+### 1. Le mode d'attachement est retombé sur generic
+
+`xdp_mode: auto` utilise le chemin natif rapide là où le pilote le prend en charge et le chemin
+generic plus lent là où il ne le prend pas — et il fait ce choix **silencieusement**. Un changement
+de pilote, une mise à niveau du noyau, ou le passage à une autre NIC peut vous faire tomber de
+native à generic sans erreur, réduisant en douce la capacité que vous aviez dimensionnée.
+
+Le mode utilisé figure dans `kapkan dataplane status` et est exporté comme métrique. Si vous avez
+dimensionné pour native, déclenchez une alerte sur toute interface signalant generic. (Si vous
+préférez échouer bruyamment au démarrage plutôt que de retomber, réglez `xdp_mode: native` — il
+refuse de démarrer au lieu de tourner lentement. Voir
+[modes d'attachement](/docs/dataplane-tuning).)
+
+### 2. Du trafic a contourné le filtre sans inspection
+
+Une forme de paquet IPv6 est transmise **sans qu'aucune règle ne soit évaluée** : un paquet portant
+plus de huit en-têtes d'extension avant son en-tête L4. Parcourir une chaîne plus longue coûterait
+au programme du noyau un budget d'instructions dont il ne dispose pas, alors il s'arrête à huit et
+laisse passer le reste. C'est délibéré — une limite d'analyse qui *rejetterait* serait un
+default-deny caché à l'intérieur d'un analyseur, et une seule chaîne d'aspect inhabituel mettrait un
+client hors ligne — mais c'est aussi un moyen de contourner votre filtre, donc c'est compté plutôt
+qu'enterré :
+
+```
+kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}
+```
+
+Aucun trafic légitime n'enchaîne huit en-têtes d'extension, donc **tout mouvement sur ce compteur
+mérite qu'on s'y penche**. `kapkan dataplane status` affiche un bloc quand il est non nul et la
+console montre une bannière. S'il bouge pendant une attaque, rejetez ou normalisez les longues
+chaînes d'en-têtes d'extension en amont, là où un routeur peut le faire sans budget par paquet.
+
+## Recharger la configuration
+
+Le rechargement (`kapkan -s reload`) remplace la politique statique de manière atomique : Kapkan
+construit le nouveau jeu de règles à côté de celui en vigueur et bascule de l'un à l'autre en une
+seule écriture, de sorte qu'aucun paquet n'est jamais évalué contre une politique à moitié
+appliquée. Les `allowlist`, `static_rules` et `ratelimit_profiles` se rechargent sur place.
+
+Tout ce qui attache ou dimensionne des objets du noyau — `interfaces`, `xdp_mode`, `pin_path`,
+`on_exit`, `limits`, et `enabled` lui-même — **ne peut pas** changer sous un programme en cours
+d'exécution. Un rechargement qui touche l'un d'eux est rejeté d'emblée et la configuration
+précédente reste active. Redémarrez le processus pour changer ces éléments.
+
+## Ce qui survit à un redémarrage
+
+Parce que le programme et les maps sont épinglés sous `pin_path`, ils survivent au processus
+Kapkan :
+
+- **La politique statique continue de s'appliquer** au fil d'un redémarrage ou d'une mise à niveau
+  du processus — il n'y a aucune fenêtre où vos règles permanentes sont absentes.
+- **Les règles dynamiques expirent d'elles-mêmes.** Chaque règle générée porte sa propre expiration
+  intégrée au noyau, et le programme traite une règle expirée comme absente, de sorte qu'un Kapkan
+  tué, bloqué ou mis à niveau ne peut pas laisser le trafic d'une victime rejeté. À son retour, il
+  réadopte les maps épinglées et reprend leur gestion.
+
+Lors d'un arrêt *propre*, `on_exit` décide de ce qui subsiste : `keep` (la valeur par défaut) laisse
+le programme attaché ; `detach` le retire entièrement, laissant passer tout le trafic.
+
+## Dépannage
+
+**Le programme refuse de s'attacher.** Presque toujours une capability manquante ou un bpffs en
+lecture seule — revérifiez
+[l'étape 2 de l'installation](/docs/dataplane-install). Le journal du démon nomme ce qu'il n'a pas
+pu obtenir.
+
+**Un compteur de rejets grimpe mais l'attaque atteint toujours l'hôte.** Le programme inspecte le
+mauvais trafic. Confirmez qu'il est attaché à l'interface sur laquelle l'attaque arrive réellement
+(`kapkan dataplane status`), et vérifiez s'il est retombé en mode generic sur un chemin que le
+trafic ne traverse pas.
+
+**La map de règles est pleine.** `max_dynamic_rules` est trop bas pour le nombre de bannissements
+actifs — les installations commencent à échouer en pleine attaque. Augmentez-le (il doit valoir au
+moins `ban.max_active_bans × 8`) ; voir
+[limites et mémoire](/docs/dataplane-tuning).
+
+D'autres cas, communs à toutes les méthodes de mitigation, figurent dans
+[Dépannage](/docs/troubleshooting).
+
+## Voir aussi
+
+- [Métriques](/docs/metrics) — chaque famille `kapkan_dataplane_*` et ses labels.
+- [Réglages & référence](/docs/dataplane-tuning) — modes d'attachement, limitation de débit et
+  dimensionnement des maps.
+- [Modèle de sûreté](/docs/safety) — dry-run, listes blanches et les plafonds derrière chaque
+  méthode.

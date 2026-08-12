@@ -1,0 +1,159 @@
+export const metadata = {
+  title: "Ajuste y referencia",
+  description:
+    "Referencia del plano de datos dentro del kernel: el orden exacto en que se evalúa un paquete, la política estática frente a las reglas generadas, la limitación de tasa por origen, la conexión native frente a generic y cómo los límites dimensionan la memoria del kernel.",
+};
+
+# Ajuste y referencia
+
+La referencia precisa detrás del plano de datos: cómo se evalúa un paquete, la diferencia entre la
+política que escribes y las reglas que genera el detector, la única capacidad que FlowSpec no puede
+expresar y cómo se traducen los límites en memoria del kernel. Si todavía estás poniéndolo en
+marcha, empieza por [Instalar el plano de datos](/docs/dataplane-install).
+
+## Qué evalúa el kernel, y en qué orden
+
+Para cada paquete, el programa recorre un orden **fijo y no configurable**, y se detiene en el primer
+veredicto:
+
+1. **Lista de permitidos de origen** — `dataplane.allowlist`. Una coincidencia deja pasar de
+   inmediato.
+2. **Destinos protegidos** — tu `protected_whitelist`, reflejado en el kernel. Una coincidencia deja
+   pasar de inmediato.
+3. **Reglas estáticas** — tu política siempre activa, gana la primera coincidencia.
+4. **Reglas dinámicas de origen** — entradas por atacante que instaló el detector.
+5. **Reglas dinámicas de víctima** — las reglas de coincidencia del ataque, como mucho ocho por
+   ataque, gana la primera coincidencia.
+6. **Predeterminado: pasar.**
+
+<Callout type="info" title="Dos listas de permitidos, dos ejes distintos">
+`dataplane.allowlist` es una lista de **orígenes** que siempre pueden enviar. `protected_whitelist`
+es una lista de **destinos** que nunca se bloquean. No son intercambiables, y ambas se aplican en el
+kernel — mantener la garantía de destino solo en el espacio de usuario dejaría una ventana en la que
+una regla instalada un instante antes aún podría descartar tráfico hacia un host protegido.
+</Callout>
+
+El veredicto predeterminado es siempre **pasar**. No hay un denegar-por-defecto en ninguna parte del
+programa, no hay ningún modo en el que añadir una regla cambie lo que ocurre con el tráfico sin
+coincidencia, y no hay descarte automático de fragmentos ni de protocolos inusuales. Un paquete que
+no se puede analizar pasa y se cuenta, salvo que actives `drop_malformed: true`. Esto es un ejecutor
+de mitigación, no un cortafuegos: descarta lo que se le indicó descartar y reenvía todo lo demás.
+
+## Política estática frente a reglas generadas
+
+Las **reglas estáticas** son las que tú escribes. Están siempre activas, con independencia de
+cualquier ataque, y resultan útiles para el tráfico que nunca quieres (`drop_chargen`) y para los
+techos permanentes (`cap_icmp`). Los nombres son obligatorios y deben ser únicos, de modo que dos
+reglas nunca puedan referirse en silencio a la misma entrada.
+
+```yaml
+static_rules:
+  - name: drop_chargen
+    match: { proto: udp, src_port: 19 }
+    action: drop
+  - name: cap_icmp
+    match: { proto: icmp }
+    action: ratelimit
+    profile: icmp_cap
+```
+
+Cada `name` aquí — en una regla y en un perfil — es una etiqueta que tú eliges, no una palabra clave; es como se llama la regla en contadores, registros y la consola. El único vocabulario fijo es el de los campos enumerados: `action` es `pass`, `drop` o `ratelimit`; `match.proto` es `tcp`, `udp`, `icmp` o `icmp6` (sin definir significa cualquiera, y los puertos se rechazan para `icmp`/`icmp6`); `match` también acepta `src`, `src_port` y `dst_port`. La [referencia de configuración](/docs/configuration) enumera cada campo y sus valores permitidos en una sola tabla.
+
+Las **reglas dinámicas** se generan por ataque, a partir de la misma clasificación que alimenta
+FlowSpec — el protocolo, el puerto de origen reflejado de un vector de amplificación, las banderas
+TCP SYN, la fragmentación y los orígenes atacantes dominantes en la muestra de tráfico. No las
+escribes y no puedes editarlas; aparecen en `/api/v1/bans` en el bloqueo que las posee, y expiran
+con él.
+
+Las dos nunca chocan: las reglas estáticas ocupan su propio mapa (paso 3 anterior), las reglas
+dinámicas ocupan otro (pasos 4–5), y cada una se dimensiona con su propio límite.
+
+## Limitación de tasa por origen
+
+Una acción `ratelimit` se aplica **por dirección de origen**, no sobre el tráfico de la víctima en
+conjunto. Cada origen recibe su propio cubo de tokens, así que un límite de *N* paquetes por segundo
+mantiene a cada origen individual en *N* — una inundación distribuida se estrangula por participante,
+en vez de dejar que mil orígenes compartan (y agoten) un único techo agregado.
+
+```yaml
+ratelimit_profiles:
+  - { name: icmp_cap, mbps: 10 }      # each source: 10 Mbps
+  - { name: dns_reply, pps: 50000 }   # each source: 50k pps
+```
+
+`icmp_cap` y `dns_reply` son nombres que elegiste, no palabras clave — un perfil es solo un techo con nombre, y una regla estática lo invoca mediante su campo `profile:` (`cap_icmp` arriba usa `icmp_cap`). Un perfil necesita al menos `pps` o `mbps`; define ambos y el primero que se alcance deja de admitir los paquetes del origen. Un perfil al que ninguna regla hace referencia se descarta en la siguiente recarga.
+
+<Callout type="info" title="Esto es lo único que FlowSpec no puede expresar">
+Un `traffic-rate` de FlowSpec se aplica al flujo que la regla coincide, así que una regla que cubre
+a una víctima limita la tasa de todo el tráfico coincidente de esa víctima de forma colectiva — y los
+clientes legítimos compiten con los atacantes por la misma cuota. Los cubos por origen no son una
+versión más rápida de algo que el anunciante ya hacía; son algo que estructuralmente no podía hacer
+en absoluto.
+</Callout>
+
+`max_ratelimit_sources` acota cuántos cubos de origen existen a la vez. Es una tabla de tipo
+least-recently-used: pasado el límite, se expulsan los orígenes menos activos, lo que bajo una
+inundación muy amplia significa que algunos orígenes se readmiten brevemente antes de volver a ser
+estrangulados.
+
+## Modos de conexión
+
+Hay dos lugares en la ruta de recepción donde el kernel puede ejecutar el programa:
+
+- **native** — el driver lo invoca conforme los paquetes salen de la NIC, antes de que se reserve un
+  `sk_buff`. Requiere soporte del driver, y hace el menor trabajo por paquete.
+- **generic** — el kernel lo invoca después de reservar el `sk_buff`. Funciona en cualquier interfaz,
+  incluida virtio, y hace más trabajo por paquete para llegar ahí.
+
+`xdp_mode: auto` (el predeterminado) usa native donde el driver lo admite y generic donde no. `native`
+se niega a arrancar en lugar de recurrir al modo alternativo — lo que quieres cuando has dimensionado
+para el hook del driver y prefieres enterarte en el arranque. `generic` fuerza el segundo modo; sirve
+principalmente para virtio y entornos de prueba.
+
+<Callout type="warning" title="En auto, el modo alternativo es silencioso">
+Un cambio de driver, una actualización del kernel o una NIC nueva pueden pasarte de native a generic
+sin ningún error, y generic hace mucho menos por núcleo. El modo que realmente obtuvo cada interfaz
+lo informa `kapkan dataplane status` y se exporta como métrica — si dimensionaste para native, ponle
+una alerta. Consulta [la alerta en Operación](/docs/dataplane-operate).
+</Callout>
+
+## Expiración de reglas y apagado
+
+Cada regla generada lleva su propia marca de tiempo de expiración, y el programa del kernel trata una
+regla expirada como ausente. Esto es estructural: si el proceso de Kapkan muere, es terminado o se
+cuelga, las reglas que instaló dejan de aplicarse igualmente según lo previsto — un plano de control
+muerto no puede dejar descartado indefinidamente el tráfico legítimo de una víctima.
+
+En un apagado limpio, `on_exit` decide qué permanece. El predeterminado, `keep`, deja el programa
+conectado para que la política estática siga aplicándose a lo largo de un reinicio o una
+actualización, mientras las reglas dinámicas caducan por sí solas. `detach` retira el programa por
+completo, lo que hace pasar todo el tráfico.
+
+## Límites y memoria
+
+`limits` dimensiona los mapas del kernel, que se reservan **una sola vez**, cuando el programa se
+conecta:
+
+| Clave | Predeterminado | Qué acota |
+| --- | --- | --- |
+| `max_dynamic_rules` | 4096 | Reglas que el detector puede instalar. Cada bloqueo aporta hasta 8. |
+| `max_static_rules` | 256 | Tus propias reglas siempre activas. |
+| `max_ratelimit_sources` | 1048576 | Cubos de tokens por origen. |
+
+`max_dynamic_rules` debe ser **al menos** `ban.max_active_bans × 8`; Kapkan rechaza una configuración
+menor, porque la alternativa es que las instalaciones empiecen a fallar en mitad de un ataque y se
+degraden en silencio a un agujero negro. Los valores predeterminados quedan justo en esa frontera con
+512 bloqueos activos.
+
+Como los mapas se reservan por adelantado, la memoria queda apartada haya o no un ataque en curso, y
+la tabla de cubos por origen domina el total. La memoria de los mapas se carga al cgroup de memoria
+del servicio (kernel 5.11+), así que si estableces `MemoryMax=` en la unidad, dimensiónalo teniendo
+en cuenta los mapas.
+
+## Relacionado
+
+- [Operación y monitorización](/docs/dataplane-operate) — los contadores y las alertas que gobiernan
+  estos ajustes.
+- [FlowSpec](/docs/flowspec) — las mismas reglas generadas, anunciadas a tus routers en su lugar.
+- [Referencia de configuración](/docs/configuration) — cada clave `dataplane` en una sola tabla.
+- [Escalas de escalado](/docs/escalation) — combinar el descarte local con métodos aguas arriba.

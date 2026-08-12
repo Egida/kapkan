@@ -1,329 +1,105 @@
 export const metadata = {
   title: "Plan de données dans le noyau",
   description:
-    "Rejetez le trafic d'attaque dans le noyau Linux avec XDP/eBPF, sur la machine où Kapkan tourne déjà — l'échelon chirurgical situé sous FlowSpec, et le seul qui ne demande aucune coopération du routeur.",
+    "Supprimez le trafic d'attaque dans le noyau Linux avec XDP, sur la machine où Kapkan tourne déjà. Commencez ici : ce que c'est, la seule question de déploiement qui décide si cela s'applique à vous, et où aller ensuite.",
 };
 
 # Plan de données dans le noyau
 
-Toutes les autres méthodes d'atténuation de Kapkan sont des requêtes : [RTBH](/docs/mitigation) et
-[FlowSpec](/docs/flowspec) demandent à vos routeurs de rejeter le trafic, et
-[divert](/docs/scrubbing) leur demande de l'envoyer ailleurs. Toutes trois dépendent d'un pair
-disposé à honorer l'annonce et capable de le faire.
+Toutes les autres méthodes de mitigation de Kapkan sont des requêtes. Le [RTBH](/docs/mitigation) et
+[FlowSpec](/docs/flowspec) demandent à vos routeurs de supprimer le trafic ; la
+[déviation](/docs/scrubbing) leur demande de l'envoyer ailleurs. Ces trois méthodes dépendent d'un
+pair disposé et capable d'agir sur l'annonce.
 
-Le plan de données, lui, rejette les paquets lui-même. Kapkan charge un petit programme
-[XDP](/docs/glossary) dans le noyau Linux de la machine sur laquelle il tourne, et les règles que le
-détecteur synthétise déjà pour FlowSpec sont écrites dans des maps du noyau au lieu d'être annoncées.
-Rien n'a besoin de se propager et aucun pair n'a besoin de les accepter.
+Le plan de données supprime lui-même les paquets. Kapkan charge un petit programme
+[XDP](/docs/glossary) dans le noyau Linux de la machine où il tourne, et les règles que le détecteur
+construit déjà pour FlowSpec sont écrites dans des maps du noyau au lieu d'être annoncées. Rien n'a
+besoin de se propager, et aucun pair n'a besoin d'accepter quoi que ce soit.
 
-<Callout type="warning" title="Il ne voit que le trafic qui atteint cette carte réseau">
-Un filtre XDP s'exécute sur des paquets qui sont déjà arrivés sur l'interface de cette machine. Si
-un flood a saturé le lien *en amont* de la machine, le tuyau est plein avant même que le filtre ne
-voie un paquet, et rejeter localement n'y change rien. C'est à cela que servent les échelons situés
-au-dessus — le plan de données est la réponse la plus chirurgicale d'un
-[palier d'escalade](/docs/escalation), et non un remplacement des réponses brutales.
+Cette page est la vue d'ensemble. Elle répond à trois questions dans l'ordre — est-ce pour moi,
+est-ce que ça marche, et où aller ensuite — et le reste de la section, c'est le comment :
+
+- **[Installer le plan de données](/docs/dataplane-install)** — les prérequis de noyau et de
+  capabilities, le bloc de configuration, et comment le mettre en service en toute sécurité en
+  dry-run.
+- **[Exploitation et supervision](/docs/dataplane-operate)** — lire son statut, les compteurs et
+  métriques à surveiller, la seule alerte que vous devez définir, et quoi faire quand quelque chose
+  ne va pas.
+- **[Réglage et référence](/docs/dataplane-tuning)** — l'ordre d'évaluation des paquets, la politique
+  statique, la limitation de débit par source, les modes d'attachement, et les limites de
+  dimensionnement des maps.
+
+## Est-ce pour vous ? La seule question qui décide
+
+Le plan de données ne peut supprimer que les paquets qui **atteignent la machine où Kapkan tourne**.
+Ce simple fait décide si la fonctionnalité s'applique à votre déploiement, alors répondez-y avant
+toute chose.
+
+Il est utile lorsque Kapkan tourne **sur le chemin du trafic** :
+
+- sur un routeur de bordure Linux ou une machine intercalée (bump-in-the-wire) que le trafic
+  traverse déjà ;
+- sur l'hôte attaqué, pour se protéger lui-même ;
+- sur un nœud de nettoyage dédié vers lequel la [déviation](/docs/scrubbing) oriente le trafic.
+
+Il ne fait **rien** lorsque Kapkan tourne **hors chemin** — le déploiement classique, où une VM
+Kapkan reçoit du NetFlow ou du sFlow de vos routeurs et leur parle BGP en retour. Aucun trafic
+d'attaque ne transite par cette VM, il n'y a donc rien à y supprimer. Dans cette topologie, continuez
+à utiliser le RTBH et FlowSpec, et ne recourez au plan de données que sur un nœud de nettoyage.
+
+<Callout type="warning" title="Il ne peut pas désaturer un lien en amont">
+Un filtre XDP s'exécute sur des paquets qui sont déjà arrivés sur la NIC de cette machine. Si un
+flood a déjà rempli le tuyau *en amont* de la machine, le lien est congestionné avant même que le
+filtre ne voie un paquet, et supprimer localement n'y change rien. C'est à cela que servent les
+méthodes plus grossières en amont. Le plan de données est la réponse la plus précise d'un
+[palier d'escalade](/docs/escalation) — pas un remplacement de ceux qui déplacent la suppression en
+amont.
 </Callout>
 
-## Quand cela aide, et quand cela n'aide pas
+## Est-ce que ça marche ? Mesuré, pas affirmé
 
-Cela aide lorsque Kapkan tourne **sur le chemin du trafic** : sur un routeur de bordure Linux, sur un
-boîtier intercalé en coupure (bump-in-the-wire) ou sur l'hôte attaqué. Cela aide aussi lorsque
-FlowSpec n'est pas une véritable option pour vous — nombre de fournisseurs de transit le refusent, et
-certaines piles de routage acceptent les routes FlowSpec dans la RIB sans les appliquer dans le plan
-de transfert, ce qui ressemble à un succès et ne rejette rien.
+Chaque version rejoue dix-huit captures d'attaque de bout en bout — de la télémétrie synthétique
+injectée dans le vrai détecteur et classifieur, les règles qu'il génère compilées dans de vraies
+maps du noyau, puis les trames capturées rejouées à travers le programme. Chaque capture fait
+circuler un flux de trafic légitime en parallèle de l'attaque, car un taux de blocage mesuré sans
+cela ne veut rien dire.
 
-Cela n'aide pas lorsque Kapkan tourne **hors du chemin du trafic** — le déploiement classique, où une
-VM reçoit le NetFlow/sFlow de vos routeurs et leur répond en BGP. Aucun trafic d'attaque ne traverse
-cette VM, il n'y a donc rien à y rejeter. Dans cette topologie, le plan de données n'est utile que sur
-un nœud de nettoyage (scrubbing) distinct vers lequel la déviation BGP oriente le trafic.
-
-## Prérequis
-
-Quatre choses, chacune avec une vérification en une ligne :
-
-| Prérequis | Vérification | Remarques |
-| --- | --- | --- |
-| Linux 5.15 ou plus récent | `uname -r` | La suite de tests complète s'exécute sur 5.15, 6.1, 6.6 et 6.12 à chaque modification. Debian 12, Ubuntu 22.04/24.04, RHEL 9 et leurs dérivés conviennent. **Ce n'est pas le cas de RHEL/Alma/Rocky 8** — il est livré avec 4.18 et reste pris en charge jusqu'en 2029, vérifiez donc avant de présumer. |
-| BTF du noyau | `ls /sys/kernel/btf/vmlinux` | Présent sur tout noyau de distribution qui satisfait le plancher ci-dessus. |
-| Un bpffs monté | `mount \| grep ' /sys/fs/bpf '` | Kapkan épingle son programme et ses maps sous `pin_path` afin que la politique survive à un redémarrage du processus. |
-| Un pilote de carte réseau prenant en charge XDP | `ethtool -i eth0`, puis vérifiez le pilote | Optionnel — à défaut, c'est le chemin générique du noyau qui est utilisé. Voir [Modes d'attachement](#modes-dattachement). |
-
-Le processus a également besoin de `CAP_BPF` et `CAP_NET_ADMIN` pour charger et attacher le
-programme, d'un accès en écriture au point de montage bpffs, et de `AF_NETLINK`.
-
-<Callout type="warning" title="L'unité fournie par le paquet ne les accorde pas par défaut">
-L'unité systemd de Kapkan est délibérément renforcée et, telle qu'elle est livrée, elle empêche tout
-attachement XDP : pas d'`AmbientCapabilities`, un `ProtectSystem=strict` qui laisse `/sys/fs/bpf` en
-lecture seule, et un `RestrictAddressFamilies` sans `AF_NETLINK`. C'est la bonne valeur par défaut —
-la plupart des machines Kapkan n'exécutent jamais de plan de données, et accorder `CAP_BPF` à toutes
-pour arranger les quelques-unes qui le font serait un mauvais marché.
-
-Les paquets fournissent la surcharge dans `/usr/share/kapkan/kapkan-dataplane.conf`. Installez-la
-délibérément :
-
-```sh
-sudo mkdir -p /etc/systemd/system/kapkan.service.d
-sudo cp /usr/share/kapkan/kapkan-dataplane.conf /etc/systemd/system/kapkan.service.d/
-sudo systemctl daemon-reload && sudo systemctl restart kapkan
-```
-</Callout>
-
-Rien ne nécessite de compilateur sur la machine. Le programme BPF est compilé lors de la construction
-de Kapkan et livré à l'intérieur du binaire.
-
-## Activer le plan de données
-
-Le bloc `dataplane` est optionnel. En son absence, la fonctionnalité n'existe pas et le binaire se
-comporte exactement comme s'il ne l'avait pas.
-
-```yaml
-dataplane:
-  interfaces: [eth0]            # NICs to attach to (at least one; restart to change)
-  xdp_mode: auto                # auto | native | generic
-  pin_path: /sys/fs/bpf/kapkan  # policy survives a restart of this process
-  on_exit: keep                 # keep the program attached on shutdown, or detach
-  drop_malformed: false         # unparseable frames pass and are counted
-
-  allowlist:                    # SOURCE prefixes that always pass
-    - "198.51.100.7/32"         #   monitoring
-    - "192.0.2.0/24"            #   management network
-
-  ratelimit_profiles:           # named ceilings, referenced by static rules
-    - { name: icmp_cap, mbps: 10 }
-    - { name: dns_reply, pps: 50000 }
-
-  static_rules:                 # always-on operator policy
-    - name: drop_chargen
-      match: { proto: udp, src_port: 19 }
-      action: drop
-    - name: cap_icmp
-      match: { proto: icmp }
-      action: ratelimit
-      profile: icmp_cap
-
-  limits:
-    max_dynamic_rules: 4096
-    max_static_rules: 256
-    max_ratelimit_sources: 1048576
-```
-
-Donnez ensuite à un groupe un échelon de palier qui l'utilise :
-
-```yaml
-hostgroups:
-  - name: game-servers
-    networks: ["203.0.113.32/27"]
-    escalation:
-      - { after_seconds: 0,   action: dataplane }   # drop locally first
-      - { after_seconds: 120, action: flowspec }    # ask the router if that was not enough
-      - { after_seconds: 600, action: blackhole }
-```
-
-La sévérité s'ordonne ainsi : `none < dataplane < flowspec < divert < blackhole`, et un palier ne
-peut que maintenir ou renforcer la réponse ; `dataplane` peut donc suivre un échelon d'alerte seule,
-mais jamais `flowspec`, `divert` ni `blackhole`. Configurer cet échelon sans bloc `dataplane` — ou
-avec `enabled: false` — est refusé au démarrage plutôt que de rester silencieusement sans effet.
-
-Vous pouvez aussi définir `mitigation: dataplane` comme méthode unique d'un groupe, sans palier,
-lorsque le rejet local est la seule réponse que vous souhaitez.
-
-## Ce que le noyau évalue, dans l'ordre
-
-L'ordre est figé et n'est pas configurable :
-
-1. **Liste d'autorisation des sources** — `dataplane.allowlist`. Une correspondance passe
-   immédiatement.
-2. **Destinations protégées** — votre `protected_whitelist`, recopiée dans le noyau. Une
-   correspondance passe immédiatement.
-3. **Règles statiques** — votre politique permanente, la première correspondance l'emporte.
-4. **Règles dynamiques par source** — les entrées par attaquant installées par le détecteur.
-5. **Règles dynamiques par victime** — les règles de correspondance de l'attaque, au plus huit par
-   attaque, la première correspondance l'emporte.
-6. **Par défaut : laisser passer.**
-
-<Callout type="info" title="Deux listes d'autorisation, deux axes différents">
-`dataplane.allowlist` est une liste de **sources** qui ont toujours le droit d'émettre.
-`protected_whitelist` est une liste de **destinations** qui ne sont jamais bannies. Elles ne sont pas
-interchangeables, et toutes deux sont appliquées dans le noyau : conserver la garantie sur les
-destinations dans le seul espace utilisateur laisserait une fenêtre pendant laquelle une règle
-installée un instant plus tôt pourrait encore rejeter du trafic vers un hôte protégé.
-</Callout>
-
-Le verdict par défaut est toujours **laisser passer**. Il n'y a nulle part dans le programme de refus
-par défaut (default-deny), aucun mode dans lequel l'ajout d'une règle changerait le sort du trafic
-sans correspondance, et aucun rejet automatique des fragments ou des protocoles inhabituels. Un
-paquet qui ne peut pas être analysé passe et est compté, sauf si vous l'activez explicitement avec
-`drop_malformed: true`. Il s'agit d'un exécutant d'atténuation, pas d'un pare-feu : il rejette ce
-qu'on lui a dit de rejeter et transmet tout le reste.
-
-## Politique statique et règles générées
-
-Les **règles statiques** sont celles que vous écrivez : toujours actives, indépendantes de toute
-attaque, utiles pour le trafic dont vous ne voulez jamais (`drop_chargen` ci-dessus) et pour les
-plafonds permanents (`cap_icmp`). Les noms de règles sont obligatoires et doivent être uniques, de
-sorte que deux règles ne peuvent jamais viser discrètement la même entrée.
-
-Les **règles dynamiques** sont générées pour chaque attaque à partir de la même classification que
-celle qui alimente FlowSpec — le protocole, le port source réfléchi d'un vecteur d'amplification, les
-drapeaux TCP SYN, la fragmentation et les sources attaquantes dominantes de l'échantillon de trafic.
-Vous ne les écrivez pas et ne pouvez pas les modifier ; elles apparaissent dans `/api/v1/bans`, sur
-le bannissement auquel elles appartiennent, et elles expirent avec lui.
-
-Le rechargement de la configuration remplace la politique statique de manière atomique : Kapkan
-construit le nouvel ensemble de règles à côté de celui en service et bascule de l'un à l'autre en une
-seule écriture, de sorte qu'aucun paquet n'est jamais évalué face à une politique à moitié appliquée.
-
-Ce qui ne peut pas changer sous un programme en cours d'exécution, c'est tout ce qui attache ou
-dimensionne les objets du noyau : `interfaces`, `xdp_mode`, `pin_path`, `on_exit`, `limits` et
-`enabled` lui-même. Un rechargement qui touche à l'un d'eux est refusé purement et simplement et la
-configuration précédente reste active — redémarrez donc le processus pour ceux-là, et attendez-vous à
-ce que la liste d'autorisation, les règles statiques et les profils se rechargent sur place.
-
-## Limitation de débit par source
-
-Ici, une action de limitation de débit s'applique **par adresse source**, et non à l'ensemble du
-trafic de la victime. Chaque attaquant reçoit son propre seau à jetons : une limite de *N* paquets
-par seconde signifie donc que chaque source individuelle est tenue à *N* — un flood distribué est
-bridé par participant au lieu de pouvoir se partager un unique plafond agrégé.
-
-C'est une chose que BGP FlowSpec est structurellement incapable d'exprimer. Un `traffic-rate`
-FlowSpec s'applique au flux que la règle fait correspondre : une règle couvrant une victime limite
-donc collectivement tout le trafic correspondant de cette victime, et les clients légitimes se
-disputent la même allocation que les attaquants. Là où cette distinction compte, le plan de données
-peut appliquer une politique que vos routeurs ne peuvent pas appliquer.
-
-`max_ratelimit_sources` borne le nombre de seaux de sources existant simultanément. C'est une table
-LRU (least-recently-used) : au-delà de la limite, les sources les moins actives sont évincées, ce
-qui, sous un flood très étalé, signifie que certaines sources sont brièvement réadmises avant d'être
-à nouveau bridées.
-
-## Dry-run
-
-Le [dry-run](/docs/safety) couvre le plan de données exactement comme il couvre BGP, et il est
-vérifié avant que quoi que ce soit n'atteigne le noyau : tant que `dry_run: true`, aucune règle n'est
-installée et aucun paquet n'est rejeté. Les règles que Kapkan *aurait* installées sont journalisées
-et visibles sur le bannissement dans `/api/v1/bans`, ce qui vous permet de les examiner face à de
-vraies attaques avant d'activer l'application réelle.
-
-## Les règles d'attaque expirent dans le noyau
-
-Chaque règle générée porte son propre horodatage d'expiration, et le programme du noyau traite une
-règle expirée comme absente. C'est délibéré et structurant : si le processus Kapkan meurt, est tué ou
-se fige, les règles qu'il a installées cessent malgré tout de s'appliquer à l'heure prévue. Un plan
-de contrôle mort ne peut pas laisser le trafic légitime d'une victime être rejeté indéfiniment.
-
-Lors d'un arrêt propre, `on_exit` décide de ce qui subsiste. La valeur par défaut, `keep`, laisse le
-programme attaché afin que votre politique statique continue de s'appliquer au travers d'un
-redémarrage ou d'une mise à niveau, tandis que les règles dynamiques s'éteignent d'elles-mêmes.
-`detach` retire entièrement le programme, ce qui laisse passer tout le trafic.
-
-## Modes d'attachement
-
-Le noyau peut exécuter le programme à deux endroits, et la différence tient à sa position dans le
-chemin de réception :
-
-- **native** — le pilote l'appelle à mesure que les paquets quittent la carte réseau, avant que le
-  noyau ne leur alloue un `sk_buff`. Nécessite la prise en charge du pilote.
-- **generic** — le noyau l'appelle une fois le `sk_buff` alloué. Fonctionne sur n'importe quelle
-  interface, y compris virtio, au prix d'un travail supplémentaire par paquet pour y parvenir.
-
-`xdp_mode: auto` (la valeur par défaut) utilise native là où le pilote le prend en charge et generic
-ailleurs. `native` refuse de démarrer plutôt que de se replier, ce qui est bien ce que vous voulez
-lorsque vous avez dimensionné pour le hook du pilote et préférez le découvrir au démarrage.
-`generic` force le second mode ; il est surtout utile sous virtio et dans les environnements de test.
-
-<Callout type="warning" title="Le repli est silencieux">
-Sous `auto`, un changement de pilote, une mise à niveau du noyau ou le passage à une autre carte
-réseau peuvent vous faire basculer de native à generic sans la moindre erreur. Le mode réellement
-utilisé est indiqué par `kapkan dataplane status` et exporté sous forme de métrique — vérifiez-le
-après toute modification de la machine, et alertez dessus si vous avez dimensionné pour native.
-</Callout>
-
-## Ce qu'il bloque, mesuré
-
-Chaque version fait passer dix-huit captures d'attaque de bout en bout — de la télémétrie synthétique
-injectée dans le vrai détecteur, le vrai classificateur, les règles qu'il génère, compilées en
-véritables maps du noyau, puis les trames capturées rejouées à travers le programme. Chaque capture
-transporte un flux de trafic légitime aux côtés de l'attaque, car un taux de blocage sans cela ne
-mesure rien.
-
-| | |
+| Mesuré sur 18 captures | Résultat |
 | --- | --- |
-| Trafic d'attaque rejeté | **100 %** sur dix-sept des dix-huit captures ; **98,5 %** sur la capture de limitation de débit par source, où chaque source attaquante a droit à sa première trame avant que son seau ne se vide |
-| Trafic légitime rejeté | **zéro**, sur les dix-huit |
-| Trafic en liste d'autorisation rejeté | **zéro**, sur les dix-huit |
+| Trafic d'attaque supprimé | **100%** sur 17 des 18 ; **98.5%** sur la capture de limitation de débit par source, où chaque source a droit à sa première trame avant que son seau ne se vide |
+| Trafic légitime supprimé | **zéro**, sur les 18 |
+| Trafic en liste d'autorisation supprimé | **zéro**, sur les 18 |
 
-Les captures couvrent des floods UDP et SYN en IPv4 et en IPv6, l'amplification DNS, NTP, CLDAP,
-SSDP, memcached et chargen, des floods ICMP et de fragments, un flood TCP ACK, un mélange
-multi-vecteurs, un `/24` bombardé en tapis (carpet bombing), un flood de sources, des trames
-étiquetées VLAN et de l'IPv6 avec en-têtes d'extension.
+Les captures couvrent les floods UDP et SYN sur IPv4 et IPv6 ; l'amplification DNS, NTP, CLDAP, SSDP,
+memcached et chargen ; les floods ICMP et par fragments ; un flood TCP ACK ; un mélange
+multi-vecteurs ; un `/24` bombardé en tapis (carpet bombing) ; un flood de sources ; des trames
+étiquetées VLAN ; et de l'IPv6 avec en-têtes d'extension. La suite complète tourne également sur de
+vrais noyaux 5.15, 6.1, 6.6 et 6.12 à chaque modification.
 
-<Callout type="info" title="Ce ne sont pas des chiffres de débit">
-Un taux de blocage indique quelle fraction d'une attaque les règles attrapent. Il ne dit rien de la
-quantité de trafic qu'une machine donnée peut absorber, laquelle dépend de votre carte réseau, de
-votre pilote, de votre CPU et du mode — native ou generic — dans lequel le programme s'est attaché.
-Dimensionnez un déploiement sur votre propre matériel.
+<Callout type="info" title="Un taux de blocage n'est pas un chiffre de débit">
+Ces chiffres indiquent quelle fraction d'une attaque les règles interceptent. Ils ne disent rien du
+nombre de paquets qu'une machine donnée peut absorber — cela dépend de votre NIC, de votre pilote et
+de votre CPU, et du fait que le programme se soit attaché en mode natif ou générique. Dimensionnez un
+déploiement sur votre propre matériel ; ne lisez pas la capacité sur ce tableau.
 </Callout>
 
-## La seule chose qu'il n'inspecte pas
+## Comment il s'intègre au reste de Kapkan
 
-Un paquet IPv6 peut transporter une chaîne d'en-têtes d'extension avant son en-tête TCP ou UDP.
-Parcourir cette chaîne coûte au programme du noyau des instructions dont il ne dispose pas sans
-borne : il en parcourt donc au plus **huit** — et un paquet qui en porte davantage est **transmis
-sans qu'une seule règle ne soit évaluée**. Soixante-quatre octets de remplissage suffisent à en
-construire une.
+Le plan de données est une *méthode* de mitigation, aux côtés du RTBH, de FlowSpec et de la
+déviation, et il hérite de tout ce que font les autres. La détection est inchangée. Le
+[modèle de sécurité](/docs/safety) — dry-run, listes blanches, TTL et plafonds de rayon d'impact —
+s'applique exactement comme pour une annonce BGP, car le plan de données s'insère au même
+point. Ce qui change n'est que la dernière étape : au lieu qu'une annonce quitte la machine, les
+règles sont écrites dans le noyau.
 
-C'est délibéré. Une limite d'analyse qui rejetterait des paquets serait un refus par défaut dissimulé
-au cœur d'un analyseur, et une seule chaîne d'apparence malformée mettrait un client hors ligne. Le
-verdict par défaut du plan de données est toujours « laisser passer », et ceci ne fait pas exception.
+La sévérité s'ordonne `none < dataplane < flowspec < divert < blackhole`. Sur un
+[palier d'escalade](/docs/escalation), un palier `dataplane` est l'action réelle la plus douce —
+supprimez d'abord localement, et n'escaladez vers les méthodes basées sur le routeur que si cela n'a
+pas suffi.
 
-Mais c'est aussi un moyen de contourner votre filtre, et il est donc compté et mis en évidence plutôt
-qu'enfoui :
+## Où aller ensuite
 
-```
-kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}
-```
-
-Aucun trafic légitime n'enchaîne huit en-têtes d'extension. **Tout mouvement de ce compteur mérite
-qu'on s'y penche** — `kapkan dataplane status` affiche un bloc lorsqu'il est non nul, et la console
-affiche une bannière. S'il bouge pendant une attaque, rejetez ou normalisez les longues chaînes
-d'en-têtes d'extension en amont, là où un routeur peut le faire sans budget par paquet.
-
-## Limites et mémoire
-
-`limits` dimensionne les maps du noyau, qui sont allouées une seule fois lorsque le programme
-s'attache :
-
-| Clé | Valeur par défaut | Ce qu'elle borne |
-| --- | --- | --- |
-| `max_dynamic_rules` | 4096 | Les règles que le détecteur peut installer. Chaque bannissement en apporte jusqu'à 8. |
-| `max_static_rules` | 256 | Vos propres règles permanentes. |
-| `max_ratelimit_sources` | 1048576 | Les seaux à jetons par source. |
-
-`max_dynamic_rules` doit valoir **au moins** `ban.max_active_bans × 8` ; Kapkan refuse une
-configuration où il est inférieur, car l'alternative serait que les installations commencent à
-échouer en pleine attaque et se dégradent silencieusement en blackhole. Notez que les valeurs par
-défaut se situent exactement à cette limite, à 512 bannissements actifs.
-
-La mémoire des maps est imputée au cgroup mémoire du service (noyau 5.11 et plus récent) : si vous
-définissez un `MemoryMax=` sur l'unité, dimensionnez-le en tenant compte des maps — c'est la table
-des seaux par source qui domine.
-
-## Dépannage
-
-`kapkan dataplane status` rend compte de la politique en service : quelles interfaces sont attachées,
-le mode d'attachement, la génération active, le nombre de règles et les compteurs par règle. Il lit
-directement l'état épinglé, il fonctionne donc aussi lorsque le démon ne tourne pas — c'est la
-première chose à collecter pour toute demande d'assistance.
-
-Les cas les plus fréquents sont traités dans [Dépannage](/docs/troubleshooting) : le programme qui
-n'arrive pas à s'attacher, des compteurs qui montent alors que le trafic continue d'arriver
-(généralement le mode generic, ou un filtre sur la mauvaise interface), et une map de règles pleine.
-
-## Voir aussi
-
-- [Méthodes d'atténuation](/docs/mitigation) — RTBH, et le cycle de vie de bannissement que partagent toutes les méthodes.
-- [FlowSpec](/docs/flowspec) — les mêmes règles générées, annoncées à vos routeurs à la place.
-- [Paliers d'escalade](/docs/escalation) — combiner le rejet local avec les méthodes en amont.
-- [Modèle de sécurité](/docs/safety) — le dry-run, les listes blanches, les TTL et les plafonds qui bornent chaque action.
-- [Référence de configuration](/docs/configuration) · [Métriques](/docs/metrics) · [Déploiement](/docs/deployment)
+Vous débutez ? Lisez [Installer le plan de données](/docs/dataplane-install) et mettez-le en service
+en dry-run, puis [Exploitation et supervision](/docs/dataplane-operate) pour savoir quoi surveiller.
+Consultez [Réglage et référence](/docs/dataplane-tuning) lorsque vous voulez une politique statique,
+une limitation de débit par source, ou comprendre exactement comment un paquet est évalué.

@@ -1,0 +1,140 @@
+export const metadata = {
+  title: "Instalar el plano de datos",
+  description:
+    "Pon en marcha con seguridad el plano de datos dentro del kernel: los requisitos de kernel y capacidades, el override de systemd que traen los paquetes, el bloque de configuración dataplane y cómo arrancar en dry-run antes de descartar nada.",
+};
+
+# Instalar el plano de datos
+
+Esta página te lleva desde cero hasta un plano de datos que está conectado, evaluando el tráfico y
+sin descartar nada todavía — que es exactamente donde conviene pausar y observar antes de aplicar la
+política. Lee [la introducción](/docs/dataplane) primero si aún no lo has hecho; en particular,
+confirma que Kapkan se ejecuta **en la ruta del tráfico** en esta máquina, o no habrá nada que el
+programa pueda descartar.
+
+## 1. Comprueba los requisitos
+
+Cuatro cosas, cada una con una comprobación de una línea que puedes ejecutar ahora:
+
+| Requisito | Comprobación | Notas |
+| --- | --- | --- |
+| Linux 5.15 o posterior | `uname -r` | El conjunto completo de pruebas se ejecuta en 5.15, 6.1, 6.6 y 6.12 en cada cambio. Debian 12, Ubuntu 22.04/24.04, RHEL 9 y sus recompilaciones cumplen. **RHEL/Alma/Rocky 8 no** — trae 4.18 y tiene soporte hasta 2029, así que compruébalo antes de darlo por hecho. |
+| BTF del kernel | `ls /sys/kernel/btf/vmlinux` | Presente en todos los kernels de distribución que cumplen el mínimo anterior. |
+| Un bpffs montado | <code>mount &#124; grep ' /sys/fs/bpf '</code> | Kapkan fija (pin) su programa y sus mapas bajo `pin_path`, de modo que la política sobrevive a un reinicio del proceso. |
+| Un driver de NIC con soporte XDP | `ethtool -i eth0`, luego comprueba el driver | Opcional. Sin él se usa la ruta genérica del kernel — correcta, pero con menor capacidad. Consulta [modos de conexión](/docs/dataplane-tuning). |
+
+El proceso también necesita `CAP_BPF` y `CAP_NET_ADMIN` para cargar y conectar el programa, acceso de
+escritura al montaje bpffs y la familia de direcciones `AF_NETLINK`.
+
+No hace falta ningún compilador en la máquina. El programa BPF se compila cuando se construye Kapkan
+y viaja dentro del binario.
+
+## 2. Concede las capacidades (systemd)
+
+La unidad de systemd empaquetada de Kapkan está reforzada a propósito y **tal como se entrega bloquea
+una conexión XDP**: sin `AmbientCapabilities`, con `ProtectSystem=strict` que deja `/sys/fs/bpf` en
+solo lectura y `RestrictAddressFamilies` sin `AF_NETLINK`. Ese es el valor por defecto correcto — la
+mayoría de las máquinas Kapkan nunca ejecutan un plano de datos, y darle a todas `CAP_BPF` para
+salvar a las pocas que sí lo hacen es un mal negocio.
+
+Los paquetes incluyen el override que abre exactamente esos huecos, en
+`/usr/share/kapkan/kapkan-dataplane.conf`. Instálalo de forma deliberada, solo en las máquinas que
+ejecutan un plano de datos:
+
+```sh
+sudo mkdir -p /etc/systemd/system/kapkan.service.d
+sudo cp /usr/share/kapkan/kapkan-dataplane.conf /etc/systemd/system/kapkan.service.d/
+sudo systemctl daemon-reload && sudo systemctl restart kapkan
+```
+
+<Callout type="info" title="¿Ejecutas Kapkan de otra manera?">
+Si no usas la unidad empaquetada, el requisito es el mismo: el proceso necesita `CAP_BPF` y
+`CAP_NET_ADMIN`, `AF_NETLINK` y un `/sys/fs/bpf` con permiso de escritura. Concédelos como lo haga tu
+init o tu runtime de contenedores.
+</Callout>
+
+## 3. Añade el bloque `dataplane`
+
+El bloque `dataplane` es opcional. Si falta, la función no existe y el binario se comporta exactamente
+igual que sin ella. Aquí tienes un bloque completo con cada clave anotada; solo necesitas `interfaces`
+para empezar.
+
+```yaml
+dataplane:
+  interfaces: [eth0]            # NICs to attach to (at least one; restart to change)
+  xdp_mode: auto                # auto | native | generic
+  pin_path: /sys/fs/bpf/kapkan  # policy survives a restart of this process
+  on_exit: keep                 # keep the program attached on shutdown, or detach
+  drop_malformed: false         # unparseable frames pass and are counted
+
+  allowlist:                    # SOURCE prefixes that always pass
+    - "198.51.100.7/32"         #   monitoring
+    - "192.0.2.0/24"            #   management network
+
+  ratelimit_profiles:           # named ceilings, referenced by static rules
+    - { name: icmp_cap, mbps: 10 }
+    - { name: dns_reply, pps: 50000 }
+
+  static_rules:                 # always-on operator policy
+    - name: drop_chargen
+      match: { proto: udp, src_port: 19 }
+      action: drop
+    - name: cap_icmp
+      match: { proto: icmp }
+      action: ratelimit
+      profile: icmp_cap
+
+  limits:
+    max_dynamic_rules: 4096
+    max_static_rules: 256
+    max_ratelimit_sources: 1048576
+```
+
+`allowlist`, `ratelimit_profiles`, `static_rules` y `limits` se cubren en
+[Ajuste y referencia](/docs/dataplane-tuning). Para poner en marcha el plano puedes omitirlos por
+completo.
+
+## 4. Indica a un grupo que lo use
+
+Conectar el programa no descarta nada por sí solo — una detección tiene que elegirlo como su método.
+Dale a un grupo un peldaño de escalera que lo haga:
+
+```yaml
+hostgroups:
+  - name: game-servers
+    networks: ["203.0.113.32/27"]
+    escalation:
+      - { after_seconds: 0,   action: dataplane }   # drop locally first
+      - { after_seconds: 120, action: flowspec }    # ask the router if that was not enough
+      - { after_seconds: 600, action: blackhole }
+```
+
+Una escalera solo puede mantener o reforzar (`none < dataplane < flowspec < divert < blackhole`), así
+que un peldaño `dataplane` puede ir después de un peldaño de solo alerta, pero nunca después de
+`flowspec`, `divert` o `blackhole`.
+
+Para un único método sin escalera, establece `mitigation: dataplane` en el grupo. En cualquier caso,
+configurar una acción `dataplane` **sin** un bloque `dataplane` se rechaza en el arranque en lugar de
+no hacer nada en silencio.
+
+## 5. Arranca en dry-run y observa
+
+Deja [dry-run](/docs/safety) activado en la primera ejecución — es el valor por defecto de Kapkan y
+cubre el plano de datos exactamente igual que cubre BGP. Mientras `dry_run: true`, el programa se
+conecta y evalúa cada paquete, **pero no se instala ninguna regla y no se descarta nada**. Las reglas
+que Kapkan *habría* instalado se registran y se muestran en el bloqueo en `/api/v1/bans`, para que
+puedas revisarlas frente a ataques reales antes de aplicarlas.
+
+Confirma que la conexión tuvo éxito:
+
+```sh
+kapkan dataplane status
+```
+
+Debes buscar el programa conectado a tu(s) interfaz(ces), el modo de conexión (`native` o `generic`)
+y — porque estás en dry-run — una nota clara de que los veredictos de descarte se están reescribiendo
+como pases. Leer esa salida por completo, y qué vigilar una vez que pases a aplicar, está en
+[Operación y monitorización](/docs/dataplane-operate).
+
+Cuando estés satisfecho con lo que *descartaría*, desactiva dry-run (de forma global, en los ajustes
+de [seguridad](/docs/safety)) para empezar a aplicar.

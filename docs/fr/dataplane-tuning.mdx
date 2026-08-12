@@ -1,0 +1,164 @@
+export const metadata = {
+  title: "Réglage & référence",
+  description:
+    "Référence du plan de données intégré au noyau : l'ordre exact dans lequel un paquet est évalué, la politique statique par rapport aux règles générées, la limitation de débit par source, l'attachement natif par rapport à générique, et comment les limites dimensionnent la mémoire du noyau.",
+};
+
+# Réglage & référence
+
+La référence précise derrière le plan de données : comment un paquet est évalué, la différence entre
+la politique que vous écrivez et les règles que le détecteur génère, la seule capacité que FlowSpec
+ne peut pas exprimer, et comment les limites se traduisent en mémoire du noyau. Si vous êtes encore
+en train de le mettre en service, commencez par
+[Installer le plan de données](/docs/dataplane-install).
+
+## Ce que le noyau évalue, dans l'ordre
+
+Pour chaque paquet, le programme parcourt un ordre **fixe et non configurable** et s'arrête au
+premier verdict :
+
+1. **Liste d'autorisation des sources** — `dataplane.allowlist`. Une correspondance passe
+   immédiatement.
+2. **Destinations protégées** — votre `protected_whitelist`, recopiée dans le noyau. Une
+   correspondance passe immédiatement.
+3. **Règles statiques** — votre politique permanente, la première correspondance l'emporte.
+4. **Règles dynamiques de source** — les entrées par attaquant que le détecteur a installées.
+5. **Règles dynamiques de victime** — les règles de correspondance de l'attaque, au plus huit par
+   attaque, la première correspondance l'emporte.
+6. **Par défaut : passer.**
+
+<Callout type="info" title="Deux listes d'autorisation, deux axes différents">
+`dataplane.allowlist` est une liste de **sources** qui peuvent toujours émettre.
+`protected_whitelist` est une liste de **destinations** qui ne sont jamais bannies. Elles ne sont
+pas interchangeables, et les deux sont appliquées dans le noyau — garder la garantie de destination
+uniquement dans l'espace utilisateur laisserait une fenêtre pendant laquelle une règle installée un
+instant plus tôt pourrait encore rejeter le trafic vers un hôte protégé.
+</Callout>
+
+Le verdict par défaut est toujours **passer**. Il n'y a de refus par défaut nulle part dans le
+programme, aucun mode dans lequel ajouter une règle change ce qui arrive au trafic non correspondant,
+et aucun rejet automatique des fragments ou des protocoles inhabituels. Un paquet qui ne peut pas
+être analysé passe et est compté, sauf si vous choisissez explicitement `drop_malformed: true`. Il
+s'agit d'un exécuteur de mitigation, pas d'un pare-feu : il rejette ce qu'on lui a dit de rejeter et
+transmet tout le reste.
+
+## Politique statique par rapport aux règles générées
+
+Les **règles statiques** sont celles que vous écrivez. Elles sont toujours actives, indépendantes de
+toute attaque, et utiles pour le trafic que vous ne voulez jamais (`drop_chargen`) et pour des
+plafonds permanents (`cap_icmp`). Les noms sont obligatoires et doivent être uniques, de sorte que
+deux règles ne peuvent jamais viser discrètement la même entrée.
+
+```yaml
+static_rules:
+  - name: drop_chargen
+    match: { proto: udp, src_port: 19 }
+    action: drop
+  - name: cap_icmp
+    match: { proto: icmp }
+    action: ratelimit
+    profile: icmp_cap
+```
+
+Chaque `name` ici — sur une règle comme sur un profil — est une étiquette que vous choisissez, pas un mot-clé ; c'est ainsi que la règle apparaît dans les compteurs, les journaux et la console. Le seul vocabulaire figé est celui des champs énumérés : `action` vaut `pass`, `drop` ou `ratelimit` ; `match.proto` vaut `tcp`, `udp`, `icmp` ou `icmp6` (non défini = n'importe lequel, et les ports sont rejetés pour `icmp`/`icmp6`) ; `match` accepte aussi `src`, `src_port` et `dst_port`. La [référence de configuration](/docs/configuration) liste chaque champ et ses valeurs autorisées dans un seul tableau.
+
+Les **règles dynamiques** sont générées par attaque, à partir de la même classification qui alimente
+FlowSpec — le protocole, le port source reflété d'un vecteur d'amplification, les drapeaux TCP SYN,
+la fragmentation, et les sources attaquantes dominantes dans l'échantillon de trafic. Vous ne les
+écrivez pas et ne pouvez pas les modifier ; elles apparaissent dans `/api/v1/bans` sur le ban qui les
+possède, et elles expirent avec lui.
+
+Les deux n'entrent jamais en collision : les règles statiques occupent leur propre map (étape 3
+ci-dessus), les règles dynamiques en occupent une autre (étapes 4–5), et chacune est dimensionnée par
+sa propre limite.
+
+## Limitation de débit par source
+
+Une action `ratelimit` est appliquée **par adresse source**, et non sur l'ensemble du trafic de la
+victime. Chaque source obtient son propre seau à jetons, de sorte qu'une limite de *N* paquets par
+seconde maintient chaque source individuelle à *N* — un flood distribué est étranglé par participant,
+plutôt que de laisser un millier de sources se partager (et épuiser) un seul plafond agrégé.
+
+```yaml
+ratelimit_profiles:
+  - { name: icmp_cap, mbps: 10 }      # each source: 10 Mbps
+  - { name: dns_reply, pps: 50000 }   # each source: 50k pps
+```
+
+`icmp_cap` et `dns_reply` sont des noms que vous avez choisis, pas des mots-clés — un profil n'est qu'un plafond nommé, et une règle statique l'invoque via son champ `profile:` (`cap_icmp` ci-dessus utilise `icmp_cap`). Un profil exige au moins `pps` ou `mbps` ; définissez les deux et le premier atteint cesse d'admettre les paquets de la source. Un profil qu'aucune règle ne référence est supprimé au prochain rechargement.
+
+<Callout type="info" title="C'est la seule chose que FlowSpec ne peut pas exprimer">
+Un `traffic-rate` FlowSpec s'applique au flux que la règle fait correspondre, de sorte qu'une règle
+couvrant une victime limite le débit de tout le trafic correspondant de cette victime collectivement
+— et les clients légitimes rivalisent avec les attaquants pour la même allocation. Les seaux par
+source ne sont pas une version plus rapide de quelque chose que l'annonceur faisait déjà ; c'est
+quelque chose qu'il ne pouvait structurellement pas faire du tout.
+</Callout>
+
+`max_ratelimit_sources` borne le nombre de seaux de source existant à la fois. C'est une table du
+type « moins récemment utilisé » : au-delà de la limite, les sources les moins actives sont évincées,
+ce qui, sous un flood très large, signifie que certaines sources sont brièvement réadmises avant
+d'être à nouveau étranglées.
+
+## Modes d'attachement
+
+Il y a deux endroits dans le chemin de réception où le noyau peut exécuter le programme :
+
+- **native** — le pilote l'appelle à mesure que les paquets sortent de la NIC, avant qu'un `sk_buff`
+  ne soit alloué. Nécessite la prise en charge du pilote, et effectue le moins de travail par paquet.
+- **generic** — le noyau l'appelle après que le `sk_buff` a été alloué. Fonctionne sur n'importe
+  quelle interface, y compris virtio, et effectue plus de travail par paquet pour y parvenir.
+
+`xdp_mode: auto` (la valeur par défaut) utilise native là où le pilote le prend en charge et generic
+là où ce n'est pas le cas. `native` refuse de démarrer plutôt que de se rabattre — ce que vous voulez
+quand vous avez dimensionné pour le point d'accroche du pilote et préférez le découvrir au démarrage.
+`generic` force le second mode ; il sert principalement pour virtio et les environnements de test.
+
+<Callout type="warning" title="En mode auto, le repli est silencieux">
+Un changement de pilote, une mise à niveau du noyau ou une nouvelle NIC peut vous faire passer de
+native à generic sans aucune erreur, et generic fait bien moins par cœur de processeur. Le mode que
+chaque interface a réellement obtenu est indiqué par `kapkan dataplane status` et exporté sous forme
+de métrique — si vous avez dimensionné pour native, mettez-y une alerte. Voir
+[l'alerte dans Exploitation](/docs/dataplane-operate).
+</Callout>
+
+## Expiration des règles et arrêt
+
+Chaque règle générée porte son propre horodatage d'expiration, et le programme du noyau traite une
+règle expirée comme absente. C'est un point porteur : si le processus Kapkan meurt, est tué ou se
+bloque, les règles qu'il a installées cessent quand même de s'appliquer à l'heure prévue — un plan de
+contrôle mort ne peut pas laisser le trafic légitime d'une victime rejeté indéfiniment.
+
+Lors d'un arrêt propre, `on_exit` décide de ce qui reste. La valeur par défaut, `keep`, laisse le
+programme attaché de sorte que la politique statique continue de s'appliquer à travers un redémarrage
+ou une mise à niveau tandis que les règles dynamiques s'éteignent d'elles-mêmes. `detach` retire
+entièrement le programme, ce qui laisse passer tout le trafic.
+
+## Limites et mémoire
+
+`limits` dimensionne les maps du noyau, qui sont allouées **une seule fois**, lorsque le programme
+s'attache :
+
+| Clé | Valeur par défaut | Ce qu'elle borne |
+| --- | --- | --- |
+| `max_dynamic_rules` | 4096 | Règles que le détecteur peut installer. Chaque ban en contribue jusqu'à 8. |
+| `max_static_rules` | 256 | Vos propres règles permanentes. |
+| `max_ratelimit_sources` | 1048576 | Seaux à jetons par source. |
+
+`max_dynamic_rules` doit valoir **au moins** `ban.max_active_bans × 8` ; Kapkan refuse une
+configuration plus petite, car l'alternative est que les installations commencent à échouer en pleine
+attaque et se dégradent discrètement en trou noir. Les valeurs par défaut se situent exactement sur
+cette limite à 512 bans actifs.
+
+Parce que les maps sont allouées d'avance, la mémoire est réservée qu'une attaque soit en cours ou
+non, et la table des seaux par source domine le total. La mémoire des maps est imputée au cgroup
+mémoire du service (noyau 5.11+), donc si vous définissez `MemoryMax=` sur l'unité, dimensionnez-le
+en tenant compte des maps.
+
+## Voir aussi
+
+- [Exploitation & surveillance](/docs/dataplane-operate) — les compteurs et alertes que ces réglages
+  pilotent.
+- [FlowSpec](/docs/flowspec) — les mêmes règles générées, annoncées à vos routeurs à la place.
+- [Référence de configuration](/docs/configuration) — chaque clé `dataplane` dans un seul tableau.
+- [Échelles d'escalade](/docs/escalation) — combiner le rejet local avec les méthodes en amont.

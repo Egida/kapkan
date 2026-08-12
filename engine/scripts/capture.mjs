@@ -159,12 +159,22 @@ if (REQUIRE_ATTACKS) {
 }
 
 // Dry-run must be visible. These screenshots go on a public page, and one that
-// implies kapkan is dropping real traffic is a claim, not a picture.
+// implies kapkan is dropping real traffic is a claim, not a picture. The one
+// legitimate exception is a lab that is unmistakably a lab — synthetic TEST-NET
+// (RFC 5737) victims, so no reader could take it for production — where the whole
+// point is to show the data plane enforcing. That requires --allow-live, an
+// explicit opt-in per run, so the safe default still protects every ordinary
+// capture.
+const ALLOW_LIVE = flag("allow-live");
 const dryRun = await cdp.eval(`/dry.?run/i.test(document.body.innerText)`);
-if (!dryRun) {
+if (!dryRun && !ALLOW_LIVE) {
   console.error("ERROR: the console does not say DRY RUN anywhere.");
-  console.error("       Refusing to publish screenshots that imply live mitigation. Check `dry_run: true`.");
+  console.error("       Refusing to publish screenshots that imply live mitigation. Check `dry_run: true`,");
+  console.error("       or pass --allow-live for a deliberate lab capture against synthetic targets.");
   process.exit(3);
+}
+if (!dryRun && ALLOW_LIVE) {
+  console.error("NOTE: --allow-live — capturing the console in LIVE (enforcing) mode.");
 }
 
 mkdirSync(OUT, { recursive: true });

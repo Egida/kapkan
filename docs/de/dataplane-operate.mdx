@@ -1,0 +1,141 @@
+export const metadata = {
+  title: "Betrieb & Überwachung",
+  description:
+    "Betreiben Sie die Datenebene im Kernel im täglichen Einsatz: kapkan dataplane status lesen, die Zähler und Metriken je Entscheidung beobachten, die zwei wichtigen Alarme einrichten und die häufigen Fehler beheben.",
+};
+
+# Betrieb & Überwachung
+
+Die Datenebene läuft. Diese Seite beschreibt, was Sie ab hier tun: wie Sie ihren Zustand lesen, was
+Sie beobachten, welche Alarme Sie einrichten und wie Sie die wenigen Dinge diagnostizieren, die
+schiefgehen. Falls Sie sie noch nicht in Betrieb genommen haben, beginnen Sie mit
+[Datenebene installieren](/docs/dataplane-install).
+
+## `kapkan dataplane status` lesen
+
+`kapkan dataplane status` ist das Erste, was Sie ausführen sollten, und das Erste, was Sie jeder
+Support-Anfrage beilegen. Es liest den gepinnten Kernel-Zustand direkt und **funktioniert daher
+auch, wenn der Daemon gestoppt ist** — also genau dann, wenn Sie es am dringendsten brauchen.
+
+Es meldet:
+
+- **Anbindungen** — auf welchen Schnittstellen das Programm sitzt und den Anbindungsmodus
+  (`native` oder `generic`) für jede.
+- **Zustand** — erzwingend oder dry-run, und ob das Programm degradiert ist (angebunden, aber auf
+  einer Schnittstelle nicht filternd).
+- **Regeln** — kodierte statische Regeln und die dynamischen Regeln, die der Detektor installiert
+  hat, mit der aktiven Policy-Generation.
+- **Entscheidungen** — die Paket- und Byte-Zähler je Entscheidung, im Folgenden beschrieben.
+- **Maps** — wie voll jede Kernel-Map im Verhältnis zu ihrem Limit ist.
+
+Derselbe Zustand steht auf der Seite **Einstellungen** der Konsole, und die Drop-Zähler je Sperre
+erscheinen bei jeder Sperre unter **Sperren / Mitigation** und in `/api/v1/bans`.
+
+## Die Entscheidungs-Zähler
+
+Jedes Paket, das das Programm sieht, endet in genau einer **endgültigen** Entscheidung, daher
+summieren sich diese Zähler zur Gesamtzahl der Pakete:
+
+| Entscheidung | Bedeutung |
+| --- | --- |
+| `pass_default` | Keiner Regel entsprochen — weitergeleitet. Auf einer gesunden Maschine ist das nahezu alles. |
+| `pass_not_ip` | Kein IPv4/IPv6 (ARP usw.) — weitergeleitet. |
+| `drop_static` | Von einer Ihrer statischen Regeln verworfen. |
+| `drop_dyn_src` / `drop_dyn_dst` | Von einer vom Detektor installierten Quell- oder Opferregel verworfen. |
+| `drop_rl` | Verworfen, weil ein Ratenbegrenzungs-Bucket je Quelle leer war. |
+| `drop_malformed` | Als nicht parsebar verworfen — nur dann von null verschieden, wenn Sie `drop_malformed: true` setzen. |
+
+Steigen die **drop\_**-Zähler während eines Angriffs, während `pass_default` weiterhin fließt, ist
+das das gesunde Bild: Der Angriff wird verworfen und alles andere kommt durch. Steigt ein
+Drop-Zähler, während der Angriffsverkehr *weiterhin am Host hinter Kapkan ankommt*, ist das Programm
+an die falsche Schnittstelle angebunden oder es läuft im generic-Modus auf einem Pfad, den der
+Verkehr nicht nimmt — siehe [Fehlerbehebung](#fehlerbehebung).
+
+## Die zwei wichtigen Alarme
+
+Die meisten `kapkan_dataplane_*`-Metriken sind eine Grafik wert. Bei zwei lohnt sich ein **Alarm**,
+denn jede ist andernfalls stumm und jede bedeutet, dass der Filter nicht das tut, was Sie annehmen.
+
+### 1. Anbindungsmodus ist auf generic zurückgefallen
+
+`xdp_mode: auto` verwendet den schnellen native-Pfad, wo der Treiber ihn unterstützt, und den
+langsameren generic-Pfad, wo nicht — und trifft diese Wahl **stillschweigend**. Ein Treiberwechsel,
+ein Kernel-Upgrade oder der Umzug auf eine andere NIC kann Sie ohne Fehlermeldung von native auf
+generic fallen lassen und so klammheimlich die Kapazität beschneiden, für die Sie dimensioniert
+haben.
+
+Der verwendete Modus steht in `kapkan dataplane status` und wird als Metrik exportiert. Wenn Sie für
+native dimensioniert haben, alarmieren Sie bei jeder Schnittstelle, die generic meldet. (Wenn Sie
+beim Start lieber laut scheitern als zurückzufallen, setzen Sie `xdp_mode: native` — es verweigert
+dann den Start, statt langsam zu laufen. Siehe [Anbindungsmodi](/docs/dataplane-tuning).)
+
+### 2. Datenverkehr hat den Filter ungeprüft umgangen
+
+Eine einzige IPv6-Paketform wird weitergeleitet, **ohne dass irgendeine Regel ausgewertet wird**:
+ein Paket, das mehr als acht Extension-Header vor seinem L4-Header trägt. Eine längere Kette
+abzulaufen würde das Kernel-Programm ein Instruktionsbudget kosten, das es nicht hat, also stoppt es
+bei acht und lässt den Rest durch. Das ist Absicht — eine Parse-Grenze, die *verwirft*, wäre ein
+Default-Deny, das sich in einem Parser versteckt, und eine einzige merkwürdig aussehende Kette würde
+einen Kunden vom Netz nehmen —, aber es ist auch ein Weg um Ihren Filter herum, deshalb wird es
+gezählt und nicht verschwiegen:
+
+```
+kapkan_dataplane_filter_bypass_packets_total{reason="ipv6_exthdr_cap"}
+```
+
+Kein legitimer Datenverkehr verkettet acht Extension-Header, daher **ist jede Bewegung dieses
+Zählers einen Blick wert**. `kapkan dataplane status` gibt einen Block aus, wenn er ungleich null
+ist, und die Konsole zeigt ein Banner. Bewegt er sich während eines Angriffs, verwerfen oder
+normalisieren Sie lange Extension-Header-Ketten weiter oben, wo ein Router das ohne ein Budget pro
+Paket erledigen kann.
+
+## Konfiguration neu laden
+
+Das Neuladen (`kapkan -s reload`) ersetzt die statische Policy atomar: Kapkan baut den neuen
+Regelsatz neben dem laufenden auf und schaltet in einem einzigen Schreibvorgang zwischen ihnen um,
+sodass niemals ein Paket gegen eine halb angewandte Policy ausgewertet wird. `allowlist`,
+`static_rules` und `ratelimit_profiles` werden an Ort und Stelle neu geladen.
+
+Alles, was Kernel-Objekte anbindet oder dimensioniert — `interfaces`, `xdp_mode`, `pin_path`,
+`on_exit`, `limits` und `enabled` selbst — **kann** sich unter einem laufenden Programm nicht
+ändern. Ein Neuladen, das eines davon berührt, wird rundweg abgelehnt, und die vorherige
+Konfiguration bleibt aktiv. Starten Sie den Prozess neu, um diese zu ändern.
+
+## Was einen Neustart überlebt
+
+Weil das Programm und die Maps unter `pin_path` gepinnt sind, überleben sie den Kapkan-Prozess:
+
+- **Die statische Policy setzt weiter durch** über einen Prozess-Neustart oder ein Upgrade hinweg —
+  es gibt kein Zeitfenster, in dem Ihre dauerhaft aktiven Regeln fehlen.
+- **Dynamische Regeln verfallen von selbst.** Jede erzeugte Regel trägt ihren eigenen Ablauf im
+  Kernel, und das Programm behandelt eine abgelaufene Regel als nicht vorhanden, sodass ein Kapkan,
+  der abgeschossen, hängen geblieben oder aktualisiert wird, den Verkehr eines Opfers nicht verworfen
+  zurücklassen kann. Wenn es zurückkommt, übernimmt es die gepinnten Maps erneut und setzt deren
+  Verwaltung fort.
+
+Bei einem *sauberen* Herunterfahren entscheidet `on_exit`, was bleibt: `keep` (der Standard) lässt
+das Programm angebunden; `detach` entfernt es vollständig und lässt allen Datenverkehr durch.
+
+## Fehlerbehebung
+
+**Das Programm bindet nicht an.** Fast immer eine fehlende Capability oder ein schreibgeschütztes
+bpffs — prüfen Sie [Schritt 2 der Installation](/docs/dataplane-install) erneut. Das Daemon-Log
+benennt, was es nicht bekommen konnte.
+
+**Ein Drop-Zähler steigt, aber der Angriff erreicht weiterhin den Host.** Das Programm prüft den
+falschen Datenverkehr. Bestätigen Sie, dass es an die Schnittstelle angebunden ist, auf der der
+Angriff tatsächlich ankommt (`kapkan dataplane status`), und prüfen Sie, ob es in den generic-Modus
+auf einem Pfad zurückgefallen ist, den der Verkehr nicht durchläuft.
+
+**Die Regel-Map ist voll.** `max_dynamic_rules` ist zu niedrig für die Anzahl der aktiven Sperren —
+Installationen beginnen mitten im Angriff zu scheitern. Erhöhen Sie den Wert (er muss mindestens
+`ban.max_active_bans × 8` betragen); siehe [Limits und Speicher](/docs/dataplane-tuning).
+
+Weitere Fälle, die alle Mitigationsmethoden gemeinsam haben, finden Sie unter
+[Fehlerbehebung](/docs/troubleshooting).
+
+## Verwandte Themen
+
+- [Metriken](/docs/metrics) — jede `kapkan_dataplane_*`-Familie und ihre Labels.
+- [Tuning & Referenz](/docs/dataplane-tuning) — Anbindungsmodi, Ratenbegrenzung und Map-Dimensionierung.
+- [Sicherheitsmodell](/docs/safety) — dry-run, Whitelists und die Obergrenzen hinter jeder Methode.
