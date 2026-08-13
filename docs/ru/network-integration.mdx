@@ -1,0 +1,178 @@
+export const metadata = {
+  title: "Network integration (scrub nodes)",
+  description:
+    "Wire a kapkan scrub node into your network: where it sits, how diverted traffic reaches it over GRE/IPIP or L2, MSS clamping, the return path, and the asymmetric-routing traps.",
+};
+
+# Network integration (scrub nodes)
+
+<Callout type="warning" title="This is the plumbing, not the policy">
+A [scrub node](/docs/scrubbing) drops the attack in its own kernel — that part is kapkan's job
+and needs no network design. **Getting the victim's traffic *to* the node, and the clean
+traffic *back out*, is your network's job**, and it is where scrubbing deployments actually go
+wrong. Every command block on this page was executed against a real Linux kernel in the
+network-integration lab (`engine/scripts/labnet/`) before it was written down.
+</Callout>
+
+A scrub node runs [`kapkan scrub`](/docs/cli): no detection, no BGP, no telemetry. The brain
+[diverts](/docs/scrubbing) a victim's traffic toward the node, the node pulls the ban's rules
+from `GET /api/v1/dataplane/rules` and drops the attack in [XDP](/docs/glossary), and the clean
+traffic is reinjected toward the victim. This page is the three things that sit around that:
+**how traffic reaches the node**, **how clean traffic leaves it**, and **how to confirm it is
+actually filtering**.
+
+## Where the node sits
+
+Two shapes, and the choice drives everything else.
+
+- **Off-path (BGP divert).** The node lives beside your edge. When an attack starts, the brain
+  announces the victim's `/32` toward the node's next-hop, so the router tunnels the victim's
+  traffic to the node; the node drops the attack and reinjects the rest. This is the model the
+  `scrubbing.nodes[]` config and the `divert` action are built for — the node is pulled into the
+  path only for hosts under attack, and only while they are.
+- **In-path (L2).** The node is bridged into a link the victim's traffic already crosses, so it
+  sees every frame all the time. No BGP, no tunnel; the node filters at wire level. Simpler to
+  reason about, but the node is now a bump in the wire for *all* traffic, attack or not.
+
+Most operators start off-path — the blast radius of a mistake is one diverted host, not the
+whole link.
+
+## L2 insertion (in-path)
+
+Bridge the node between the client side and the gateway side of a link. The XDP program attaches
+to the **ingress** port, and the box needs no L3 address at all — it is invisible at L3.
+
+```sh
+# On the scrub node: bridge the two ports, no IP on the box.
+ip link add br0 type bridge
+ip link set eth0 master br0      # client side  (XDP attaches here)
+ip link set eth1 master br0      # gateway side
+ip link set eth0 up; ip link set eth1 up; ip link set br0 up
+```
+
+```yaml
+# scrub.yaml — the XDP program attaches to the ingress port.
+dataplane:
+  interfaces: [eth0]
+```
+
+Traffic forwards through the bridge unchanged; the XDP filter drops only what the brain's rules
+match. Because there is no L3 hop, there is no MTU change and none of the tunnel problems below.
+
+## Off-path diversion over GRE or IPIP
+
+When the node is off-path, the router encapsulates the victim's traffic into a tunnel to the
+node. GRE and IPIP both work; GRE adds 24 bytes of overhead, IPIP 20.
+
+```sh
+# On the router (rA) and the scrub node (rB): a GRE tunnel between their transport addresses.
+ip tunnel add gre1 mode gre remote 10.0.2.2 local 10.0.2.1 ttl 255   # on rA
+ip tunnel add gre1 mode gre remote 10.0.2.1 local 10.0.2.2 ttl 255   # on rB
+ip addr add 10.9.0.1/30 dev gre1 && ip link set gre1 up              # rA
+ip addr add 10.9.0.2/30 dev gre1 && ip link set gre1 up              # rB
+# Route the victim prefix through the tunnel toward the node.
+ip route add 203.0.113.0/24 via 10.9.0.2 dev gre1                    # on rA
+```
+
+IPIP is identical with `mode ipip`. A GRE tunnel over a 1500-byte transport reports MTU 1476;
+IPIP reports 1480.
+
+<Callout type="error" title="The failure that pages you at 3 a.m.">
+A tunnel shrinks the path MTU. If the "packet too big" ICMP that would tell senders to shrink
+their segments is filtered anywhere on the path — and it very often is — the symptom is
+distinctive and misleading: **small requests and TCP handshakes complete normally, then any
+large response stalls.** SSH connects but `ls` of a big directory hangs; the site loads its HTML
+but not its images. It looks like an application problem. It is an MSS problem, and the fix is on
+the tunnel routers, not the endpoints.
+</Callout>
+
+### MSS clamping — the fix
+
+Rewrite the MSS in every TCP `SYN` crossing the tunnel down to the tunnel's path MTU, so both
+ends negotiate segments that fit. Clamp on **both** tunnel routers, in **both** directions:
+
+```sh
+# On each tunnel router:
+iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o gre1 -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i gre1 -j TCPMSS --clamp-mss-to-pmtu
+```
+
+In the lab, a 4 MB download through a clamp-less tunnel with ICMP filtered transferred **0 bytes
+and timed out**; with the clamp in place, the same download completed. `--clamp-mss-to-pmtu`
+tracks the tunnel MTU automatically, so it survives an MTU change without an edit.
+
+## The return path
+
+Diverted traffic reaches the node; the **clean** traffic has to leave it the right way — toward
+the victim, not back down the dirty tunnel. This is where routing gets asymmetric, and asymmetric
+routing has two traps.
+
+### Route-leaking (portable) or VRF (newer kernels)
+
+Give the reinjected traffic its own routing context so it egresses the clean uplink regardless of
+the main table. On any kernel, do it with **policy routing** — a dedicated table selected by an
+`ip rule`:
+
+```sh
+# main table: the dirty uplink (where diverted traffic arrives)
+ip route add default via 10.30.0.2 dev eth0
+# a dedicated table for reinjected traffic: the clean uplink
+ip route add default via 10.31.0.2 dev eth1 table 100
+# leak the victim's source into it — reinjected clean traffic takes the clean uplink
+ip rule add from 203.0.113.0/24 lookup 100
+```
+
+In the lab, `ip route get 8.8.8.8 from 203.0.113.10 iif eth0` then resolves via the clean uplink
+(`dev eth1 table 100`) while everything else stays on the main table. A **VRF device**
+(`ip link add vrf-clean type vrf table 100`, then enslave the clean uplink) gives the same
+isolation as a cleaner abstraction on kernels built with `CONFIG_NET_VRF`; it is the same table,
+reached through a device instead of a rule.
+
+### rp_filter and the asymmetric reply
+
+Because the victim's prefix is diverted, a border router's **reverse route** to the victim points
+at the tunnel. When the victim's reply comes back on a normal link, strict reverse-path filtering
+(`rp_filter=1`) sees that the reply's source does not route back out the interface it arrived on,
+and **drops it silently.**
+
+```sh
+# The trap, and the fix — on the router that sees the asymmetric reply:
+sysctl -w net.ipv4.conf.all.rp_filter=1     # strict: DROPS the asymmetric reply
+sysctl -w net.ipv4.conf.all.rp_filter=2     # loose:  accepts it if the source is reachable by ANY path
+```
+
+The lab confirms it directly: a packet whose reverse path is a different interface is **dropped**
+under `rp_filter=1` and **passes** under `rp_filter=2` (loose) or `0` (off). Use **loose**
+(`2`) on the interfaces that carry asymmetric scrubbing traffic — it still rejects genuinely
+un-routable (spoofed) sources, but tolerates the asymmetry your diversion created. Setting it per
+interface (`net.ipv4.conf.<iface>.rp_filter`) is safer than flipping it globally.
+
+## Confirming the node is filtering
+
+This is the step under-attack runbooks get wrong: for a scrub node, "the route reached my
+router" is not the question — **"is XDP attached and dropping?"** is. Check it on the node itself,
+which needs no running daemon (it reads the pinned maps):
+
+```sh
+kapkan dataplane status
+```
+
+A healthy node reports `ENFORCING on <iface>`, the attach mode, and a live dynamic-rule count.
+In the lab's full loop — a brain detecting a flowgen attack, escalating to divert, and a real
+`kapkan scrub` agent pulling the ban — the agent attached XDP, installed the brain's rules, and
+`kapkan dataplane status` confirmed the dynamic rule blocks live in the kernel.
+
+The brain's side of the same question is the [Nodes view](/docs/dashboard) and
+`GET /api/v1/dataplane/nodes`: a node is **alive** because it keeps polling for rules — the poll
+is the liveness signal, never the node's self-report — so a node that appears in the inventory as
+alive is a node that is asking the brain what to drop. If the node stops polling for
+`scrubbing.stale_after_seconds`, the brain re-announces the victim toward a surviving node, or
+runs `on_all_nodes_lost` when none remain (see [scrubbing](/docs/scrubbing)).
+
+<Callout type="note" title="Reproduce it yourself">
+The harness that verified every recipe here is committed at `engine/scripts/labnet/`:
+`plumbing.sh` runs the tunnel, MSS, L2, `rp_filter` and route-leaking recipes in throwaway
+network namespaces, and `scrub-loop.sh` runs the full attack → detect → divert → scrub → drop
+loop with a real `kapkan scrub` node. Both need a privileged container on a kernel with BPF/BTF,
+GRE and policy routing.
+</Callout>
