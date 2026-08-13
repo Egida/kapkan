@@ -88,7 +88,11 @@ const SAFETY_CARD_INDEX = 5;
 // three-column grid without leaving a single orphan in the last row. Appending
 // (rather than inserting) is also what keeps SAFETY_CARD_INDEX correct.
 const WIDE_CARD_INDEX = 9;
-const THEM_ICONS: ("x" | "minus")[] = ["x", "x", "minus", "minus", "minus", "x"];
+// Parallel to compare.rows (same order in every locale): the icon in the "them"
+// column. "x" = they lack it, "minus" = partial / paid / separate. Grow this
+// with the rows. Index 6 is the in-kernel-drop row (they scrub, but in a
+// separate appliance, hence "minus").
+const THEM_ICONS: ("x" | "minus")[] = ["x", "x", "minus", "minus", "minus", "x", "minus"];
 
 /* ------------------------------------------------------------------- page */
 export function Landing({ locale, basePath = "" }: { locale: Locale; basePath?: string }) {

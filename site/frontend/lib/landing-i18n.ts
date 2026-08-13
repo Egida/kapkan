@@ -140,6 +140,7 @@ const en: LandingDict = {
       { feature: "Threshold tuning", kapkan: "Learns automatically", them: "Offline calculator, copy-paste" },
       { feature: "Automation", kapkan: "Escalation rules in config", them: "Custom bash scripts" },
       { feature: "Architecture", kapkan: "One static binary, no extras", them: "Several daemons to run" },
+      { feature: "In-kernel drop", kapkan: "Built in — drops in Linux itself (XDP)", them: "Separate scrubbing appliance" },
     ],
   },
   quickstart: {
@@ -255,6 +256,7 @@ const ru: LandingDict = {
       { feature: "Настройка порогов", kapkan: "Учится сама", them: "Офлайн-калькулятор, копипаст" },
       { feature: "Автоматизация", kapkan: "Правила эскалации в конфиге", them: "Самописные bash-скрипты" },
       { feature: "Архитектура", kapkan: "Один статический бинарник, без довесков", them: "Несколько демонов" },
+      { feature: "Отбрасывание в ядре", kapkan: "Встроено — отбрасывает прямо в ядре Linux (XDP)", them: "Отдельное устройство очистки" },
     ],
   },
   quickstart: {
@@ -430,6 +432,11 @@ const de: LandingDict = {
         "feature": "Architektur",
         "kapkan": "Eine statische Binary, kein Drumherum",
         "them": "Mehrere Daemons zu betreiben"
+      },
+      {
+        "feature": "Verwerfen im Kernel",
+        "kapkan": "Eingebaut — verwirft direkt im Linux-Kernel (XDP)",
+        "them": "Separate Scrubbing-Appliance"
       }
     ]
   },
@@ -608,6 +615,11 @@ const fr: LandingDict = {
         "feature": "Architecture",
         "kapkan": "Un binaire statique, sans extras",
         "them": "Plusieurs daemons à faire tourner"
+      },
+      {
+        "feature": "Rejet dans le noyau",
+        "kapkan": "Intégré — rejette directement dans le noyau Linux (XDP)",
+        "them": "Appliance de scrubbing séparée"
       }
     ]
   },
@@ -786,6 +798,11 @@ const es: LandingDict = {
         "feature": "Arquitectura",
         "kapkan": "Un binario estático, sin extras",
         "them": "Varios daemons que ejecutar"
+      },
+      {
+        "feature": "Descarte en el kernel",
+        "kapkan": "Integrado — descarta en el propio kernel de Linux (XDP)",
+        "them": "Appliance de scrubbing aparte"
       }
     ]
   },
