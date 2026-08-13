@@ -1,7 +1,7 @@
 export const metadata = {
   title: "CLI-Referenz",
   description:
-    "Jeder Kommandozeilen-Flag des Kapkan-Binarys — Konfigurationspfad, Log-Format und -Level, die pid-Datei und die nginx-artige `-s`-Prozesssteuerung, die Schema-/Validierungs-Hilfsmodi sowie der Befehl `dataplane status`.",
+    "Jeder Kommandozeilen-Flag des Kapkan-Binarys — Konfigurationspfad, Log-Format und -Level, die pid-Datei und die nginx-artige `-s`-Prozesssteuerung, die Schema-/Validierungs-Hilfsmodi sowie die Befehle `dataplane status` und `scrub`.",
 };
 
 # CLI-Referenz
@@ -240,6 +240,56 @@ ihn, wenn das Schema nicht passt, ab und baut ihn neu auf, wobei jede dynamische
 im Kernel verworfen wird. Eine Diagnose, die das mitten im Angriff tun könnte, wäre schlimmer als
 gar keine Diagnose.
 </Callout>
+
+### `scrub`
+
+```sh
+kapkan scrub -config /etc/kapkan/scrub.yaml
+```
+
+Führt die [Scrub-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten)-Rolle aus: dasselbe Binary,
+ein anderer Job. Es gibt keine Erkennung, kein BGP und keinen Telemetrie-Listener — die Box
+empfängt den Verkehr, den das Gehirn zu ihr umgeleitet hat, pollt per Long-Poll die Regeltabelle
+des Gehirns und hält ihre lokale XDP-[Data Plane](/docs/dataplane) so, dass sie genau das
+durchsetzt, was das Gehirn zu verwerfen anweist. Der Poll dient zugleich als Lebendigkeitssignal
+des Knotens.
+
+Alles Rollenspezifische liegt in seiner eigenen `scrub.yaml`; die `config.yaml` des Daemons wird
+**nicht** gelesen (`-config` hat hier den Standardwert `/etc/kapkan/scrub.yaml`). Sie hat drei
+Teile: den zu erreichenden Controller, die Identität des Knotens und denselben `dataplane:`-Block,
+den ein Daemon trägt.
+
+```yaml
+dry_run: true                     # the remote-role default — counts, drops nothing
+controller:
+  url: "https://kapkan.example.net:8443"   # the brain's API base (no path)
+  token_env: KAPKAN_AGENT_TOKEN            # env var holding the agent token (required)
+  name: scrub-fra1                         # must equal a scrubbing.nodes[] name on the brain
+dataplane:
+  interfaces: [eth0]              # the dirty side (diverted traffic arrives here)
+  xdp_mode: auto
+  pin_path: /sys/fs/bpf/kapkan
+```
+
+<Callout type="warning" title="Ein Scrub-Knoten läuft standardmäßig im Dry-Run">
+`dry_run` hat für eine entfernte Rolle den Standardwert **true** — der Knoten installiert die
+Regeln und zählt, was sie verwerfen *würden*, verwirft aber nichts, bis Sie `dry_run: false`
+explizit setzen. Er setzt niemals eine Regel durch, die das Gehirn als Dry-Run markiert hat,
+solange diese aktiv ist, und er benötigt ein echtes agent-Token: Ohne eines tragen seine Polls
+keine Identität, und das Gehirn würde ihn als tot werten. Verwenden Sie außerhalb eines Labors
+`https` — eine `controller.url` im Klartext sendet das Token unverschlüsselt.
+</Callout>
+
+| Flag | Standard | Beschreibung |
+| --- | --- | --- |
+| `-config <path>` | `/etc/kapkan/scrub.yaml` | Die Scrub-Knoten-Konfiguration. |
+| `-log-format <fmt>` | `json` | `json` oder `text`. |
+| `-log-level <lvl>` | `info` | `debug`, `info`, `warn` oder `error`. |
+
+Bestätigen Sie einen laufenden Knoten mit `kapkan dataplane status` auf dem Knoten selbst — es
+meldet `ENFORCING` und die installierte Regelanzahl — und die [Nodes-Ansicht](/docs/dashboard) des
+Gehirns zeigt ihn als lebendig. Den umgeleiteten Verkehr zum Knoten zu bekommen, ist Aufgabe des
+[Leitfadens zur Netzwerkintegration](/docs/network-integration).
 
 ## Nächste Schritte
 

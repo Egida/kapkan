@@ -61,7 +61,14 @@ Le tableau de bord interroge l'API JSON et restitue tout ce que Kapkan suit en m
 - **Principaux émetteurs (top talkers)** — l'instantané des hôtes suivis avec les débits par direction et les
   références (baselines) apprises, afin que vous puissiez voir qui est le plus bruyant et comment cela se compare à la normale.
 - **Hostgroups** — vos groupes de préfixes nommés et leur état.
-- **Table de bannissement** — chaque bannissement, actif et historique.
+- **Nœuds de scrubbing** — affichés uniquement lorsque vous exploitez des [nœuds de nettoyage
+  gérés](/docs/scrubbing#nœuds-de-nettoyage-gérés) : la vivacité de chaque nœud (il est vivant parce
+  qu'il continue d'interroger pour obtenir des règles), combien de bans dévient vers lui, ainsi que
+  sa charge, ses suppressions, sa version et son indicateur dry-run tels qu'il les rapporte — les
+  colonnes rapportées sont étiquetées comme telles, car le rapport qu'un nœud fait sur lui-même est
+  consultatif, jamais la source de sa vivacité.
+- **Table de bannissement** — chaque bannissement, actif et historique (avec la colonne du nœud de
+  scrubbing lorsque des nœuds sont configurés).
 - **Trafic / Rapports** — des graphiques de trafic entrant/sortant en direct construits à partir des
   tampons de débit en mémoire, ainsi qu'une section **Rapports historiques** qui lit les tables
   ClickHouse persistées lorsque le stockage est activé.

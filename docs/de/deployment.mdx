@@ -202,6 +202,16 @@ Sechs Dinge sind beim Start fest und ein Reload, der eines davon ändert, wird a
 `geoip`-Einstellungen. Siehe die [Konfigurationsreferenz](/docs/configuration) und, um das
 Binary zu wechseln, ohne die Mitigation zu unterbrechen, [Upgrade](/docs/upgrading).
 
+<Callout type="warning" title="Ein Reverse-Proxy vor der API braucht ein langes Read-Timeout">
+Wenn Sie [Scrubbing-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten) betreiben und einen
+Reverse-Proxy vor `api.listen` setzen, nutzt der [Scrub-Knoten-Regel-Feed](/docs/api) Long-Polling
+— eine Anfrage wird bis zu 30 s gehalten. Ein kurzes Read-Timeout des Proxys kappt diesen Hold,
+und der Knoten verbindet sich bei jeder Anfrage neu statt einmal pro Regeländerung. Setzen Sie es
+über den Hold hinaus: nginx `proxy_read_timeout 60s;` (oder höher); bei Envoy überschreiben Sie das
+15-s-Standard-Route-Timeout für diesen Pfad. Die API selbst setzt aus demselben Grund bewusst kein
+Write-Timeout.
+</Callout>
+
 ## Aus dem Quellcode bauen
 
 Zum Bauen wird **Go 1.26 oder neuer** benötigt. Das `Makefile` stellt die üblichen Targets bereit:

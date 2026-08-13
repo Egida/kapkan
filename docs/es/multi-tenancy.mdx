@@ -77,6 +77,16 @@ Un token sin alcance es un administrador — el comportamiento por defecto, tota
 retrocompatible. Un token acotado a un tenant que ningún hostgroup usa se rechaza al cargar la
 configuración (de lo contrario, una errata vería silenciosamente nada).
 
+<Callout type="info" title="El rol agent queda fuera de este eje">
+El token `agent` de un [nodo de scrubbing](/docs/scrubbing#nodos-de-scrubbing-gestionados) **no** es
+un viewer de menor rango con un tenant — queda por completo fuera de la escala de roles, y **no**
+puede acotarse a un tenant (la combinación es un error de configuración). El [feed de reglas y el
+inventario de nodos](/docs/api) abarcan todos los tenants por diseño: un nodo de scrubbing filtra
+para todo el despliegue, así que acotar por tenant a nivel de nodo es una cuestión de
+[flota](/docs/scrubbing), no de token. Trata un token agent como de todo el despliegue y mantenlo
+fuera de máquinas que guarden datos de cara al cliente.
+</Callout>
+
 ## Aplicación
 
 El acotamiento es **deny por defecto: un token con alcance solo ve jamás su propio tenant.** El

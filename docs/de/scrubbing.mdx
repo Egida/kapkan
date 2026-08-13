@@ -9,8 +9,11 @@ export const metadata = {
 <Callout type="warning" title="Sie brauchen zuerst ein Scrubbing-Center">
 Divert funktioniert nur, wenn Sie bereits ein **Scrubbing-Center** betreiben (oder dafür
 bezahlen) — eine separate Box oder einen Dienst, der den Angriffsverkehr herausfiltert und den
-sauberen Verkehr über GRE oder ein VRF wieder einspeist. Falls Sie keines haben, ist diese
-Seite **nicht** Ihr Ausgangspunkt: Verwenden Sie stattdessen
+sauberen Verkehr über GRE oder ein VRF wieder einspeist. Sie können jetzt Ihren eigenen mit der
+[`kapkan scrub`](/docs/cli)-Rolle betreiben — ein verwalteter
+[Scrubbing-Knoten](#verwaltete-scrubbing-knoten), der den Angriff in seinem eigenen Kernel
+verwirft — oder `next_hop` auf einen Drittanbieter-Scrubber richten. Falls Sie keines von beidem
+haben, ist diese Seite **nicht** Ihr Ausgangspunkt: Verwenden Sie stattdessen
 [Blackhole](/docs/mitigation) oder [FlowSpec](/docs/flowspec). Einen `next_hop` auf einen
 Scrubber zu richten, der nicht existiert, leitet den Verkehr des Opfers ins Leere.
 </Callout>
@@ -96,6 +99,82 @@ bevor echter Verkehr verschoben wird:
 Die Divert-Route, die Kapkan erstellt, liest sich als `divert <prefix> next-hop <next_hop> community
 <community>` — die Zeichenkette, die im `route`-Feld des [Ban-Objekts](/docs/api) erscheint, mit
 `method: divert`.
+
+## Verwaltete Scrubbing-Knoten
+
+Der skalare `next_hop` oben leitet zu **einem** Scrubber um, den Sie selbst betreiben oder ein
+Anbieter bereitstellt — Kapkan kündigt die Route an, und der Scrubber erledigt den Rest. Ein
+**verwalteter Scrubbing-Knoten** ist Kapkans eigener Scrubber: eine Box, die die
+[`kapkan scrub`](/docs/cli)-Rolle ausführt, den umgeleiteten Verkehr empfängt, den Angriff in
+ihrer kernelinternen [Data Plane](/docs/dataplane) verwirft und den Rest wieder einspeist. Kapkan
+kündigt das Opfer in Richtung des Knotens an **und** teilt dem Knoten genau mit, was zu verwerfen
+ist — dieselben [FlowSpec](/docs/flowspec)-Regeln, die der Detektor erzeugt hat — sodass der Knoten
+den Angriffsvektor filtert statt jedes Pakets an das Opfer.
+
+Führen Sie jeden Knoten unter `scrubbing.nodes[]` auf. Der skalare `next_hop` bleibt gültig als
+degenerierter Ein-Knoten-Fall und als Auffangziel für Gruppen, die kein Knoten bedient (das ist
+der Migrationsweg: Fügen Sie `nodes[]` neben Ihrem bestehenden `next_hop` hinzu und verschieben Sie
+Gruppen einzeln nacheinander).
+
+```yaml
+scrubbing:
+  next_hop: "192.0.2.100"        # still valid: the one-node case / catch-all target
+  node_selection: affinity       # affinity (default) | least_loaded | ecmp
+  on_all_nodes_lost: withdraw    # withdraw (default) | blackhole | flowspec
+  stale_after_seconds: 15        # a node unheard-from this long counts as lost
+  nodes:
+    - name: scrub-fra1           # must match the node's controller.name
+      next_hop: "192.0.2.10"     # the node's IPv4 BGP next-hop (required)
+      next_hop6: "2001:db8::10"  # required to divert IPv6 victims to this node
+      capacity_mbps: 10000       # shown in the console; used by least_loaded
+      hostgroups: [game-servers] # this node serves only these groups (empty = any)
+    - name: scrub-ams1
+      next_hop: "192.0.2.11"
+```
+
+| Schlüssel | Bedeutung |
+| --- | --- |
+| `nodes[].name` | Knotenidentität. **Muss** dem `controller.name` **entsprechen**, den der Agent des Knotens beim Pollen präsentiert, sonst ist jeder Poll ein lautstarker `404`. |
+| `nodes[].next_hop` / `next_hop6` | Der/die BGP-Next-Hop(s) des Knotens. `next_hop` ist erforderlich; `next_hop6` ist erforderlich, um IPv6-Opfer zu diesem Knoten umzuleiten. |
+| `nodes[].capacity_mbps` | Die Scrubbing-Kapazität des Knotens, angezeigt in der Konsole und von `least_loaded` verwendet. `0` bedeutet unbekannt. |
+| `nodes[].hostgroups` | Schränkt ein, welche [Hostgruppen](/docs/hostgroups) dieser Knoten bedient. Leer bedeutet, er akzeptiert jede Gruppe. Eine Gruppe, deren Stufenleiter umleitet, muss einen Knoten haben, der sie bedient, oder den skalaren `next_hop` als Fallback. |
+| `node_selection` | Wie ein Knoten für einen neuen Ban gewählt wird: `affinity` (Standard — der erste konfigurierte Knoten, dessen `hostgroups` das Opfer beanspruchen), `least_loaded` oder `ecmp`. **Nur `affinity` ist heute implementiert**; die anderen protokollieren beim Start eine Warnung und fallen darauf zurück. |
+| `on_all_nodes_lost` | Was zu tun ist, wenn kein verwalteter Knoten erreichbar ist: `withdraw` (Standard — den Verkehr des Opfers nicht mehr anziehen), `blackhole` oder `flowspec`. Solange mindestens ein Knoten überlebt, wird das Opfer stattdessen zu ihm hin neu angekündigt. |
+| `stale_after_seconds` | Wie lange ein Knoten ohne Pollen bleiben darf, bevor er als verloren gilt. Standard `15`. Bei einem *stillen* Ausfall (Stromausfall, eine Partition — nichts sendet ein FIN) ist die tatsächliche Erkennungsgrenze dieser Wert **plus** dem Long-Poll-Hold, in dem der Knoten geparkt sein kann (bis zu 30 s); bemessen Sie ihn unter Berücksichtigung dieser Summe gegen Ihre Blackhole-Toleranz. |
+
+### Die Knotenwahl ist eingefroren und übersteht den Ausfall eines Knotens
+
+Der Knoten für einen Ban wird **einmalig, beim Erstellen des Bans** gewählt und wie seine
+BGP-Attribute auf dem Ban eingefroren — der Verkehr eines Opfers springt niemals zwischen
+Scrub-Standorten, nur weil ein Reload die Liste umsortiert hat. Die Auswahl bevorzugt Knoten, die
+tatsächlich pollen, sodass ein frischer Ban niemals auf einen Knoten gerichtet wird, den das
+Gehirn bereits als verschwunden erkennen kann.
+
+Wenn ein Knoten für `stale_after_seconds` aufhört zu pollen, verschiebt der Sweep seine Opfer:
+
+- zu einem **überlebenden** geeigneten Knoten — make-before-break auf derselben Host-Route neu
+  angekündigt, sodass das Opfer niemals kurzzeitig ungeschützt ist. Nach dem Verschieben ist die
+  Wahl erneut eingefroren: Kehrt der alte Knoten zurück, holt er das Opfer **nicht** zurück nach
+  Hause.
+- über **`on_all_nodes_lost`** nur dann, wenn *kein* geeigneter Knoten überlebt. `flowspec`
+  benötigt seine Regeln, daher erzeugt ein Divert-Ban unter dieser Richtlinie sie beim Erstellen
+  des Bans.
+
+<Callout type="info" title="Lebendigkeit ist der Poll, niemals der Report">
+Ein Knoten ist **lebendig**, weil er das Gehirn weiterhin nach Regeln abfragt — dieser Poll ist
+das einzige Lebendigkeitssignal. Der Selbstreport eines Knotens (Last, Drop-Zähler, Version,
+angezeigt in der [Konsole](/docs/dashboard)) ist beratend: Ein kompromittiertes Knoten-Token
+könnte einen Report aufblähen, aber es kann niemals einen toten Knoten weiterhin umgeleiteten
+Verkehr anziehen lassen, weil nichts auf den Report reagiert. Ein durch einen Reload (oder nach
+einem Neustart des Gehirns) frisch hinzugefügter Knoten erhält ein Erscheinungsfenster, bevor er
+als verloren gewertet werden kann, sodass ein routinemäßiges Rollout niemals `on_all_nodes_lost`
+auslöst.
+</Callout>
+
+Den umgeleiteten Verkehr **zu** einem Knoten und den sauberen Verkehr **wieder heraus** zu
+bekommen — L2-Insertion, GRE/IPIP-Tunnel mit MSS-Clamping, den Rückpfad und die Fallen des
+asymmetrischen Routings — ist Aufgabe Ihres Netzwerks, behandelt im
+[Leitfaden zur Netzwerkintegration](/docs/network-integration).
 
 ## Scrubbing pro Hostgruppe
 

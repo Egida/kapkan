@@ -65,7 +65,14 @@ Das Dashboard fragt die JSON-API ab und stellt alles dar, was Kapkan im Speicher
   Baselines, sodass Sie sehen können, wer am lautesten ist und wie sich das im Vergleich zum
   Normalzustand verhält.
 - **Hostgroups** — Ihre benannten Präfixgruppen und deren Zustand.
-- **Sperrtabelle** — jede Sperre, aktiv und historisch.
+- **Scrubbing-Knoten** — nur angezeigt, wenn Sie [verwaltete
+  Scrubbing-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten) betreiben: die Lebendigkeit jedes
+  Knotens (er ist lebendig, weil er weiterhin nach Regeln pollt), wie viele Bans zu ihm umleiten
+  und seine eigene gemeldete Last, Drops, Version und das Dry-Run-Flag — die gemeldeten Spalten
+  sind als solche gekennzeichnet, denn der Selbstreport eines Knotens ist beratend, niemals die
+  Quelle seiner Lebendigkeit.
+- **Sperrtabelle** — jede Sperre, aktiv und historisch (mit der Scrubbing-Knoten-Spalte, wenn
+  Knoten konfiguriert sind).
 - **Traffic / Reports** — Live-Diagramme für ein- und ausgehenden Verkehr, die aus den
   In-Memory-Ratenpuffern erstellt werden, sowie ein Abschnitt **Historische Berichte**, der die
   persistierten ClickHouse-Tabellen liest, wenn die Speicherung aktiviert ist.

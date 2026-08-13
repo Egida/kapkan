@@ -60,18 +60,29 @@ api:
 ```
 
 `name`, `token_env` und `role` sind für jeden Eintrag erforderlich; `role` muss exakt
-`viewer` oder `operator` sein. Ein fehlender oder falsch geschriebener Wert ist beim Start ein
-harter Validierungsfehler, kein stiller Default.
+`viewer`, `operator` oder `agent` sein. Ein fehlender oder falsch geschriebener Wert ist beim Start
+ein harter Validierungsfehler, kein stiller Default.
 
 | Rolle | Darf |
 | --- | --- |
 | `viewer` | Nur lesen: Status, Angriffe, Hosts, Sperren, Metriken. |
 | `operator` | Alles, was ein viewer darf, plus manuelles Sperren/Entsperren und Neuladen der Konfiguration (das Neuladen ist nur für Admins — siehe unten). |
+| `agent` | Das Credential eines [Scrub-Knotens](/docs/scrubbing#verwaltete-scrubbing-knoten): der Data-Plane-Regel-Feed und sein eigener Report, und **sonst nichts**. |
 
 Es gibt keine separate `admin`-Rolle zum Zuweisen — ein *Admin* ist schlicht ein Operator-Token
-ohne gesetzten `tenant`. Die einzigen Rollenwerte, die die Engine akzeptiert, sind `viewer` und
-`operator`; die Unterscheidung admin/eingegrenzt ist die Achse [Mandantenfähigkeit](/docs/multi-tenancy),
+ohne gesetzten `tenant`. Die Rollenwerte, die die Engine akzeptiert, sind `viewer`, `operator` und
+`agent`; die Unterscheidung admin/eingegrenzt ist die Achse [Mandantenfähigkeit](/docs/multi-tenancy),
 die unten behandelt wird.
+
+<Callout type="info" title="Die agent-Rolle ist kein abgeschwächter viewer">
+`agent` steht **außerhalb** der Berechtigungsleiter, unterhalb von `viewer`: Es gewährt genau zwei
+Routen (`GET /api/v1/dataplane/rules` und `POST /api/v1/dataplane/nodes/{name}/report`) und wird
+für jeden anderen Endpunkt verweigert — ein kompromittiertes agent-Token, das auf einer entfernten
+Scrub-Box lebt, darf nicht zu einem Alles-lesen-Schlüssel werden. Es kann außerdem nicht
+tenant-bezogen sein: Der Regel-Feed gilt deploymentweit, sodass ein `tenant` auf einem agent-Token
+ein harter Validierungsfehler ist. Geben Sie einem Scrub-Knoten sein eigenes agent-Token, niemals
+ein Operator-Token.
+</Callout>
 
 `token_env` und `tokens` schließen sich **gegenseitig aus** — `token_env` ist genau ein
 Operator-Token. Eine Anfrage wird gegen jedes konfigurierte Token abgeglichen (in konstanter

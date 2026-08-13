@@ -198,6 +198,16 @@ paramètres `samples`, les paramètres `storage` et les paramètres `geoip`. Con
 [référence de configuration](/docs/configuration) et, pour changer le binaire sans interrompre la
 mitigation, [Mise à niveau](/docs/upgrading).
 
+<Callout type="warning" title="Un reverse proxy devant l'API a besoin d'un délai de lecture long">
+Si vous exploitez des [nœuds de scrubbing](/docs/scrubbing#nœuds-de-nettoyage-gérés) et placez un
+reverse proxy devant `api.listen`, le [flux de règles du nœud de scrubbing](/docs/api) fonctionne
+en long-poll — une requête est retenue jusqu'à 30 s. Un délai de lecture court côté proxy coupe
+cette retenue et le nœud se reconnecte à chaque requête au lieu d'une fois par changement de règle.
+Relevez-le au-dessus de la retenue : nginx `proxy_read_timeout 60s;` (ou plus) ; sur Envoy,
+remplacez le délai de route par défaut de 15 s pour ce chemin. L'API elle-même ne définit
+délibérément aucun délai d'écriture, pour la même raison.
+</Callout>
+
 ## Compilation depuis les sources
 
 La compilation requiert **Go 1.26 ou une version plus récente**. Le `Makefile` fournit les cibles

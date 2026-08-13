@@ -77,6 +77,16 @@ Un token sans portée est un admin — le comportement par défaut, entièrement
 token cadré sur un tenant qu'aucun hostgroup n'utilise est rejeté au chargement de la config (une
 faute de frappe ne verrait sinon silencieusement rien).
 
+<Callout type="info" title="Le rôle agent se situe hors de cet axe">
+Le token `agent` d'un [nœud de scrubbing](/docs/scrubbing#nœuds-de-nettoyage-gérés) n'est **pas**
+un viewer amoindri doté d'un tenant — il est entièrement hors de l'échelle des rôles, et il **ne
+peut pas** être cadré sur un tenant (la combinaison est une erreur de configuration). Le [flux de
+règles et l'inventaire des nœuds](/docs/api) couvrent tous les tenants par conception : un nœud de
+scrubbing filtre pour l'ensemble du déploiement, de sorte que le cadrage par tenant au niveau du
+nœud est une préoccupation de [flotte](/docs/scrubbing), non de token. Traitez un token agent comme
+concernant tout le déploiement, et gardez-le hors des machines qui détiennent des données clients.
+</Callout>
+
 ## Application
 
 Le cadrage est **par défaut en refus : un token cadré ne voit jamais que son propre tenant.** Le

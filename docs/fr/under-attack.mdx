@@ -76,6 +76,21 @@ Chaque voisin configuré doit atteindre l'état `ESTABLISHED`. Si l'un d'eux res
 (`GET /api/v1/status` montre votre *configuration* BGP mais pas l'état de la session en direct — celui-ci
 ne se trouve que dans les journaux.)
 
+<Callout type="info" title="Sur un nœud de scrubbing, posez une autre question">
+« La route a atteint mon routeur » est la question du blackhole/divert. Sur un [nœud de nettoyage
+géré](/docs/scrubbing#nœuds-de-nettoyage-gérés), la suppression a lieu **dans le noyau du nœud**,
+la question est donc de savoir si XDP est attaché et supprime. Vérifiez-le sur le nœud :
+
+```sh
+kapkan dataplane status
+```
+
+Il doit rapporter `ENFORCING` sur l'interface sale avec un nombre de règles dynamiques en direct.
+Depuis le cerveau, la [vue Nœuds](/docs/dashboard) (ou `GET /api/v1/dataplane/nodes`) affiche le
+nœud **vivant** — il est vivant parce qu'il continue d'interroger pour obtenir des règles. Si le
+nœud apparaît comme perdu, le trafic dévié atteint une machine qui ne supprime rien.
+</Callout>
+
 ## 5. Regarder les bannissements expirer d'eux-mêmes
 
 ```sh

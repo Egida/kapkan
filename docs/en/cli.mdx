@@ -1,7 +1,7 @@
 export const metadata = {
   title: "CLI reference",
   description:
-    "Every command-line flag of the kapkan binary — config path, log format and level, the pid file and nginx-style `-s` process control, the schema/validation utility flags, and the `dataplane status` command.",
+    "Every command-line flag of the kapkan binary — config path, log format and level, the pid file and nginx-style `-s` process control, the schema/validation utility flags, and the `dataplane status` and `scrub` commands.",
 };
 
 # CLI reference
@@ -224,6 +224,52 @@ startup code. Starting the data plane adopts an existing pin set — or, when th
 match, tears it down and rebuilds it, discarding every dynamic mitigation rule in the kernel. A
 diagnostic that could do that mid-attack would be worse than no diagnostic.
 </Callout>
+
+### `scrub`
+
+```sh
+kapkan scrub -config /etc/kapkan/scrub.yaml
+```
+
+Runs the [scrub-node](/docs/scrubbing#managed-scrubbing-nodes) role: the same binary, a different
+job. There is no detection, no BGP and no telemetry listener — the box receives traffic the brain
+diverted to it, long-polls the brain's rule table, and keeps its local XDP [data
+plane](/docs/dataplane) enforcing exactly what the brain says to drop. The poll doubles as the
+node's liveness signal.
+
+Everything role-specific lives in its own `scrub.yaml`; the daemon's `config.yaml` is **not**
+read (`-config` here defaults to `/etc/kapkan/scrub.yaml`). It has three parts: the controller to
+reach, the node's identity, and the same `dataplane:` block a daemon carries.
+
+```yaml
+dry_run: true                     # the remote-role default — counts, drops nothing
+controller:
+  url: "https://kapkan.example.net:8443"   # the brain's API base (no path)
+  token_env: KAPKAN_AGENT_TOKEN            # env var holding the agent token (required)
+  name: scrub-fra1                         # must equal a scrubbing.nodes[] name on the brain
+dataplane:
+  interfaces: [eth0]              # the dirty side (diverted traffic arrives here)
+  xdp_mode: auto
+  pin_path: /sys/fs/bpf/kapkan
+```
+
+<Callout type="warning" title="A scrub node defaults to dry-run">
+`dry_run` defaults to **true** for a remote role — the node installs the rules and counts what
+they *would* drop, but drops nothing, until you set `dry_run: false` explicitly. It never
+enforces a rule the brain marked dry-run while it is live, and it requires a real agent token:
+without one its polls carry no identity and the brain would count it dead. Use `https` outside a
+lab — a plaintext `controller.url` sends the token in the clear.
+</Callout>
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-config <path>` | `/etc/kapkan/scrub.yaml` | The scrub-node config. |
+| `-log-format <fmt>` | `json` | `json` or `text`. |
+| `-log-level <lvl>` | `info` | `debug`, `info`, `warn` or `error`. |
+
+Confirm a running node with `kapkan dataplane status` on the node itself — it reports `ENFORCING`
+and the installed rule count — and the brain's [Nodes view](/docs/dashboard) shows it alive.
+Getting the diverted traffic to the node is the [network integration guide](/docs/network-integration).
 
 ## Next steps
 

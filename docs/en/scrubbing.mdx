@@ -9,9 +9,11 @@ export const metadata = {
 <Callout type="warning" title="You need a scrubbing center first">
 Divert only works if you already operate (or pay for) a **scrubbing center** — a separate
 box or service that filters out attack traffic and reinjects the clean traffic over GRE or a
-VRF. If you do not have one, this page is **not** your starting point: use
-[blackhole](/docs/mitigation) or [FlowSpec](/docs/flowspec) instead. Pointing `next_hop` at a
-scrubber that does not exist diverts the victim's traffic into a void.
+VRF. You can now run your own with the [`kapkan scrub`](/docs/cli) role — a managed
+[scrubbing node](#managed-scrubbing-nodes) that drops the attack in its own kernel — or point
+`next_hop` at a third-party scrubber. If you have neither, this page is **not** your starting
+point: use [blackhole](/docs/mitigation) or [FlowSpec](/docs/flowspec) instead. Pointing
+`next_hop` at a scrubber that does not exist diverts the victim's traffic into a void.
 </Callout>
 
 In plain terms: instead of dropping the victim's traffic, divert sends it to a cleaning box,
@@ -91,6 +93,74 @@ window to check your divert path before any real traffic moves:
 The divert route Kapkan builds reads as `divert <prefix> next-hop <next_hop> community
 <community>` — the string surfaced in the `route` field of the [ban object](/docs/api), with
 `method: divert`.
+
+## Managed scrubbing nodes
+
+The scalar `next_hop` above diverts toward **one** scrubber that you operate or a provider runs
+— Kapkan announces the route and the scrubber does the rest. A **managed scrubbing node** is
+Kapkan's own scrubber: a box running the [`kapkan scrub`](/docs/cli) role that receives the
+diverted traffic, drops the attack in its in-kernel [data plane](/docs/dataplane), and reinjects
+what is left. Kapkan announces the victim toward the node **and** tells the node exactly what to
+drop — the same [FlowSpec](/docs/flowspec) rules the detector generated — so the node filters the
+attack vector rather than every packet to the victim.
+
+List each node under `scrubbing.nodes[]`. The scalar `next_hop` stays valid as the one-node
+degenerate case and as the catch-all target for groups no node serves (that is the migration
+story: add `nodes[]` beside your existing `next_hop`, and move groups over one at a time).
+
+```yaml
+scrubbing:
+  next_hop: "192.0.2.100"        # still valid: the one-node case / catch-all target
+  node_selection: affinity       # affinity (default) | least_loaded | ecmp
+  on_all_nodes_lost: withdraw    # withdraw (default) | blackhole | flowspec
+  stale_after_seconds: 15        # a node unheard-from this long counts as lost
+  nodes:
+    - name: scrub-fra1           # must match the node's controller.name
+      next_hop: "192.0.2.10"     # the node's IPv4 BGP next-hop (required)
+      next_hop6: "2001:db8::10"  # required to divert IPv6 victims to this node
+      capacity_mbps: 10000       # shown in the console; used by least_loaded
+      hostgroups: [game-servers] # this node serves only these groups (empty = any)
+    - name: scrub-ams1
+      next_hop: "192.0.2.11"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `nodes[].name` | Node identity. **Must equal** the `controller.name` the node's agent presents when it polls, or every poll is a loud `404`. |
+| `nodes[].next_hop` / `next_hop6` | The node's BGP next-hop(s). `next_hop` is required; `next_hop6` is required to divert IPv6 victims to that node. |
+| `nodes[].capacity_mbps` | The node's scrubbing capacity, shown in the console and used by `least_loaded`. `0` means unknown. |
+| `nodes[].hostgroups` | Restricts which [hostgroups](/docs/hostgroups) this node serves. Empty means it accepts any group. A group whose ladder diverts must have a node that serves it, or the scalar `next_hop` as a fallback. |
+| `node_selection` | How a node is chosen for a new ban: `affinity` (default — the first configured node whose `hostgroups` claim the victim), `least_loaded`, or `ecmp`. **Only `affinity` is implemented today**; the others log a warning at startup and fall back to it. |
+| `on_all_nodes_lost` | What to do when no managed node is reachable: `withdraw` (default — stop attracting the victim's traffic), `blackhole`, or `flowspec`. While at least one node survives, the victim is re-announced toward it instead. |
+| `stale_after_seconds` | How long a node may go without polling before it counts as lost. Default `15`. For a *silent* death (power loss, a partition — nothing sends a FIN) the real detection bound is this **plus** the long-poll hold the node may be parked in (up to 30 s); size it against your blackhole tolerance with that sum in mind. |
+
+### The node choice is frozen, and survives node loss
+
+The node for a ban is chosen **once, at ban time** and frozen on the ban like its BGP
+attributes — a victim's traffic never hops between scrub sites because a reload reordered the
+list. Selection prefers nodes that are actually polling, so a fresh ban is never pointed at a
+node the brain can already see is gone.
+
+When a node stops polling for `stale_after_seconds`, the sweep moves its victims:
+
+- to a **surviving** eligible node — re-announced make-before-break on the same host route, so
+  the victim is never briefly unprotected. Once moved, the choice is frozen again: the old node
+  coming back does **not** pull the victim home.
+- through **`on_all_nodes_lost`** only when *no* eligible node survives. `flowspec` needs its
+  rules, so a divert ban under that policy generates them at ban time.
+
+<Callout type="info" title="Liveness is the poll, never the report">
+A node is **alive** because it keeps polling the brain for rules — that poll is the only liveness
+signal. A node's self-report (load, drop counts, version, shown in the [console](/docs/dashboard))
+is advisory: a compromised node token could inflate a report, but it can never keep a dead node
+attracting diverted traffic, because nothing acts on the report. A node freshly added by a reload
+(or after a brain restart) gets one appearance window before it can be judged lost, so a routine
+rollout never trips `on_all_nodes_lost`.
+</Callout>
+
+Getting the diverted traffic **to** a node and the clean traffic **back out** — L2 insertion,
+GRE/IPIP tunnels with MSS clamping, the return path, and the asymmetric-routing traps — is your
+network's job, covered in the [network integration guide](/docs/network-integration).
 
 ## Per-hostgroup scrubbing
 

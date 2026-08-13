@@ -60,7 +60,13 @@ The dashboard polls the JSON API and renders everything Kapkan tracks in memory:
 - **Top talkers** — the tracked-host snapshot with per-direction rates and learned
   baselines, so you can see who is loudest and how it compares to normal.
 - **Hostgroups** — your named prefix groups and their state.
-- **Ban table** — every ban, active and historical.
+- **Scrubbing nodes** — shown only when you run [managed scrubbing
+  nodes](/docs/scrubbing#managed-scrubbing-nodes): each node's liveness (it is alive because it
+  keeps polling for rules), how many bans divert to it, and its own reported load, drops, version
+  and dry-run flag — the reported columns are labelled as such, because a node's self-report is
+  advisory, never the source of its liveness.
+- **Ban table** — every ban, active and historical (with the scrubbing node column when nodes
+  are configured).
 - **Traffic / Reports** — live ingress/egress charts built from the in-memory rate
   buffers, plus a **Historical reports** section that reads the persisted ClickHouse
   tables when storage is enabled.

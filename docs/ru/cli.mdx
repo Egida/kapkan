@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Справочник CLI",
   description:
-    "Все флаги командной строки бинарника kapkan — путь к конфигурации, формат и уровень логов, pid-файл и управление процессом в стиле nginx через `-s`, служебные флаги для схемы и проверки, а также команда `dataplane status`.",
+    "Все флаги командной строки бинарника kapkan — путь к конфигурации, формат и уровень логов, pid-файл и управление процессом в стиле nginx через `-s`, служебные флаги для схемы и проверки, а также команды `dataplane status` и `scrub`.",
 };
 
 # Справочник CLI
@@ -229,6 +229,54 @@ kapkan dataplane status -json        # the same inspection as JSON
 подавления в ядре. Диагностика, способная сделать такое посреди атаки, была бы хуже, чем полное
 отсутствие диагностики.
 </Callout>
+
+### `scrub`
+
+```sh
+kapkan scrub -config /etc/kapkan/scrub.yaml
+```
+
+Запускает роль [узла очистки](/docs/scrubbing#управляемые-узлы-очистки): тот же бинарник, другая
+работа. Нет ни обнаружения, ни BGP, ни слушателя телеметрии — машина принимает трафик, который
+отвёл на неё мозг, длинными опросами (long-poll) читает таблицу правил мозга и держит свою
+локальную XDP-[плоскость данных](/docs/dataplane) применяющей ровно то, что мозг велит отбрасывать.
+Опрос заодно служит сигналом живости узла.
+
+Всё специфичное для роли живёт в собственном `scrub.yaml`; `config.yaml` демона **не** читается
+(`-config` здесь по умолчанию равен `/etc/kapkan/scrub.yaml`). У него три части: контроллер, к
+которому подключаться, идентичность узла и тот же блок `dataplane:`, что несёт демон.
+
+```yaml
+dry_run: true                     # the remote-role default — counts, drops nothing
+controller:
+  url: "https://kapkan.example.net:8443"   # the brain's API base (no path)
+  token_env: KAPKAN_AGENT_TOKEN            # env var holding the agent token (required)
+  name: scrub-fra1                         # must equal a scrubbing.nodes[] name on the brain
+dataplane:
+  interfaces: [eth0]              # the dirty side (diverted traffic arrives here)
+  xdp_mode: auto
+  pin_path: /sys/fs/bpf/kapkan
+```
+
+<Callout type="warning" title="Узел очистки по умолчанию в режиме dry-run">
+`dry_run` по умолчанию равен **true** для удалённой роли — узел устанавливает правила и считает,
+что они *отбросили бы*, но ничего не отбрасывает, пока вы явно не зададите `dry_run: false`. Он
+никогда не применяет правило, которое мозг пометил как dry-run, пока то действует в боевом режиме,
+и требует действительного токена agent: без него его опросы не несут идентичности, и мозг счёл бы
+его мёртвым. Используйте `https` вне лаборатории — открытый `controller.url` отправляет токен в
+незашифрованном виде.
+</Callout>
+
+| Флаг | По умолчанию | Описание |
+| --- | --- | --- |
+| `-config <path>` | `/etc/kapkan/scrub.yaml` | Конфигурация узла очистки. |
+| `-log-format <fmt>` | `json` | `json` или `text`. |
+| `-log-level <lvl>` | `info` | `debug`, `info`, `warn` или `error`. |
+
+Убедитесь, что узел работает, командой `kapkan dataplane status` на самом узле — она сообщает
+`ENFORCING` и число установленных правил, — а [представление Nodes](/docs/dashboard) со стороны
+мозга показывает его живым. Доставка отведённого трафика до узла — это
+[руководство по сетевой интеграции](/docs/network-integration).
 
 ## Дальнейшие шаги
 
