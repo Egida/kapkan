@@ -24,7 +24,9 @@ All `/api/v1` routes pass through the token check when auth is configured; once 
 every request must carry `Authorization: Bearer <token>`. Tokens carry a **role**: the `GET`
 routes need the **viewer** role, and the mutating routes (`ban`, `unban`, `config/reload`)
 need the **operator** role. `config/reload` goes further: it requires an **unscoped (admin)**
-token, so even an operator token that is tenant-scoped is refused with `403`. A read with a
+token, so even an operator token that is tenant-scoped is refused with `403`. The
+[scrub-node channel](#the-scrub-node-channel) takes the **agent** role — a scrub node's
+credential that reaches those routes and nothing else. A read with a
 viewer token works; a mutation with a viewer token returns `403`; an unknown token returns
 `401`. The `POST` endpoints additionally require a JSON content type — send
 `Content-Type: application/json`. A `POST` without that header is rejected with
@@ -52,6 +54,9 @@ returns `403` otherwise. See [Multi-tenancy](/docs/multi-tenancy).
 | POST | `/api/v1/ban` | Manually ban an address. |
 | POST | `/api/v1/unban` | Manually withdraw a ban. |
 | POST | `/api/v1/config/reload` | Re-read the config file (same as `SIGHUP`). |
+| GET | `/api/v1/dataplane/rules` | The [scrub-node](/docs/scrubbing#managed-scrubbing-nodes) rule feed (`agent`/unscoped `operator`); ETag long-poll, held up to 30 s. |
+| POST | `/api/v1/dataplane/nodes/{name}/report` | A scrub node's advisory self-report (`agent`/unscoped `operator`). |
+| GET | `/api/v1/dataplane/nodes` | Managed-node inventory: liveness, config, per-node ban counts (unscoped `viewer`+). |
 | GET | `/metrics` | Prometheus metrics. |
 | GET | `/healthz` | Unauthenticated liveness/readiness probe: `503` until fully started, then `200`. |
 
@@ -290,6 +295,7 @@ Returns the full ban table — active and historical. Each entry is a `Ban`.
 | `next_hop` | string | The discard next-hop. |
 | `community` | string | The community set attached to the route — the RTBH community for a blackhole, the divert (scrubbing) community for a divert ban — space-joined when more than one. |
 | `local_pref` | number | The `LOCAL_PREF` attached to the route; omitted when zero. |
+| `node` | string | The [managed scrubbing node](/docs/scrubbing#managed-scrubbing-nodes) this divert ban is frozen to; omitted when the ban does not divert to a managed node. |
 | `route` | string | The full route string, or a `flowspec: ...` summary for FlowSpec bans. |
 | `state` | string | `active`, `withdrawn`, or `rejected`. |
 | `dry_run` | bool | Whether the ban was virtual. |
@@ -435,6 +441,54 @@ tenant-scoped token is refused with `403` and `config reload is restricted to un
 
 If the new config fails to parse or validate, the running config is left untouched and the
 endpoint returns HTTP `400` with the error. See [Configuration](/docs/configuration).
+
+### The scrub-node channel
+
+These three endpoints exist for [managed scrubbing nodes](/docs/scrubbing#managed-scrubbing-nodes)
+— boxes running [`kapkan scrub`](/docs/cli). They take the `agent` role (a scrub node's
+credential; see [authentication](/docs/authentication)) or an unscoped `operator` token, never a
+`viewer` or a tenant-scoped token: the documents span every tenant, so scoping them is a fleet
+concern, not a per-request one.
+
+#### GET /api/v1/dataplane/rules
+
+The rule table a node enforces: every active [diverted](/docs/scrubbing) victim, with the
+[FlowSpec](/docs/flowspec) rules to drop and the TTL to mirror. A plain `GET` returns the current
+document with a content-hash `ETag`; a `GET` whose `If-None-Match` names that ETag is **held**
+until the table changes or up to 30 s, then answered `304` — a long-poll that gives sub-second
+rule updates over ordinary HTTP. A node identifies itself with `?node=<name>`, and **that poll is
+the node's liveness signal** — so the name must be a configured node (an unknown name is `404`)
+and, outside token-less local mode, the request must carry a real token.
+
+```json
+{
+  "version": 1,
+  "bans": [
+    {
+      "target": "203.0.113.10",
+      "prefix": "203.0.113.10/32",
+      "method": "divert",
+      "expires_at": "2026-08-13T10:00:00Z",
+      "flowspec": [ { "dst": "203.0.113.10/32", "proto": 17, "action": "discard" } ]
+    }
+  ]
+}
+```
+
+#### POST /api/v1/dataplane/nodes/\{name\}/report
+
+A node's advisory self-report — version, XDP mode, node-side dry-run, load and drop totals —
+stored for the [console](/docs/dashboard). It is **never** a liveness signal (the poll is): a
+report can never keep a dead node marked up. The body is capped at 64 KiB (`413` beyond) and an
+unknown `{name}` is `404`. Success is `204 No Content`.
+
+#### GET /api/v1/dataplane/nodes
+
+The node inventory the console's Nodes view renders: each configured node with what the brain
+knows (config, poll liveness, how many bans divert to it) joined with its last report. A
+`viewer`-rank read, but unscoped tokens only — the inventory names next-hops and hostgroups,
+which is deployment topology. The count alone (`nodes_total`) rides on `/api/v1/status` for every
+role, so a console can decide whether to show node affordances without this call.
 
 ### GET /metrics
 

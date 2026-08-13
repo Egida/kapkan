@@ -75,6 +75,15 @@ An unscoped token is an admin — the default, fully backward-compatible behavio
 scoped to a tenant that no hostgroup uses is rejected at config load (a typo would otherwise
 silently see nothing).
 
+<Callout type="info" title="The agent role sits outside this axis">
+A [scrub node](/docs/scrubbing#managed-scrubbing-nodes)'s `agent` token is **not** a lesser
+viewer with a tenant — it is off the role ladder entirely, and it **cannot** be tenant-scoped
+(the combination is a config error). The [rule feed and node inventory](/docs/api) span every
+tenant by design: a scrub node filters for the whole deployment, so per-node tenant scoping is a
+[fleet](/docs/scrubbing) concern, not a token one. Treat an agent token as deployment-wide, and
+keep it off boxes that hold customer-facing data.
+</Callout>
+
 ## Enforcement
 
 Scoping is **default-deny: a scoped token only ever sees its own tenant.** The tenant is derived

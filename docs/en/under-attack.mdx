@@ -76,6 +76,21 @@ Every configured neighbor should reach `ESTABLISHED`. If one is stuck, see
 (`GET /api/v1/status` shows your BGP *configuration* but not live session state — that lives
 only in the logs.)
 
+<Callout type="info" title="On a scrub node, ask a different question">
+"The route reached my router" is the blackhole/divert question. On a [managed scrubbing
+node](/docs/scrubbing#managed-scrubbing-nodes) the drop happens **in the node's kernel**, so the
+question is whether XDP is attached and dropping. Check it on the node:
+
+```sh
+kapkan dataplane status
+```
+
+It should report `ENFORCING` on the dirty interface with a live dynamic-rule count. From the
+brain, the [Nodes view](/docs/dashboard) (or `GET /api/v1/dataplane/nodes`) shows the node
+**alive** — it is alive because it keeps polling for rules. If the node shows lost, the diverted
+traffic is reaching a box that is dropping nothing.
+</Callout>
+
 ## 5. Watch bans expire on their own
 
 ```sh

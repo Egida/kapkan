@@ -192,6 +192,15 @@ identity (`bgp.local_asn` / `router_id`), `api.listen`, the `samples` settings, 
 settings and `geoip` settings. See the [configuration reference](/docs/configuration) and,
 for changing the binary without dropping mitigation, [Upgrading](/docs/upgrading).
 
+<Callout type="warning" title="A reverse proxy in front of the API needs a long read timeout">
+If you run [scrubbing nodes](/docs/scrubbing#managed-scrubbing-nodes) and put a reverse proxy in
+front of `api.listen`, the [scrub-node rule feed](/docs/api) long-polls — a request is held up to
+30 s. A short proxy read timeout severs that hold and the node reconnects every request instead
+of once per rule change. Raise it above the hold: nginx `proxy_read_timeout 60s;` (or higher);
+on Envoy, override the 15 s default route timeout for that path. The API itself deliberately sets
+no write timeout for the same reason.
+</Callout>
+
 ## Building from source
 
 Building requires **Go 1.26 or newer**. The `Makefile` provides the standard targets:
