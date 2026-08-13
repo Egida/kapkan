@@ -58,7 +58,7 @@
     "scrubbing.nodes.next_hop": { "tier": "advanced", "format": "ipv4", "description": "The node's IPv4 BGP next-hop. Required for every node." },
     "scrubbing.nodes.next_hop6": { "tier": "advanced", "format": "ipv6", "description": "The node's IPv6 next-hop; required to divert IPv6 victims to this node." },
     "scrubbing.nodes.capacity_mbps": { "tier": "advanced", "description": "Scrubbing capacity in Mbit/s, used by the least_loaded selection mode and shown in the console. 0 means unknown." },
-    "scrubbing.nodes.hostgroups": { "tier": "advanced", "description": "Hostgroups this node serves under affinity selection. Empty means the node accepts any group." },
+    "scrubbing.nodes.hostgroups": { "tier": "advanced", "crossField": "Every group whose ladder diverts needs a node that serves it (or the scalar next_hop as catch-all), per address family.", "description": "Hostgroups this node serves under affinity selection. Empty means the node accepts any group." },
     "scrubbing.node_selection": { "tier": "advanced", "defaultWhenAbsent": "affinity", "crossField": "Requires at least one scrubbing.nodes entry.", "description": "How a node is picked for a new ban: affinity (first node whose hostgroups claim the victim), least_loaded, or ecmp (nodes share a next-hop and the router balances)." },
     "scrubbing.on_all_nodes_lost": { "tier": "advanced", "defaultWhenAbsent": "withdraw", "crossField": "Requires at least one scrubbing.nodes entry.", "description": "What to do when no managed node is reachable. While any node survives the victim is re-announced toward it instead." },
     "scrubbing.stale_after_seconds": { "tier": "advanced", "defaultWhenAbsent": 15, "description": "How long a node may go without polling before it counts as lost." },
