@@ -1,46 +1,49 @@
 export const metadata = {
-  title: "Network integration (scrub nodes)",
+  title: "Intégration réseau (nœuds de scrubbing)",
   description:
-    "Wire a kapkan scrub node into your network: where it sits, how diverted traffic reaches it over GRE/IPIP or L2, MSS clamping, the return path, and the asymmetric-routing traps.",
+    "Raccordez un nœud kapkan scrub à votre réseau : où il se place, comment le trafic dévié l'atteint via GRE/IPIP ou en L2, le clampage du MSS, le chemin de retour et les pièges du routage asymétrique.",
 };
 
-# Network integration (scrub nodes)
+# Intégration réseau (nœuds de scrubbing)
 
-<Callout type="warning" title="This is the plumbing, not the policy">
-A [scrub node](/docs/scrubbing) drops the attack in its own kernel — that part is kapkan's job
-and needs no network design. **Getting the victim's traffic *to* the node, and the clean
-traffic *back out*, is your network's job**, and it is where scrubbing deployments actually go
-wrong. Every command block on this page was executed against a real Linux kernel in the
-network-integration lab (`engine/scripts/labnet/`) before it was written down.
+<Callout type="warning" title="C'est la plomberie, pas la politique">
+Un [nœud de scrubbing](/docs/scrubbing) supprime l'attaque dans son propre noyau — cette partie
+est le travail de kapkan et ne nécessite aucune conception réseau. **Acheminer le trafic de la
+victime *jusqu'au* nœud, et faire ressortir le trafic propre, est le travail de votre réseau**, et
+c'est là que les déploiements de scrubbing tournent réellement mal. Chaque bloc de commandes de
+cette page a été exécuté contre un vrai noyau Linux dans le laboratoire d'intégration réseau
+(`engine/scripts/labnet/`) avant d'être consigné ici.
 </Callout>
 
-A scrub node runs [`kapkan scrub`](/docs/cli): no detection, no BGP, no telemetry. The brain
-[diverts](/docs/scrubbing) a victim's traffic toward the node, the node pulls the ban's rules
-from `GET /api/v1/dataplane/rules` and drops the attack in [XDP](/docs/glossary), and the clean
-traffic is reinjected toward the victim. This page is the three things that sit around that:
-**how traffic reaches the node**, **how clean traffic leaves it**, and **how to confirm it is
-actually filtering**.
+Un nœud de scrubbing exécute [`kapkan scrub`](/docs/cli) : pas de détection, pas de BGP, pas de
+télémétrie. Le cerveau [dévie](/docs/scrubbing) le trafic d'une victime vers le nœud, le nœud tire
+les règles du ban depuis `GET /api/v1/dataplane/rules` et supprime l'attaque en
+[XDP](/docs/glossary), et le trafic propre est réinjecté vers la victime. Cette page traite des
+trois choses qui entourent cela : **comment le trafic atteint le nœud**, **comment le trafic propre
+en sort**, et **comment confirmer qu'il filtre réellement**.
 
-## Where the node sits
+## Où se place le nœud
 
-Two shapes, and the choice drives everything else.
+Deux formes, et le choix conditionne tout le reste.
 
-- **Off-path (BGP divert).** The node lives beside your edge. When an attack starts, the brain
-  announces the victim's `/32` toward the node's next-hop, so the router tunnels the victim's
-  traffic to the node; the node drops the attack and reinjects the rest. This is the model the
-  `scrubbing.nodes[]` config and the `divert` action are built for — the node is pulled into the
-  path only for hosts under attack, and only while they are.
-- **In-path (L2).** The node is bridged into a link the victim's traffic already crosses, so it
-  sees every frame all the time. No BGP, no tunnel; the node filters at wire level. Simpler to
-  reason about, but the node is now a bump in the wire for *all* traffic, attack or not.
+- **Hors chemin (divert BGP).** Le nœud vit à côté de votre edge. Lorsqu'une attaque démarre, le
+  cerveau annonce le `/32` de la victime vers le next-hop du nœud, de sorte que le routeur tunnelise
+  le trafic de la victime jusqu'au nœud ; le nœud supprime l'attaque et réinjecte le reste. C'est le
+  modèle pour lequel la configuration `scrubbing.nodes[]` et l'action `divert` sont conçues — le
+  nœud n'est tiré dans le chemin que pour les hôtes sous attaque, et seulement pendant qu'ils le
+  sont.
+- **Sur le chemin (L2).** Le nœud est ponté dans un lien que le trafic de la victime traverse déjà,
+  de sorte qu'il voit chaque trame en permanence. Pas de BGP, pas de tunnel ; le nœud filtre au
+  niveau du fil. Plus simple à raisonner, mais le nœud est désormais une bosse sur le fil pour
+  *tout* le trafic, attaque ou non.
 
-Most operators start off-path — the blast radius of a mistake is one diverted host, not the
-whole link.
+La plupart des opérateurs commencent hors chemin — le rayon d'impact d'une erreur est un seul hôte
+dévié, pas le lien entier.
 
-## L2 insertion (in-path)
+## Insertion L2 (sur le chemin)
 
-Bridge the node between the client side and the gateway side of a link. The XDP program attaches
-to the **ingress** port, and the box needs no L3 address at all — it is invisible at L3.
+Pontez le nœud entre le côté client et le côté passerelle d'un lien. Le programme XDP s'attache au
+port d'**ingress**, et la machine n'a besoin d'aucune adresse L3 — elle est invisible en L3.
 
 ```sh
 # On the scrub node: bridge the two ports, no IP on the box.
@@ -56,13 +59,14 @@ dataplane:
   interfaces: [eth0]
 ```
 
-Traffic forwards through the bridge unchanged; the XDP filter drops only what the brain's rules
-match. Because there is no L3 hop, there is no MTU change and none of the tunnel problems below.
+Le trafic est transféré à travers le pont sans modification ; le filtre XDP ne supprime que ce que
+les règles du cerveau font correspondre. Comme il n'y a pas de saut L3, il n'y a pas de changement
+de MTU ni aucun des problèmes de tunnel ci-dessous.
 
-## Off-path diversion over GRE or IPIP
+## Diversion hors chemin via GRE ou IPIP
 
-When the node is off-path, the router encapsulates the victim's traffic into a tunnel to the
-node. GRE and IPIP both work; GRE adds 24 bytes of overhead, IPIP 20.
+Lorsque le nœud est hors chemin, le routeur encapsule le trafic de la victime dans un tunnel vers le
+nœud. GRE et IPIP fonctionnent tous deux ; GRE ajoute 24 octets de surcharge, IPIP 20.
 
 ```sh
 # On the router (rA) and the scrub node (rB): a GRE tunnel between their transport addresses.
@@ -74,22 +78,24 @@ ip addr add 10.9.0.2/30 dev gre1 && ip link set gre1 up              # rB
 ip route add 203.0.113.0/24 via 10.9.0.2 dev gre1                    # on rA
 ```
 
-IPIP is identical with `mode ipip`. A GRE tunnel over a 1500-byte transport reports MTU 1476;
-IPIP reports 1480.
+IPIP est identique avec `mode ipip`. Un tunnel GRE au-dessus d'un transport de 1500 octets rapporte
+un MTU de 1476 ; IPIP rapporte 1480.
 
-<Callout type="error" title="The failure that pages you at 3 a.m.">
-A tunnel shrinks the path MTU. If the "packet too big" ICMP that would tell senders to shrink
-their segments is filtered anywhere on the path — and it very often is — the symptom is
-distinctive and misleading: **small requests and TCP handshakes complete normally, then any
-large response stalls.** SSH connects but `ls` of a big directory hangs; the site loads its HTML
-but not its images. It looks like an application problem. It is an MSS problem, and the fix is on
-the tunnel routers, not the endpoints.
+<Callout type="error" title="La panne qui vous réveille à 3 h du matin">
+Un tunnel réduit le MTU du chemin. Si l'ICMP « packet too big » qui indiquerait aux émetteurs de
+réduire leurs segments est filtré quelque part sur le chemin — et il l'est très souvent — le
+symptôme est caractéristique et trompeur : **les petites requêtes et les poignées de main TCP
+aboutissent normalement, puis toute réponse volumineuse se bloque.** SSH se connecte mais un `ls`
+d'un gros répertoire se fige ; le site charge son HTML mais pas ses images. Cela ressemble à un
+problème applicatif. C'est un problème de MSS, et le correctif est sur les routeurs de tunnel, pas
+sur les extrémités.
 </Callout>
 
-### MSS clamping — the fix
+### Clampage du MSS — le correctif
 
-Rewrite the MSS in every TCP `SYN` crossing the tunnel down to the tunnel's path MTU, so both
-ends negotiate segments that fit. Clamp on **both** tunnel routers, in **both** directions:
+Réécrivez le MSS dans chaque `SYN` TCP qui traverse le tunnel jusqu'au MTU du chemin du tunnel, de
+sorte que les deux extrémités négocient des segments qui rentrent. Clampez sur les **deux** routeurs
+de tunnel, dans les **deux** directions :
 
 ```sh
 # On each tunnel router:
@@ -97,21 +103,22 @@ iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o gre1 -j TCPMSS -
 iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i gre1 -j TCPMSS --clamp-mss-to-pmtu
 ```
 
-In the lab, a 4 MB download through a clamp-less tunnel with ICMP filtered transferred **0 bytes
-and timed out**; with the clamp in place, the same download completed. `--clamp-mss-to-pmtu`
-tracks the tunnel MTU automatically, so it survives an MTU change without an edit.
+En laboratoire, un téléchargement de 4 Mo à travers un tunnel sans clampage avec l'ICMP filtré a
+transféré **0 octet et expiré** ; avec le clampage en place, le même téléchargement a abouti.
+`--clamp-mss-to-pmtu` suit automatiquement le MTU du tunnel, de sorte qu'il survit à un changement
+de MTU sans modification.
 
-## The return path
+## Le chemin de retour
 
-Diverted traffic reaches the node; the **clean** traffic has to leave it the right way — toward
-the victim, not back down the dirty tunnel. This is where routing gets asymmetric, and asymmetric
-routing has two traps.
+Le trafic dévié atteint le nœud ; le trafic **propre** doit en repartir de la bonne façon — vers la
+victime, pas de nouveau par le tunnel sale. C'est là que le routage devient asymétrique, et le
+routage asymétrique comporte deux pièges.
 
-### Route-leaking (portable) or VRF (newer kernels)
+### Fuite de route (portable) ou VRF (noyaux récents)
 
-Give the reinjected traffic its own routing context so it egresses the clean uplink regardless of
-the main table. On any kernel, do it with **policy routing** — a dedicated table selected by an
-`ip rule`:
+Donnez au trafic réinjecté son propre contexte de routage afin qu'il sorte par l'uplink propre quel
+que soit l'état de la table principale. Sur n'importe quel noyau, faites-le avec du **routage par
+politique** — une table dédiée sélectionnée par une `ip rule` :
 
 ```sh
 # main table: the dirty uplink (where diverted traffic arrives)
@@ -122,18 +129,18 @@ ip route add default via 10.31.0.2 dev eth1 table 100
 ip rule add from 203.0.113.0/24 lookup 100
 ```
 
-In the lab, `ip route get 8.8.8.8 from 203.0.113.10 iif eth0` then resolves via the clean uplink
-(`dev eth1 table 100`) while everything else stays on the main table. A **VRF device**
-(`ip link add vrf-clean type vrf table 100`, then enslave the clean uplink) gives the same
-isolation as a cleaner abstraction on kernels built with `CONFIG_NET_VRF`; it is the same table,
-reached through a device instead of a rule.
+En laboratoire, `ip route get 8.8.8.8 from 203.0.113.10 iif eth0` se résout alors via l'uplink
+propre (`dev eth1 table 100`) tandis que tout le reste reste sur la table principale. Un **VRF
+device** (`ip link add vrf-clean type vrf table 100`, puis asservissez l'uplink propre) offre la
+même isolation sous une abstraction plus propre sur les noyaux compilés avec `CONFIG_NET_VRF` ;
+c'est la même table, atteinte via un device au lieu d'une règle.
 
-### rp_filter and the asymmetric reply
+### rp_filter et la réponse asymétrique
 
-Because the victim's prefix is diverted, a border router's **reverse route** to the victim points
-at the tunnel. When the victim's reply comes back on a normal link, strict reverse-path filtering
-(`rp_filter=1`) sees that the reply's source does not route back out the interface it arrived on,
-and **drops it silently.**
+Comme le préfixe de la victime est dévié, la **route inverse** d'un routeur de bordure vers la
+victime pointe vers le tunnel. Lorsque la réponse de la victime revient par un lien normal, le
+filtrage strict du chemin inverse (`rp_filter=1`) constate que la source de la réponse ne route pas
+en retour par l'interface par laquelle elle est arrivée, et **la supprime silencieusement.**
 
 ```sh
 # The trap, and the fix — on the router that sees the asymmetric reply:
@@ -141,38 +148,42 @@ sysctl -w net.ipv4.conf.all.rp_filter=1     # strict: DROPS the asymmetric reply
 sysctl -w net.ipv4.conf.all.rp_filter=2     # loose:  accepts it if the source is reachable by ANY path
 ```
 
-The lab confirms it directly: a packet whose reverse path is a different interface is **dropped**
-under `rp_filter=1` and **passes** under `rp_filter=2` (loose) or `0` (off). Use **loose**
-(`2`) on the interfaces that carry asymmetric scrubbing traffic — it still rejects genuinely
-un-routable (spoofed) sources, but tolerates the asymmetry your diversion created. Setting it per
-interface (`net.ipv4.conf.<iface>.rp_filter`) is safer than flipping it globally.
+Le laboratoire le confirme directement : un paquet dont le chemin inverse est une interface
+différente est **supprimé** sous `rp_filter=1` et **passe** sous `rp_filter=2` (souple) ou `0`
+(désactivé). Utilisez le mode **souple** (`2`) sur les interfaces qui transportent du trafic de
+scrubbing asymétrique — il rejette toujours les sources réellement non routables (usurpées), mais
+tolère l'asymétrie que votre diversion a créée. Le définir par interface
+(`net.ipv4.conf.<iface>.rp_filter`) est plus sûr que de le basculer globalement.
 
-## Confirming the node is filtering
+## Confirmer que le nœud filtre
 
-This is the step under-attack runbooks get wrong: for a scrub node, "the route reached my
-router" is not the question — **"is XDP attached and dropping?"** is. Check it on the node itself,
-which needs no running daemon (it reads the pinned maps):
+C'est l'étape que les runbooks « sous attaque » ratent : pour un nœud de scrubbing, « la route a
+atteint mon routeur » n'est pas la question — **« XDP est-il attaché et supprime-t-il ? »** l'est.
+Vérifiez-le sur le nœud lui-même, qui n'a besoin d'aucun démon en cours d'exécution (il lit les maps
+épinglées) :
 
 ```sh
 kapkan dataplane status
 ```
 
-A healthy node reports `ENFORCING on <iface>`, the attach mode, and a live dynamic-rule count.
-In the lab's full loop — a brain detecting a flowgen attack, escalating to divert, and a real
-`kapkan scrub` agent pulling the ban — the agent attached XDP, installed the brain's rules, and
-`kapkan dataplane status` confirmed the dynamic rule blocks live in the kernel.
+Un nœud sain rapporte `ENFORCING on <iface>`, le mode d'attachement, et un nombre de règles
+dynamiques en direct. Dans la boucle complète du laboratoire — un cerveau détectant une attaque
+flowgen, escaladant vers divert, et un véritable agent `kapkan scrub` tirant le ban — l'agent a
+attaché XDP, installé les règles du cerveau, et `kapkan dataplane status` a confirmé que les blocs
+de règles dynamiques vivent dans le noyau.
 
-The brain's side of the same question is the [Nodes view](/docs/dashboard) and
-`GET /api/v1/dataplane/nodes`: a node is **alive** because it keeps polling for rules — the poll
-is the liveness signal, never the node's self-report — so a node that appears in the inventory as
-alive is a node that is asking the brain what to drop. If the node stops polling for
-`scrubbing.stale_after_seconds`, the brain re-announces the victim toward a surviving node, or
-runs `on_all_nodes_lost` when none remain (see [scrubbing](/docs/scrubbing)).
+Le côté cerveau de la même question est la [vue Nœuds](/docs/dashboard) et
+`GET /api/v1/dataplane/nodes` : un nœud est **vivant** parce qu'il continue d'interroger pour
+obtenir des règles — l'interrogation est le signal de vivacité, jamais le rapport que le nœud fait
+sur lui-même — de sorte qu'un nœud qui apparaît dans l'inventaire comme vivant est un nœud qui
+demande au cerveau quoi supprimer. Si le nœud cesse d'interroger pendant
+`scrubbing.stale_after_seconds`, le cerveau réannonce la victime vers un nœud survivant, ou exécute
+`on_all_nodes_lost` quand il n'en reste aucun (voir [scrubbing](/docs/scrubbing)).
 
-<Callout type="note" title="Reproduce it yourself">
-The harness that verified every recipe here is committed at `engine/scripts/labnet/`:
-`plumbing.sh` runs the tunnel, MSS, L2, `rp_filter` and route-leaking recipes in throwaway
-network namespaces, and `scrub-loop.sh` runs the full attack → detect → divert → scrub → drop
-loop with a real `kapkan scrub` node. Both need a privileged container on a kernel with BPF/BTF,
-GRE and policy routing.
+<Callout type="note" title="Reproduisez-le vous-même">
+Le harnais qui a vérifié chaque recette de cette page est versionné dans `engine/scripts/labnet/` :
+`plumbing.sh` exécute les recettes de tunnel, MSS, L2, `rp_filter` et fuite de route dans des
+espaces de noms réseau jetables, et `scrub-loop.sh` exécute la boucle complète attaque → détection →
+divert → scrubbing → suppression avec un véritable nœud `kapkan scrub`. Les deux nécessitent un
+conteneur privilégié sur un noyau avec BPF/BTF, GRE et routage par politique.
 </Callout>

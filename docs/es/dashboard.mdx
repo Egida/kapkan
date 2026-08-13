@@ -60,7 +60,13 @@ El panel de control sondea la API JSON y representa todo lo que Kapkan rastrea e
 - **Top talkers (principales emisores)** — la instantánea de hosts rastreados con tasas por dirección y
   baselines aprendidos, para que veas quién genera más tráfico y cómo se compara con lo normal.
 - **Hostgroups** — tus grupos de prefijos con nombre y su estado.
-- **Tabla de bloqueos** — todos los bloqueos, activos e históricos.
+- **Nodos de scrubbing** — se muestra solo cuando ejecutas [nodos de scrubbing
+  gestionados](/docs/scrubbing#nodos-de-scrubbing-gestionados): la vitalidad de cada nodo (está vivo
+  porque sigue sondeando reglas), cuántos bloqueos desvían hacia él, y su propia carga, descartes,
+  versión y flag de dry-run reportados — las columnas reportadas se etiquetan como tales, porque el
+  autoinforme de un nodo es orientativo, nunca la fuente de su vitalidad.
+- **Tabla de bloqueos** — todos los bloqueos, activos e históricos (con la columna de nodo de
+  scrubbing cuando hay nodos configurados).
 - **Tráfico / Informes** — gráficas de ingress/egress en vivo construidas a partir de los búferes
   de tasa en memoria, más una sección de **Informes históricos** que lee las tablas
   persistidas de ClickHouse cuando el almacenamiento está habilitado.

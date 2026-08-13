@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Referencia de CLI",
   description:
-    "Cada opción de línea de comandos del binario de Kapkan: ruta de la configuración, formato y nivel de los registros, el pid file y el control de proceso al estilo nginx con `-s`, las flags de utilidad para el esquema y la validación, y el comando `dataplane status`.",
+    "Cada opción de línea de comandos del binario de Kapkan: ruta de la configuración, formato y nivel de los registros, el pid file y el control de proceso al estilo nginx con `-s`, las flags de utilidad para el esquema y la validación, y los comandos `dataplane status` y `scrub`.",
 };
 
 # Referencia de CLI
@@ -232,6 +232,52 @@ cuando el esquema no coincide, lo derriba y lo reconstruye, descartando todas la
 mitigación dinámicas que hubiera en el kernel. Un diagnóstico capaz de hacer eso en mitad de un
 ataque sería peor que no tener diagnóstico.
 </Callout>
+
+### `scrub`
+
+```sh
+kapkan scrub -config /etc/kapkan/scrub.yaml
+```
+
+Ejecuta el rol de [nodo de scrubbing](/docs/scrubbing#nodos-de-scrubbing-gestionados): el mismo
+binario, otro trabajo. No hay detección, ni BGP, ni escucha de telemetría — la máquina recibe el
+tráfico que el cerebro le desvió, hace long-poll de la tabla de reglas del cerebro y mantiene su
+[plano de datos](/docs/dataplane) XDP local aplicando exactamente lo que el cerebro dice que hay que
+descartar. El sondeo hace de paso las veces de señal de vitalidad del nodo.
+
+Todo lo específico del rol vive en su propio `scrub.yaml`; el `config.yaml` del demonio **no** se
+lee (`-config` aquí toma por defecto `/etc/kapkan/scrub.yaml`). Tiene tres partes: el controlador a
+alcanzar, la identidad del nodo y el mismo bloque `dataplane:` que lleva un demonio.
+
+```yaml
+dry_run: true                     # the remote-role default — counts, drops nothing
+controller:
+  url: "https://kapkan.example.net:8443"   # the brain's API base (no path)
+  token_env: KAPKAN_AGENT_TOKEN            # env var holding the agent token (required)
+  name: scrub-fra1                         # must equal a scrubbing.nodes[] name on the brain
+dataplane:
+  interfaces: [eth0]              # the dirty side (diverted traffic arrives here)
+  xdp_mode: auto
+  pin_path: /sys/fs/bpf/kapkan
+```
+
+<Callout type="warning" title="Un nodo de scrubbing arranca en dry-run">
+`dry_run` toma por defecto **true** para un rol remoto — el nodo instala las reglas y cuenta lo que
+*descartaría*, pero no descarta nada, hasta que pongas `dry_run: false` explícitamente. Nunca aplica
+una regla que el cerebro marcó como dry-run mientras está activa, y requiere un token agent real: sin
+uno sus sondeos no llevan identidad y el cerebro lo contaría como muerto. Usa `https` fuera de un
+laboratorio — un `controller.url` en texto plano envía el token en claro.
+</Callout>
+
+| Flag | Por defecto | Descripción |
+| --- | --- | --- |
+| `-config <path>` | `/etc/kapkan/scrub.yaml` | La configuración del nodo de scrubbing. |
+| `-log-format <fmt>` | `json` | `json` o `text`. |
+| `-log-level <lvl>` | `info` | `debug`, `info`, `warn` o `error`. |
+
+Confirma que un nodo está en marcha con `kapkan dataplane status` en el propio nodo — informa
+`ENFORCING` y el recuento de reglas instaladas — y la [vista de Nodos](/docs/dashboard) del cerebro
+lo muestra vivo. Llevar el tráfico desviado hasta el nodo es la [guía de integración de red](/docs/network-integration).
 
 ## Próximos pasos
 

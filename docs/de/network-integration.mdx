@@ -1,46 +1,50 @@
 export const metadata = {
-  title: "Network integration (scrub nodes)",
+  title: "Netzwerkintegration (Scrubbing-Knoten)",
   description:
-    "Wire a kapkan scrub node into your network: where it sits, how diverted traffic reaches it over GRE/IPIP or L2, MSS clamping, the return path, and the asymmetric-routing traps.",
+    "Binden Sie einen kapkan-Scrub-Knoten in Ihr Netzwerk ein: wo er sitzt, wie umgeleiteter Verkehr ihn über GRE/IPIP oder L2 erreicht, MSS-Clamping, der Rückpfad und die Fallen des asymmetrischen Routings.",
 };
 
-# Network integration (scrub nodes)
+# Netzwerkintegration (Scrubbing-Knoten)
 
-<Callout type="warning" title="This is the plumbing, not the policy">
-A [scrub node](/docs/scrubbing) drops the attack in its own kernel — that part is kapkan's job
-and needs no network design. **Getting the victim's traffic *to* the node, and the clean
-traffic *back out*, is your network's job**, and it is where scrubbing deployments actually go
-wrong. Every command block on this page was executed against a real Linux kernel in the
-network-integration lab (`engine/scripts/labnet/`) before it was written down.
+<Callout type="warning" title="Das ist die Verkabelung, nicht die Policy">
+Ein [Scrub-Knoten](/docs/scrubbing) verwirft den Angriff in seinem eigenen Kernel — dieser Teil ist
+Aufgabe von kapkan und braucht kein Netzwerkdesign. **Den Verkehr des Opfers *zum* Knoten und den
+sauberen Verkehr *wieder heraus* zu bekommen, ist Aufgabe Ihres Netzwerks**, und genau dort gehen
+Scrubbing-Deployments tatsächlich schief. Jeder Befehlsblock auf dieser Seite wurde gegen einen
+echten Linux-Kernel im Netzwerkintegrations-Labor (`engine/scripts/labnet/`) ausgeführt, bevor er
+niedergeschrieben wurde.
 </Callout>
 
-A scrub node runs [`kapkan scrub`](/docs/cli): no detection, no BGP, no telemetry. The brain
-[diverts](/docs/scrubbing) a victim's traffic toward the node, the node pulls the ban's rules
-from `GET /api/v1/dataplane/rules` and drops the attack in [XDP](/docs/glossary), and the clean
-traffic is reinjected toward the victim. This page is the three things that sit around that:
-**how traffic reaches the node**, **how clean traffic leaves it**, and **how to confirm it is
-actually filtering**.
+Ein Scrub-Knoten führt [`kapkan scrub`](/docs/cli) aus: keine Erkennung, kein BGP, keine
+Telemetrie. Das Gehirn [leitet](/docs/scrubbing) den Verkehr eines Opfers zum Knoten um, der Knoten
+holt die Regeln des Bans von `GET /api/v1/dataplane/rules` und verwirft den Angriff in
+[XDP](/docs/glossary), und der saubere Verkehr wird wieder in Richtung des Opfers eingespeist. Diese
+Seite behandelt die drei Dinge, die darum herumliegen: **wie der Verkehr den Knoten erreicht**,
+**wie der saubere Verkehr ihn verlässt** und **wie man bestätigt, dass er tatsächlich filtert**.
 
-## Where the node sits
+## Wo der Knoten sitzt
 
-Two shapes, and the choice drives everything else.
+Zwei Formen, und die Wahl bestimmt alles Weitere.
 
-- **Off-path (BGP divert).** The node lives beside your edge. When an attack starts, the brain
-  announces the victim's `/32` toward the node's next-hop, so the router tunnels the victim's
-  traffic to the node; the node drops the attack and reinjects the rest. This is the model the
-  `scrubbing.nodes[]` config and the `divert` action are built for — the node is pulled into the
-  path only for hosts under attack, and only while they are.
-- **In-path (L2).** The node is bridged into a link the victim's traffic already crosses, so it
-  sees every frame all the time. No BGP, no tunnel; the node filters at wire level. Simpler to
-  reason about, but the node is now a bump in the wire for *all* traffic, attack or not.
+- **Off-path (BGP-Divert).** Der Knoten lebt neben Ihrem Edge. Wenn ein Angriff beginnt, kündigt
+  das Gehirn die `/32` des Opfers in Richtung des Next-Hops des Knotens an, sodass der Router den
+  Verkehr des Opfers zum Knoten tunnelt; der Knoten verwirft den Angriff und speist den Rest wieder
+  ein. Das ist das Modell, für das die `scrubbing.nodes[]`-Konfiguration und die `divert`-Aktion
+  gebaut sind — der Knoten wird nur für Hosts unter Angriff in den Pfad gezogen, und nur, solange
+  sie es sind.
+- **In-path (L2).** Der Knoten ist in eine Verbindung eingebrückt, die der Verkehr des Opfers
+  ohnehin durchquert, sodass er ständig jeden Frame sieht. Kein BGP, kein Tunnel; der Knoten filtert
+  auf Leitungsebene. Einfacher zu durchdenken, aber der Knoten ist nun ein Hindernis in der Leitung
+  für *allen* Verkehr, ob Angriff oder nicht.
 
-Most operators start off-path — the blast radius of a mistake is one diverted host, not the
-whole link.
+Die meisten Betreiber beginnen off-path — der Wirkungsradius eines Fehlers ist ein umgeleiteter
+Host, nicht die gesamte Verbindung.
 
-## L2 insertion (in-path)
+## L2-Insertion (in-path)
 
-Bridge the node between the client side and the gateway side of a link. The XDP program attaches
-to the **ingress** port, and the box needs no L3 address at all — it is invisible at L3.
+Brücken Sie den Knoten zwischen die Client-Seite und die Gateway-Seite einer Verbindung. Das
+XDP-Programm hängt sich an den **Ingress**-Port, und die Box braucht überhaupt keine L3-Adresse — sie
+ist auf L3 unsichtbar.
 
 ```sh
 # On the scrub node: bridge the two ports, no IP on the box.
@@ -56,13 +60,14 @@ dataplane:
   interfaces: [eth0]
 ```
 
-Traffic forwards through the bridge unchanged; the XDP filter drops only what the brain's rules
-match. Because there is no L3 hop, there is no MTU change and none of the tunnel problems below.
+Der Verkehr wird unverändert durch die Brücke weitergeleitet; der XDP-Filter verwirft nur das, worauf
+die Regeln des Gehirns passen. Weil es keinen L3-Hop gibt, gibt es keine MTU-Änderung und keines der
+Tunnelprobleme weiter unten.
 
-## Off-path diversion over GRE or IPIP
+## Off-path-Umleitung über GRE oder IPIP
 
-When the node is off-path, the router encapsulates the victim's traffic into a tunnel to the
-node. GRE and IPIP both work; GRE adds 24 bytes of overhead, IPIP 20.
+Wenn der Knoten off-path ist, kapselt der Router den Verkehr des Opfers in einen Tunnel zum Knoten.
+GRE und IPIP funktionieren beide; GRE fügt 24 Byte Overhead hinzu, IPIP 20.
 
 ```sh
 # On the router (rA) and the scrub node (rB): a GRE tunnel between their transport addresses.
@@ -74,22 +79,24 @@ ip addr add 10.9.0.2/30 dev gre1 && ip link set gre1 up              # rB
 ip route add 203.0.113.0/24 via 10.9.0.2 dev gre1                    # on rA
 ```
 
-IPIP is identical with `mode ipip`. A GRE tunnel over a 1500-byte transport reports MTU 1476;
-IPIP reports 1480.
+IPIP ist mit `mode ipip` identisch. Ein GRE-Tunnel über einen 1500-Byte-Transport meldet MTU 1476;
+IPIP meldet 1480.
 
-<Callout type="error" title="The failure that pages you at 3 a.m.">
-A tunnel shrinks the path MTU. If the "packet too big" ICMP that would tell senders to shrink
-their segments is filtered anywhere on the path — and it very often is — the symptom is
-distinctive and misleading: **small requests and TCP handshakes complete normally, then any
-large response stalls.** SSH connects but `ls` of a big directory hangs; the site loads its HTML
-but not its images. It looks like an application problem. It is an MSS problem, and the fix is on
-the tunnel routers, not the endpoints.
+<Callout type="error" title="Der Ausfall, der Sie um 3 Uhr morgens aus dem Bett holt">
+Ein Tunnel verkleinert die Pfad-MTU. Wenn das „packet too big"-ICMP, das Sendern mitteilen würde,
+ihre Segmente zu verkleinern, irgendwo auf dem Pfad gefiltert wird — und das wird es sehr oft — ist
+das Symptom charakteristisch und irreführend: **Kleine Requests und TCP-Handshakes laufen normal
+durch, dann bleibt jede große Antwort stehen.** SSH verbindet sich, aber ein `ls` eines großen
+Verzeichnisses hängt; die Website lädt ihr HTML, aber nicht ihre Bilder. Es sieht aus wie ein
+Anwendungsproblem. Es ist ein MSS-Problem, und die Lösung liegt auf den Tunnel-Routern, nicht auf den
+Endpunkten.
 </Callout>
 
-### MSS clamping — the fix
+### MSS-Clamping — die Lösung
 
-Rewrite the MSS in every TCP `SYN` crossing the tunnel down to the tunnel's path MTU, so both
-ends negotiate segments that fit. Clamp on **both** tunnel routers, in **both** directions:
+Schreiben Sie die MSS in jedem TCP-`SYN`, das den Tunnel quert, auf die Pfad-MTU des Tunnels herunter,
+sodass beide Enden Segmente aushandeln, die passen. Clampen Sie auf **beiden** Tunnel-Routern, in
+**beiden** Richtungen:
 
 ```sh
 # On each tunnel router:
@@ -97,21 +104,21 @@ iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o gre1 -j TCPMSS -
 iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i gre1 -j TCPMSS --clamp-mss-to-pmtu
 ```
 
-In the lab, a 4 MB download through a clamp-less tunnel with ICMP filtered transferred **0 bytes
-and timed out**; with the clamp in place, the same download completed. `--clamp-mss-to-pmtu`
-tracks the tunnel MTU automatically, so it survives an MTU change without an edit.
+Im Labor übertrug ein 4-MB-Download durch einen Tunnel ohne Clamp bei gefiltertem ICMP **0 Byte und
+lief in einen Timeout**; mit gesetztem Clamp wurde derselbe Download abgeschlossen. `--clamp-mss-to-pmtu`
+verfolgt die Tunnel-MTU automatisch, sodass es eine MTU-Änderung ohne Bearbeitung übersteht.
 
-## The return path
+## Der Rückpfad
 
-Diverted traffic reaches the node; the **clean** traffic has to leave it the right way — toward
-the victim, not back down the dirty tunnel. This is where routing gets asymmetric, and asymmetric
-routing has two traps.
+Der umgeleitete Verkehr erreicht den Knoten; der **saubere** Verkehr muss ihn auf dem richtigen Weg
+verlassen — zum Opfer hin, nicht zurück durch den dirty Tunnel. Hier wird das Routing asymmetrisch,
+und asymmetrisches Routing hat zwei Fallen.
 
-### Route-leaking (portable) or VRF (newer kernels)
+### Route-Leaking (portabel) oder VRF (neuere Kernel)
 
-Give the reinjected traffic its own routing context so it egresses the clean uplink regardless of
-the main table. On any kernel, do it with **policy routing** — a dedicated table selected by an
-`ip rule`:
+Geben Sie dem wieder eingespeisten Verkehr seinen eigenen Routing-Kontext, sodass er unabhängig von
+der Haupttabelle über den sauberen Uplink ausgeht. Auf jedem Kernel geht das mit **Policy-Routing**
+— einer dedizierten Tabelle, die per `ip rule` ausgewählt wird:
 
 ```sh
 # main table: the dirty uplink (where diverted traffic arrives)
@@ -122,18 +129,18 @@ ip route add default via 10.31.0.2 dev eth1 table 100
 ip rule add from 203.0.113.0/24 lookup 100
 ```
 
-In the lab, `ip route get 8.8.8.8 from 203.0.113.10 iif eth0` then resolves via the clean uplink
-(`dev eth1 table 100`) while everything else stays on the main table. A **VRF device**
-(`ip link add vrf-clean type vrf table 100`, then enslave the clean uplink) gives the same
-isolation as a cleaner abstraction on kernels built with `CONFIG_NET_VRF`; it is the same table,
-reached through a device instead of a rule.
+Im Labor löst `ip route get 8.8.8.8 from 203.0.113.10 iif eth0` daraufhin über den sauberen Uplink
+auf (`dev eth1 table 100`), während alles andere auf der Haupttabelle bleibt. Ein **VRF-Gerät**
+(`ip link add vrf-clean type vrf table 100`, dann den sauberen Uplink einsklaven) bietet dieselbe
+Isolation als sauberere Abstraktion auf Kerneln, die mit `CONFIG_NET_VRF` gebaut wurden; es ist
+dieselbe Tabelle, erreicht über ein Gerät statt über eine Regel.
 
-### rp_filter and the asymmetric reply
+### rp_filter und die asymmetrische Antwort
 
-Because the victim's prefix is diverted, a border router's **reverse route** to the victim points
-at the tunnel. When the victim's reply comes back on a normal link, strict reverse-path filtering
-(`rp_filter=1`) sees that the reply's source does not route back out the interface it arrived on,
-and **drops it silently.**
+Weil das Präfix des Opfers umgeleitet wird, zeigt die **Rückroute** eines Border-Routers zum Opfer
+auf den Tunnel. Wenn die Antwort des Opfers auf einer normalen Verbindung zurückkommt, sieht das
+strenge Reverse-Path-Filtering (`rp_filter=1`), dass die Quelle der Antwort nicht über das Interface
+zurückroutet, auf dem sie ankam, und **verwirft sie stillschweigend.**
 
 ```sh
 # The trap, and the fix — on the router that sees the asymmetric reply:
@@ -141,38 +148,41 @@ sysctl -w net.ipv4.conf.all.rp_filter=1     # strict: DROPS the asymmetric reply
 sysctl -w net.ipv4.conf.all.rp_filter=2     # loose:  accepts it if the source is reachable by ANY path
 ```
 
-The lab confirms it directly: a packet whose reverse path is a different interface is **dropped**
-under `rp_filter=1` and **passes** under `rp_filter=2` (loose) or `0` (off). Use **loose**
-(`2`) on the interfaces that carry asymmetric scrubbing traffic — it still rejects genuinely
-un-routable (spoofed) sources, but tolerates the asymmetry your diversion created. Setting it per
-interface (`net.ipv4.conf.<iface>.rp_filter`) is safer than flipping it globally.
+Das Labor bestätigt es direkt: Ein Paket, dessen Rückpfad ein anderes Interface ist, wird unter
+`rp_filter=1` **verworfen** und unter `rp_filter=2` (loose) oder `0` (aus) **durchgelassen**.
+Verwenden Sie **loose** (`2`) auf den Interfaces, die asymmetrischen Scrubbing-Verkehr tragen — es
+weist echte nicht routbare (gespoofte) Quellen weiterhin ab, toleriert aber die Asymmetrie, die Ihre
+Umleitung erzeugt hat. Es pro Interface zu setzen (`net.ipv4.conf.<iface>.rp_filter`) ist sicherer,
+als es global umzuschalten.
 
-## Confirming the node is filtering
+## Bestätigen, dass der Knoten filtert
 
-This is the step under-attack runbooks get wrong: for a scrub node, "the route reached my
-router" is not the question — **"is XDP attached and dropping?"** is. Check it on the node itself,
-which needs no running daemon (it reads the pinned maps):
+Das ist der Schritt, den Under-Attack-Runbooks falsch machen: Für einen Scrub-Knoten ist „Die Route
+hat meinen Router erreicht" nicht die Frage — **„Ist XDP angehängt und verwirft?"** ist es. Prüfen
+Sie es auf dem Knoten selbst, der keinen laufenden Daemon braucht (er liest die gepinnten Maps):
 
 ```sh
 kapkan dataplane status
 ```
 
-A healthy node reports `ENFORCING on <iface>`, the attach mode, and a live dynamic-rule count.
-In the lab's full loop — a brain detecting a flowgen attack, escalating to divert, and a real
-`kapkan scrub` agent pulling the ban — the agent attached XDP, installed the brain's rules, and
-`kapkan dataplane status` confirmed the dynamic rule blocks live in the kernel.
+Ein gesunder Knoten meldet `ENFORCING on <iface>`, den Attach-Modus und eine aktive Anzahl
+dynamischer Regeln. In der vollständigen Schleife des Labors — ein Gehirn, das einen Flowgen-Angriff
+erkennt, zu Divert eskaliert und ein echter `kapkan scrub`-Agent, der den Ban abholt — hängte der
+Agent XDP an, installierte die Regeln des Gehirns, und `kapkan dataplane status` bestätigte, dass die
+dynamischen Regel-Blöcke live im Kernel liegen.
 
-The brain's side of the same question is the [Nodes view](/docs/dashboard) and
-`GET /api/v1/dataplane/nodes`: a node is **alive** because it keeps polling for rules — the poll
-is the liveness signal, never the node's self-report — so a node that appears in the inventory as
-alive is a node that is asking the brain what to drop. If the node stops polling for
-`scrubbing.stale_after_seconds`, the brain re-announces the victim toward a surviving node, or
-runs `on_all_nodes_lost` when none remain (see [scrubbing](/docs/scrubbing)).
+Die Seite des Gehirns bei derselben Frage ist die [Nodes-Ansicht](/docs/dashboard) und
+`GET /api/v1/dataplane/nodes`: Ein Knoten ist **lebendig**, weil er weiterhin nach Regeln pollt — der
+Poll ist das Lebendigkeitssignal, niemals der Selbstreport des Knotens — sodass ein Knoten, der im
+Inventar als lebendig erscheint, ein Knoten ist, der das Gehirn fragt, was zu verwerfen ist. Wenn der
+Knoten für `scrubbing.stale_after_seconds` aufhört zu pollen, kündigt das Gehirn das Opfer in
+Richtung eines überlebenden Knotens neu an oder führt `on_all_nodes_lost` aus, wenn keiner
+übrigbleibt (siehe [Scrubbing](/docs/scrubbing)).
 
-<Callout type="note" title="Reproduce it yourself">
-The harness that verified every recipe here is committed at `engine/scripts/labnet/`:
-`plumbing.sh` runs the tunnel, MSS, L2, `rp_filter` and route-leaking recipes in throwaway
-network namespaces, and `scrub-loop.sh` runs the full attack → detect → divert → scrub → drop
-loop with a real `kapkan scrub` node. Both need a privileged container on a kernel with BPF/BTF,
-GRE and policy routing.
+<Callout type="note" title="Reproduzieren Sie es selbst">
+Der Prüfstand, der jedes Rezept hier verifiziert hat, ist unter `engine/scripts/labnet/` eingecheckt:
+`plumbing.sh` führt die Rezepte für Tunnel, MSS, L2, `rp_filter` und Route-Leaking in
+Wegwerf-Netzwerk-Namespaces aus, und `scrub-loop.sh` führt die vollständige Schleife aus Angriff →
+Erkennung → Divert → Scrub → Verwerfen mit einem echten `kapkan scrub`-Knoten aus. Beide brauchen
+einen privilegierten Container auf einem Kernel mit BPF/BTF, GRE und Policy-Routing.
 </Callout>

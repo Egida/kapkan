@@ -26,7 +26,10 @@ configurée ; une fois configurée, chaque requête doit porter `Authorization: 
 jetons portent un **rôle** : les routes `GET` nécessitent le rôle **viewer**, et les routes
 mutables (`ban`, `unban`, `config/reload`) nécessitent le rôle **operator**. `config/reload` va
 plus loin : il exige un jeton **non rattaché (admin)**, de sorte que même un jeton operator
-rattaché à un tenant est refusé avec un `403`. Une lecture avec un jeton viewer fonctionne ; une
+rattaché à un tenant est refusé avec un `403`. Le
+[canal des nœuds de scrubbing](#le-canal-des-nœuds-de-scrubbing) prend le rôle **agent** —
+l'identifiant d'un nœud de scrubbing qui atteint ces routes et rien d'autre. Une lecture avec un
+jeton viewer fonctionne ; une
 mutation avec un jeton viewer renvoie `403` ; un jeton inconnu renvoie `401`. Les points de
 terminaison `POST` exigent en outre un type de contenu JSON —
 envoyez `Content-Type: application/json`. Un `POST` sans cet en-tête est rejeté avec un
@@ -56,6 +59,9 @@ sinon. Voir [Multi-tenant](/docs/multi-tenancy).
 | POST | `/api/v1/ban` | Bannir manuellement une adresse. |
 | POST | `/api/v1/unban` | Retirer manuellement un bannissement. |
 | POST | `/api/v1/config/reload` | Relire le fichier de configuration (équivalent à `SIGHUP`). |
+| GET | `/api/v1/dataplane/rules` | Le flux de règles du [nœud de scrubbing](/docs/scrubbing#nœuds-de-nettoyage-gérés) (`agent`/`operator` non rattaché) ; long-poll par ETag, retenu jusqu'à 30 s. |
+| POST | `/api/v1/dataplane/nodes/{name}/report` | Le rapport consultatif d'un nœud de scrubbing sur lui-même (`agent`/`operator` non rattaché). |
+| GET | `/api/v1/dataplane/nodes` | Inventaire des nœuds gérés : vivacité, configuration, nombre de bans par nœud (`viewer` non rattaché ou plus). |
 | GET | `/metrics` | Métriques Prometheus. |
 | GET | `/healthz` | Sonde de vivacité/disponibilité non authentifiée : `503` jusqu'au démarrage complet, puis `200`. |
 
@@ -297,6 +303,7 @@ Renvoie la table complète des bannissements — actifs et historiques. Chaque e
 | `next_hop` | string | Le next-hop de rejet. |
 | `community` | string | L'ensemble de communities attaché à la route — la community RTBH pour un blackhole, la community de divert (scrubbing) pour un ban divert — jointes par des espaces lorsqu'il y en a plusieurs. |
 | `local_pref` | number | Le `LOCAL_PREF` attaché à la route ; omis lorsqu'il est nul. |
+| `node` | string | Le [nœud de nettoyage géré](/docs/scrubbing#nœuds-de-nettoyage-gérés) auquel ce ban divert est figé ; omis lorsque le ban ne dévie pas vers un nœud géré. |
 | `route` | string | La chaîne de route complète, ou un résumé `flowspec: ...` pour les bannissements FlowSpec. |
 | `state` | string | `active`, `withdrawn` ou `rejected`. |
 | `dry_run` | bool | Indique si le bannissement était virtuel. |
@@ -445,6 +452,58 @@ avec un `403` et `config reload is restricted to unscoped (admin) tokens`.
 Si la nouvelle configuration échoue à l'analyse ou à la validation, la configuration en cours
 d'exécution reste intacte et le point de terminaison renvoie un statut HTTP `400` avec l'erreur.
 Voir [Configuration](/docs/configuration).
+
+### Le canal des nœuds de scrubbing
+
+Ces trois points de terminaison existent pour les [nœuds de nettoyage
+gérés](/docs/scrubbing#nœuds-de-nettoyage-gérés) — des machines exécutant
+[`kapkan scrub`](/docs/cli). Ils prennent le rôle `agent` (l'identifiant d'un nœud de scrubbing ;
+voir [authentification](/docs/authentication)) ou un jeton `operator` non rattaché, jamais un
+`viewer` ni un jeton rattaché à un tenant : les documents couvrent tous les tenants, de sorte que
+les rattacher est une préoccupation de flotte, non de requête.
+
+#### GET /api/v1/dataplane/rules
+
+La table de règles qu'un nœud applique : chaque victime [déviée](/docs/scrubbing) active, avec les
+règles [FlowSpec](/docs/flowspec) à supprimer et le TTL à répliquer. Un `GET` simple renvoie le
+document courant avec un `ETag` de hachage de contenu ; un `GET` dont le `If-None-Match` nomme cet
+ETag est **retenu** jusqu'à ce que la table change ou pendant 30 s au maximum, puis reçoit une
+réponse `304` — un long-poll qui offre des mises à jour de règles en moins d'une seconde sur du
+HTTP ordinaire. Un nœud s'identifie avec `?node=<name>`, et **cette interrogation est le signal de
+vivacité du nœud** — le nom doit donc être un nœud configuré (un nom inconnu renvoie `404`) et, en
+dehors du mode local sans jeton, la requête doit porter un vrai jeton.
+
+```json
+{
+  "version": 1,
+  "bans": [
+    {
+      "target": "203.0.113.10",
+      "prefix": "203.0.113.10/32",
+      "method": "divert",
+      "expires_at": "2026-08-13T10:00:00Z",
+      "flowspec": [ { "dst": "203.0.113.10/32", "proto": 17, "action": "discard" } ]
+    }
+  ]
+}
+```
+
+#### POST /api/v1/dataplane/nodes/\{name\}/report
+
+Le rapport consultatif d'un nœud sur lui-même — version, mode XDP, dry-run côté nœud, charge et
+totaux de suppressions — stocké pour la [console](/docs/dashboard). Ce n'est **jamais** un signal
+de vivacité (l'interrogation l'est) : un rapport ne peut jamais maintenir un nœud mort marqué comme
+actif. Le corps est plafonné à 64 KiB (`413` au-delà) et un `{name}` inconnu renvoie `404`. Le
+succès est `204 No Content`.
+
+#### GET /api/v1/dataplane/nodes
+
+L'inventaire des nœuds que rend la vue Nœuds de la console : chaque nœud configuré avec ce que le
+cerveau sait (configuration, vivacité de l'interrogation, combien de bans dévient vers lui) joint à
+son dernier rapport. Une lecture de rang `viewer`, mais jetons non rattachés uniquement —
+l'inventaire nomme les next-hops et les hostgroups, ce qui relève de la topologie de déploiement.
+Le nombre seul (`nodes_total`) circule sur `/api/v1/status` pour tous les rôles, de sorte qu'une
+console peut décider d'afficher ou non les fonctionnalités liées aux nœuds sans cet appel.
 
 ### GET /metrics
 

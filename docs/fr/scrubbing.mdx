@@ -9,10 +9,12 @@ export const metadata = {
 <Callout type="warning" title="Il vous faut d'abord un centre de nettoyage">
 La déviation ne fonctionne que si vous exploitez déjà (ou payez pour) un **centre de nettoyage
 (scrubbing center)** — une machine ou un service distinct qui filtre le trafic d'attaque et
-réinjecte le trafic propre via GRE ou un VRF. Si vous n'en avez pas, cette page n'est **pas**
-votre point de départ : utilisez plutôt le [blackhole](/docs/mitigation) ou
-[FlowSpec](/docs/flowspec). Pointer `next_hop` vers un scrubber qui n'existe pas dévie le trafic
-de la victime dans le vide.
+réinjecte le trafic propre via GRE ou un VRF. Vous pouvez désormais exploiter le vôtre avec le
+rôle [`kapkan scrub`](/docs/cli) — un [nœud de nettoyage](#nœuds-de-nettoyage-gérés) géré qui
+supprime l'attaque dans son propre noyau — ou pointer `next_hop` vers un scrubber tiers. Si vous
+n'avez ni l'un ni l'autre, cette page n'est **pas** votre point de départ : utilisez plutôt le
+[blackhole](/docs/mitigation) ou [FlowSpec](/docs/flowspec). Pointer `next_hop` vers un scrubber
+qui n'existe pas dévie le trafic de la victime dans le vide.
 </Callout>
 
 En clair : au lieu de supprimer le trafic de la victime, la déviation l'envoie vers une machine
@@ -95,6 +97,80 @@ trafic réel ne soit déplacé :
 La route de déviation que Kapkan construit se lit `divert <prefix> next-hop <next_hop> community
 <community>` — la chaîne exposée dans le champ `route` de l'[objet ban](/docs/api), avec
 `method: divert`.
+
+## Nœuds de nettoyage gérés
+
+Le scalaire `next_hop` ci-dessus dévie vers **un seul** scrubber que vous exploitez ou qu'un
+fournisseur opère — Kapkan annonce la route et le scrubber fait le reste. Un **nœud de nettoyage
+géré** est le scrubber propre à Kapkan : une machine exécutant le rôle [`kapkan scrub`](/docs/cli)
+qui reçoit le trafic dévié, supprime l'attaque dans son [plan de données](/docs/dataplane)
+intégré au noyau, et réinjecte ce qui reste. Kapkan annonce la victime vers le nœud **et** indique
+au nœud exactement quoi supprimer — les mêmes règles [FlowSpec](/docs/flowspec) que le détecteur a
+générées — de sorte que le nœud filtre le vecteur d'attaque plutôt que chaque paquet destiné à la
+victime.
+
+Listez chaque nœud sous `scrubbing.nodes[]`. Le scalaire `next_hop` reste valide comme cas
+dégénéré à un seul nœud et comme cible fourre-tout pour les groupes qu'aucun nœud ne dessert
+(c'est le scénario de migration : ajoutez `nodes[]` à côté de votre `next_hop` existant, puis
+migrez les groupes un par un).
+
+```yaml
+scrubbing:
+  next_hop: "192.0.2.100"        # still valid: the one-node case / catch-all target
+  node_selection: affinity       # affinity (default) | least_loaded | ecmp
+  on_all_nodes_lost: withdraw    # withdraw (default) | blackhole | flowspec
+  stale_after_seconds: 15        # a node unheard-from this long counts as lost
+  nodes:
+    - name: scrub-fra1           # must match the node's controller.name
+      next_hop: "192.0.2.10"     # the node's IPv4 BGP next-hop (required)
+      next_hop6: "2001:db8::10"  # required to divert IPv6 victims to this node
+      capacity_mbps: 10000       # shown in the console; used by least_loaded
+      hostgroups: [game-servers] # this node serves only these groups (empty = any)
+    - name: scrub-ams1
+      next_hop: "192.0.2.11"
+```
+
+| Clé | Signification |
+| --- | --- |
+| `nodes[].name` | Identité du nœud. **Doit être égale** au `controller.name` que l'agent du nœud présente lorsqu'il interroge le cerveau (brain), sinon chaque interrogation renvoie un `404` retentissant. |
+| `nodes[].next_hop` / `next_hop6` | Le ou les next-hops BGP du nœud. `next_hop` est requis ; `next_hop6` est requis pour dévier vers ce nœud les victimes IPv6. |
+| `nodes[].capacity_mbps` | La capacité de nettoyage du nœud, affichée dans la console et utilisée par `least_loaded`. `0` signifie inconnue. |
+| `nodes[].hostgroups` | Restreint les [hostgroups](/docs/hostgroups) que ce nœud dessert. Vide signifie qu'il accepte n'importe quel groupe. Un groupe dont le palier dévie doit disposer d'un nœud qui le dessert, ou du scalaire `next_hop` comme repli. |
+| `node_selection` | Comment un nœud est choisi pour un nouveau ban : `affinity` (par défaut — le premier nœud configuré dont les `hostgroups` réclament la victime), `least_loaded` ou `ecmp`. **Seul `affinity` est implémenté aujourd'hui** ; les autres journalisent un avertissement au démarrage et se replient sur lui. |
+| `on_all_nodes_lost` | Ce qu'il faut faire quand aucun nœud géré n'est joignable : `withdraw` (par défaut — cesser d'attirer le trafic de la victime), `blackhole` ou `flowspec`. Tant qu'au moins un nœud survit, la victime est réannoncée vers lui à la place. |
+| `stale_after_seconds` | Combien de temps un nœud peut rester sans interroger le cerveau avant d'être compté comme perdu. Par défaut `15`. Pour une mort *silencieuse* (coupure de courant, une partition — rien n'envoie de FIN), le vrai délai de détection est cette valeur **plus** la retenue du long-poll dans laquelle le nœud peut être garé (jusqu'à 30 s) ; dimensionnez-la en fonction de votre tolérance au blackhole en gardant cette somme à l'esprit. |
+
+### Le choix du nœud est figé, et survit à la perte d'un nœud
+
+Le nœud d'un ban est choisi **une seule fois, au moment du ban** et figé sur le ban comme ses
+attributs BGP — le trafic d'une victime ne saute jamais d'un site de nettoyage à un autre parce
+qu'un rechargement a réordonné la liste. La sélection privilégie les nœuds qui interrogent
+réellement le cerveau, de sorte qu'un ban tout neuf n'est jamais dirigé vers un nœud que le
+cerveau voit déjà comme parti.
+
+Lorsqu'un nœud cesse d'interroger le cerveau pendant `stale_after_seconds`, le balayage déplace
+ses victimes :
+
+- vers un nœud éligible **survivant** — réannoncé en make-before-break sur la même route d'hôte,
+  de sorte que la victime n'est jamais brièvement non protégée. Une fois déplacée, le choix est de
+  nouveau figé : le retour de l'ancien nœud ne **rapatrie pas** la victime.
+- via **`on_all_nodes_lost`** uniquement lorsque *aucun* nœud éligible ne survit. `flowspec` a
+  besoin de ses règles, donc un ban de déviation sous cette politique les génère au moment du ban.
+
+<Callout type="info" title="La vivacité, c'est l'interrogation, jamais le rapport">
+Un nœud est **vivant** parce qu'il continue d'interroger le cerveau pour obtenir des règles — cette
+interrogation est le seul signal de vivacité. Le rapport qu'un nœud fait sur lui-même (charge,
+nombres de suppressions, version, affichés dans la [console](/docs/dashboard)) est consultatif : un
+jeton de nœud compromis pourrait gonfler un rapport, mais il ne peut jamais maintenir un nœud mort
+en train d'attirer du trafic dévié, car rien n'agit sur le rapport. Un nœud fraîchement ajouté par
+un rechargement (ou après un redémarrage du cerveau) obtient une fenêtre d'apparition avant de
+pouvoir être jugé perdu, de sorte qu'un déploiement de routine ne déclenche jamais
+`on_all_nodes_lost`.
+</Callout>
+
+Acheminer le trafic dévié **jusqu'au** nœud et faire ressortir le trafic propre — insertion L2,
+tunnels GRE/IPIP avec clampage du MSS, le chemin de retour et les pièges du routage asymétrique —
+est le rôle de votre réseau, couvert dans le [guide d'intégration réseau](/docs/network-integration).
 
 ## Scrubbing par hostgroup
 

@@ -24,7 +24,9 @@ Todas las rutas `/api/v1` pasan por la comprobación del token cuando la autenti
 toda petición debe llevar `Authorization: Bearer <token>`. Los tokens llevan un **rol**: las rutas `GET`
 necesitan el rol **viewer**, y las rutas que modifican el estado (`ban`, `unban`, `config/reload`)
 necesitan el rol **operator**. `config/reload` va más allá: requiere un token **sin acotar (admin)**,
-por lo que incluso un token operator que está acotado a un tenant se rechaza con `403`. Una lectura con un
+por lo que incluso un token operator que está acotado a un tenant se rechaza con `403`. El
+[canal de nodos de scrubbing](#el-canal-de-nodos-de-scrubbing) toma el rol **agent** — la
+credencial de un nodo de scrubbing que alcanza esas rutas y ninguna otra. Una lectura con un
 token viewer funciona; una modificación con un token viewer devuelve `403`; un token desconocido devuelve
 `401`. Los endpoints `POST` requieren además un tipo de contenido JSON: envía
 `Content-Type: application/json`. Un `POST` sin esa cabecera se rechaza con
@@ -52,6 +54,9 @@ devuelve `403` en caso contrario. Consulta [Multi-tenencia](/docs/multi-tenancy)
 | POST | `/api/v1/ban` | Banear una dirección manualmente. |
 | POST | `/api/v1/unban` | Retirar un baneo manualmente. |
 | POST | `/api/v1/config/reload` | Releer el archivo de configuración (igual que `SIGHUP`). |
+| GET | `/api/v1/dataplane/rules` | El feed de reglas del [nodo de scrubbing](/docs/scrubbing#nodos-de-scrubbing-gestionados) (`agent`/`operator` sin acotar); long-poll con ETag, retenido hasta 30 s. |
+| POST | `/api/v1/dataplane/nodes/{name}/report` | El autoinforme orientativo de un nodo de scrubbing (`agent`/`operator` sin acotar). |
+| GET | `/api/v1/dataplane/nodes` | Inventario de nodos gestionados: vitalidad, configuración, recuentos de baneos por nodo (`viewer` sin acotar o superior). |
 | GET | `/metrics` | Métricas de Prometheus. |
 | GET | `/healthz` | Sonda de vida/disponibilidad sin autenticación: `503` hasta que arranca por completo, luego `200`. |
 
@@ -291,6 +296,7 @@ Devuelve la tabla completa de baneos: activos e históricos. Cada entrada es un 
 | `next_hop` | string | El next-hop de descarte. |
 | `community` | string | El conjunto de communities adjunto a la ruta — la community RTBH para un blackhole, la community de desvío (scrubbing) para un baneo de desvío — unidas por espacios cuando hay más de una. |
 | `local_pref` | number | El `LOCAL_PREF` adjunto a la ruta; se omite cuando es cero. |
+| `node` | string | El [nodo de scrubbing gestionado](/docs/scrubbing#nodos-de-scrubbing-gestionados) al que este baneo de divert queda congelado; se omite cuando el baneo no desvía a un nodo gestionado. |
 | `route` | string | La cadena de ruta completa, o un resumen `flowspec: ...` para baneos FlowSpec. |
 | `state` | string | `active`, `withdrawn` o `rejected`. |
 | `dry_run` | bool | Si el baneo fue virtual. |
@@ -436,6 +442,57 @@ token acotado a un tenant se rechaza con `403` y `config reload is restricted to
 
 Si la nueva configuración no se analiza o no se valida, la configuración en ejecución se mantiene intacta y el
 endpoint devuelve HTTP `400` con el error. Consulta [Configuración](/docs/configuration).
+
+### El canal de nodos de scrubbing
+
+Estos tres endpoints existen para los [nodos de scrubbing gestionados](/docs/scrubbing#nodos-de-scrubbing-gestionados)
+— máquinas que ejecutan [`kapkan scrub`](/docs/cli). Toman el rol `agent` (la credencial de un
+nodo de scrubbing; ver [autenticación](/docs/authentication)) o un token `operator` sin acotar,
+nunca un `viewer` ni un token acotado a un tenant: los documentos abarcan todos los tenants, así
+que acotarlos es una cuestión de flota, no de cada petición.
+
+#### GET /api/v1/dataplane/rules
+
+La tabla de reglas que aplica un nodo: cada víctima [desviada](/docs/scrubbing) activa, con las
+reglas [FlowSpec](/docs/flowspec) que descartar y el TTL que reflejar. Un `GET` simple devuelve el
+documento actual con un `ETag` de hash de contenido; un `GET` cuyo `If-None-Match` nombra ese ETag
+se **retiene** hasta que la tabla cambie o hasta 30 s, y luego se responde `304` — un long-poll que
+ofrece actualizaciones de reglas por debajo del segundo sobre HTTP corriente. Un nodo se identifica
+con `?node=<name>`, y **ese sondeo es la señal de vitalidad del nodo** — así que el nombre debe ser
+un nodo configurado (un nombre desconocido es `404`) y, fuera del modo local sin token, la petición
+debe llevar un token real.
+
+```json
+{
+  "version": 1,
+  "bans": [
+    {
+      "target": "203.0.113.10",
+      "prefix": "203.0.113.10/32",
+      "method": "divert",
+      "expires_at": "2026-08-13T10:00:00Z",
+      "flowspec": [ { "dst": "203.0.113.10/32", "proto": 17, "action": "discard" } ]
+    }
+  ]
+}
+```
+
+#### POST /api/v1/dataplane/nodes/\{name\}/report
+
+El autoinforme orientativo de un nodo — versión, modo XDP, dry-run del lado del nodo, carga y
+totales de descartes — almacenado para la [consola](/docs/dashboard). **Nunca** es una señal de
+vitalidad (el sondeo lo es): un reporte nunca puede mantener a un nodo muerto marcado como vivo. El
+cuerpo está limitado a 64 KiB (`413` si se supera) y un `{name}` desconocido es `404`. El éxito es
+`204 No Content`.
+
+#### GET /api/v1/dataplane/nodes
+
+El inventario de nodos que representa la vista de Nodos de la consola: cada nodo configurado con lo
+que el cerebro sabe (configuración, vitalidad del sondeo, cuántos baneos desvían hacia él) unido con
+su último reporte. Una lectura de rango `viewer`, pero solo tokens sin acotar — el inventario nombra
+next-hops y hostgroups, que es topología de despliegue. El recuento por sí solo (`nodes_total`) viaja
+en `/api/v1/status` para todos los roles, así que una consola puede decidir si mostrar las
+funcionalidades de nodos sin esta llamada.
 
 ### GET /metrics
 

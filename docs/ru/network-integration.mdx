@@ -1,46 +1,47 @@
 export const metadata = {
-  title: "Network integration (scrub nodes)",
+  title: "Сетевая интеграция (узлы очистки)",
   description:
-    "Wire a kapkan scrub node into your network: where it sits, how diverted traffic reaches it over GRE/IPIP or L2, MSS clamping, the return path, and the asymmetric-routing traps.",
+    "Как встроить узел очистки kapkan в вашу сеть: где он располагается, как отведённый трафик доходит до него через GRE/IPIP или L2, подрезка MSS, обратный путь и ловушки асимметричной маршрутизации.",
 };
 
-# Network integration (scrub nodes)
+# Сетевая интеграция (узлы очистки)
 
-<Callout type="warning" title="This is the plumbing, not the policy">
-A [scrub node](/docs/scrubbing) drops the attack in its own kernel — that part is kapkan's job
-and needs no network design. **Getting the victim's traffic *to* the node, and the clean
-traffic *back out*, is your network's job**, and it is where scrubbing deployments actually go
-wrong. Every command block on this page was executed against a real Linux kernel in the
-network-integration lab (`engine/scripts/labnet/`) before it was written down.
+<Callout type="warning" title="Это про сетевую обвязку, а не про политику">
+[Узел очистки](/docs/scrubbing) отбрасывает атаку в собственном ядре — эта часть является задачей
+kapkan и не требует проектирования сети. **Доставка трафика жертвы *к* узлу и чистого трафика
+*обратно наружу* — это задача вашей сети**, и именно здесь развёртывания очистки на самом деле идут
+не так. Каждый блок команд на этой странице был выполнен на настоящем ядре Linux в лаборатории
+сетевой интеграции (`engine/scripts/labnet/`), прежде чем был записан.
 </Callout>
 
-A scrub node runs [`kapkan scrub`](/docs/cli): no detection, no BGP, no telemetry. The brain
-[diverts](/docs/scrubbing) a victim's traffic toward the node, the node pulls the ban's rules
-from `GET /api/v1/dataplane/rules` and drops the attack in [XDP](/docs/glossary), and the clean
-traffic is reinjected toward the victim. This page is the three things that sit around that:
-**how traffic reaches the node**, **how clean traffic leaves it**, and **how to confirm it is
-actually filtering**.
+Узел очистки запускает [`kapkan scrub`](/docs/cli): ни обнаружения, ни BGP, ни телеметрии. Мозг
+[отводит](/docs/scrubbing) трафик жертвы в сторону узла, узел вытягивает правила блокировки из
+`GET /api/v1/dataplane/rules` и отбрасывает атаку в [XDP](/docs/glossary), а чистый трафик
+реинжектируется в сторону жертвы. Эта страница — про три вещи, которые окружают это:
+**как трафик доходит до узла**, **как чистый трафик его покидает** и **как убедиться, что он
+действительно фильтрует**.
 
-## Where the node sits
+## Где располагается узел
 
-Two shapes, and the choice drives everything else.
+Две формы, и выбор определяет всё остальное.
 
-- **Off-path (BGP divert).** The node lives beside your edge. When an attack starts, the brain
-  announces the victim's `/32` toward the node's next-hop, so the router tunnels the victim's
-  traffic to the node; the node drops the attack and reinjects the rest. This is the model the
-  `scrubbing.nodes[]` config and the `divert` action are built for — the node is pulled into the
-  path only for hosts under attack, and only while they are.
-- **In-path (L2).** The node is bridged into a link the victim's traffic already crosses, so it
-  sees every frame all the time. No BGP, no tunnel; the node filters at wire level. Simpler to
-  reason about, but the node is now a bump in the wire for *all* traffic, attack or not.
+- **Вне пути (off-path, BGP divert).** Узел находится рядом с вашей границей. Когда начинается
+  атака, мозг анонсирует `/32` жертвы в сторону next-hop узла, так что маршрутизатор туннелирует
+  трафик жертвы на узел; узел отбрасывает атаку и реинжектирует остальное. Именно под эту модель
+  созданы конфигурация `scrubbing.nodes[]` и действие `divert` — узел втягивается в путь только для
+  хостов под атакой и только пока они под ней.
+- **В пути (in-path, L2).** Узел включён мостом в канал, который трафик жертвы и так пересекает, так
+  что он всё время видит каждый кадр. Ни BGP, ни туннеля; узел фильтрует на канальном уровне.
+  Рассуждать о нём проще, но теперь узел — это «горб» на проводе для *всего* трафика, атака это или
+  нет.
 
-Most operators start off-path — the blast radius of a mistake is one diverted host, not the
-whole link.
+Большинство операторов начинают вне пути (off-path) — радиус поражения ошибки составляет один
+отведённый хост, а не весь канал.
 
-## L2 insertion (in-path)
+## Вставка на L2 (in-path)
 
-Bridge the node between the client side and the gateway side of a link. The XDP program attaches
-to the **ingress** port, and the box needs no L3 address at all — it is invisible at L3.
+Включите узел мостом между клиентской стороной и стороной шлюза канала. XDP-программа подключается к
+**входному (ingress)** порту, и машине вообще не нужен L3-адрес — на L3 она невидима.
 
 ```sh
 # On the scrub node: bridge the two ports, no IP on the box.
@@ -56,13 +57,13 @@ dataplane:
   interfaces: [eth0]
 ```
 
-Traffic forwards through the bridge unchanged; the XDP filter drops only what the brain's rules
-match. Because there is no L3 hop, there is no MTU change and none of the tunnel problems below.
+Трафик проходит через мост без изменений; XDP-фильтр отбрасывает только то, что совпадает с
+правилами мозга. Поскольку L3-хопа нет, нет и изменения MTU, и ни одной из туннельных проблем ниже.
 
-## Off-path diversion over GRE or IPIP
+## Отвод вне пути через GRE или IPIP
 
-When the node is off-path, the router encapsulates the victim's traffic into a tunnel to the
-node. GRE and IPIP both work; GRE adds 24 bytes of overhead, IPIP 20.
+Когда узел находится вне пути, маршрутизатор инкапсулирует трафик жертвы в туннель до узла. Работают
+и GRE, и IPIP; GRE добавляет 24 байта накладных расходов, IPIP — 20.
 
 ```sh
 # On the router (rA) and the scrub node (rB): a GRE tunnel between their transport addresses.
@@ -74,22 +75,23 @@ ip addr add 10.9.0.2/30 dev gre1 && ip link set gre1 up              # rB
 ip route add 203.0.113.0/24 via 10.9.0.2 dev gre1                    # on rA
 ```
 
-IPIP is identical with `mode ipip`. A GRE tunnel over a 1500-byte transport reports MTU 1476;
-IPIP reports 1480.
+IPIP устроен так же с `mode ipip`. GRE-туннель поверх транспорта в 1500 байт сообщает MTU 1476;
+IPIP сообщает 1480.
 
-<Callout type="error" title="The failure that pages you at 3 a.m.">
-A tunnel shrinks the path MTU. If the "packet too big" ICMP that would tell senders to shrink
-their segments is filtered anywhere on the path — and it very often is — the symptom is
-distinctive and misleading: **small requests and TCP handshakes complete normally, then any
-large response stalls.** SSH connects but `ls` of a big directory hangs; the site loads its HTML
-but not its images. It looks like an application problem. It is an MSS problem, and the fix is on
-the tunnel routers, not the endpoints.
+<Callout type="error" title="Сбой, который поднимает вас в 3 часа ночи">
+Туннель уменьшает MTU пути. Если ICMP «packet too big», который сообщил бы отправителям, что нужно
+уменьшить сегменты, где-то на пути отфильтрован — а так бывает очень часто, — симптом характерен и
+обманчив: **мелкие запросы и TCP-рукопожатия проходят нормально, а затем любой крупный ответ
+застревает.** SSH подключается, но `ls` большого каталога зависает; сайт загружает свой HTML, но не
+картинки. Похоже на проблему приложения. Это проблема MSS, и исправление — на туннельных
+маршрутизаторах, а не на конечных точках.
 </Callout>
 
-### MSS clamping — the fix
+### Подрезка MSS — исправление
 
-Rewrite the MSS in every TCP `SYN` crossing the tunnel down to the tunnel's path MTU, so both
-ends negotiate segments that fit. Clamp on **both** tunnel routers, in **both** directions:
+Перепишите MSS в каждом TCP-`SYN`, пересекающем туннель, до MTU пути туннеля, чтобы оба конца
+согласовали сегменты, которые помещаются. Подрезайте на **обоих** туннельных маршрутизаторах, в
+**обоих** направлениях:
 
 ```sh
 # On each tunnel router:
@@ -97,21 +99,22 @@ iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -o gre1 -j TCPMSS -
 iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -i gre1 -j TCPMSS --clamp-mss-to-pmtu
 ```
 
-In the lab, a 4 MB download through a clamp-less tunnel with ICMP filtered transferred **0 bytes
-and timed out**; with the clamp in place, the same download completed. `--clamp-mss-to-pmtu`
-tracks the tunnel MTU automatically, so it survives an MTU change without an edit.
+В лаборатории загрузка 4 МБ через туннель без подрезки с отфильтрованным ICMP передала **0 байт и
+завершилась по таймауту**; с включённой подрезкой та же загрузка завершилась успешно.
+`--clamp-mss-to-pmtu` автоматически отслеживает MTU туннеля, так что переживает изменение MTU без
+правки.
 
-## The return path
+## Обратный путь
 
-Diverted traffic reaches the node; the **clean** traffic has to leave it the right way — toward
-the victim, not back down the dirty tunnel. This is where routing gets asymmetric, and asymmetric
-routing has two traps.
+Отведённый трафик доходит до узла; **чистый** трафик должен покинуть его правильным путём — в сторону
+жертвы, а не обратно вниз по грязному туннелю. Именно здесь маршрутизация становится асимметричной, а
+у асимметричной маршрутизации две ловушки.
 
-### Route-leaking (portable) or VRF (newer kernels)
+### Утечка маршрутов (route-leaking, переносимо) или VRF (новые ядра)
 
-Give the reinjected traffic its own routing context so it egresses the clean uplink regardless of
-the main table. On any kernel, do it with **policy routing** — a dedicated table selected by an
-`ip rule`:
+Дайте реинжектированному трафику собственный контекст маршрутизации, чтобы он выходил через чистый
+аплинк независимо от основной таблицы. На любом ядре сделайте это через **policy routing** —
+выделенную таблицу, выбираемую через `ip rule`:
 
 ```sh
 # main table: the dirty uplink (where diverted traffic arrives)
@@ -122,18 +125,18 @@ ip route add default via 10.31.0.2 dev eth1 table 100
 ip rule add from 203.0.113.0/24 lookup 100
 ```
 
-In the lab, `ip route get 8.8.8.8 from 203.0.113.10 iif eth0` then resolves via the clean uplink
-(`dev eth1 table 100`) while everything else stays on the main table. A **VRF device**
-(`ip link add vrf-clean type vrf table 100`, then enslave the clean uplink) gives the same
-isolation as a cleaner abstraction on kernels built with `CONFIG_NET_VRF`; it is the same table,
-reached through a device instead of a rule.
+В лаборатории `ip route get 8.8.8.8 from 203.0.113.10 iif eth0` затем разрешается через чистый
+аплинк (`dev eth1 table 100`), тогда как всё остальное остаётся в основной таблице.
+**VRF-устройство** (`ip link add vrf-clean type vrf table 100`, затем подчинить чистый аплинк) даёт
+ту же изоляцию как более чистую абстракцию на ядрах, собранных с `CONFIG_NET_VRF`; это та же
+таблица, к которой обращаются через устройство, а не через правило.
 
-### rp_filter and the asymmetric reply
+### rp_filter и асимметричный ответ
 
-Because the victim's prefix is diverted, a border router's **reverse route** to the victim points
-at the tunnel. When the victim's reply comes back on a normal link, strict reverse-path filtering
-(`rp_filter=1`) sees that the reply's source does not route back out the interface it arrived on,
-and **drops it silently.**
+Поскольку префикс жертвы отведён, **обратный маршрут** граничного маршрутизатора к жертве указывает
+на туннель. Когда ответ жертвы приходит обратно по обычному каналу, строгая фильтрация обратного
+пути (`rp_filter=1`) видит, что источник ответа не маршрутизируется обратно через интерфейс, на
+который он пришёл, и **молча его отбрасывает.**
 
 ```sh
 # The trap, and the fix — on the router that sees the asymmetric reply:
@@ -141,38 +144,39 @@ sysctl -w net.ipv4.conf.all.rp_filter=1     # strict: DROPS the asymmetric reply
 sysctl -w net.ipv4.conf.all.rp_filter=2     # loose:  accepts it if the source is reachable by ANY path
 ```
 
-The lab confirms it directly: a packet whose reverse path is a different interface is **dropped**
-under `rp_filter=1` and **passes** under `rp_filter=2` (loose) or `0` (off). Use **loose**
-(`2`) on the interfaces that carry asymmetric scrubbing traffic — it still rejects genuinely
-un-routable (spoofed) sources, but tolerates the asymmetry your diversion created. Setting it per
-interface (`net.ipv4.conf.<iface>.rp_filter`) is safer than flipping it globally.
+Лаборатория подтверждает это напрямую: пакет, чей обратный путь — другой интерфейс,
+**отбрасывается** при `rp_filter=1` и **проходит** при `rp_filter=2` (loose) или `0` (выключено).
+Используйте **loose** (`2`) на интерфейсах, которые несут асимметричный трафик очистки — она
+по-прежнему отвергает действительно немаршрутизируемые (подделанные) источники, но терпит
+асимметрию, которую создал ваш отвод. Задавать это по каждому интерфейсу
+(`net.ipv4.conf.<iface>.rp_filter`) безопаснее, чем переключать глобально.
 
-## Confirming the node is filtering
+## Подтверждение того, что узел фильтрует
 
-This is the step under-attack runbooks get wrong: for a scrub node, "the route reached my
-router" is not the question — **"is XDP attached and dropping?"** is. Check it on the node itself,
-which needs no running daemon (it reads the pinned maps):
+Это шаг, который runbook'и «под атакой» делают неправильно: для узла очистки вопрос не «дошёл ли
+маршрут до моего маршрутизатора», а **«подключён ли XDP и отбрасывает ли он?»**. Проверьте это на
+самом узле — для этого не нужен работающий демон (она читает закреплённые карты):
 
 ```sh
 kapkan dataplane status
 ```
 
-A healthy node reports `ENFORCING on <iface>`, the attach mode, and a live dynamic-rule count.
-In the lab's full loop — a brain detecting a flowgen attack, escalating to divert, and a real
-`kapkan scrub` agent pulling the ban — the agent attached XDP, installed the brain's rules, and
-`kapkan dataplane status` confirmed the dynamic rule blocks live in the kernel.
+Здоровый узел сообщает `ENFORCING on <iface>`, режим подключения и живой счётчик динамических правил.
+В полном цикле лаборатории — мозг обнаруживает атаку flowgen, эскалирует до divert, а настоящий агент
+`kapkan scrub` вытягивает блокировку — агент подключил XDP, установил правила мозга, а
+`kapkan dataplane status` подтвердил, что блоки динамических правил живут в ядре.
 
-The brain's side of the same question is the [Nodes view](/docs/dashboard) and
-`GET /api/v1/dataplane/nodes`: a node is **alive** because it keeps polling for rules — the poll
-is the liveness signal, never the node's self-report — so a node that appears in the inventory as
-alive is a node that is asking the brain what to drop. If the node stops polling for
-`scrubbing.stale_after_seconds`, the brain re-announces the victim toward a surviving node, or
-runs `on_all_nodes_lost` when none remain (see [scrubbing](/docs/scrubbing)).
+Сторона мозга того же вопроса — это [представление Nodes](/docs/dashboard) и
+`GET /api/v1/dataplane/nodes`: узел **жив**, потому что продолжает опрашивать правила — опрос
+является сигналом живости, а никогда не самоотчёт узла, — так что узел, который появляется в
+инвентаре как живой, — это узел, который спрашивает у мозга, что отбрасывать. Если узел перестаёт
+опрашивать в течение `scrubbing.stale_after_seconds`, мозг переанонсирует жертву в сторону выжившего
+узла или выполняет `on_all_nodes_lost`, когда не осталось ни одного (см. [очистку](/docs/scrubbing)).
 
-<Callout type="note" title="Reproduce it yourself">
-The harness that verified every recipe here is committed at `engine/scripts/labnet/`:
-`plumbing.sh` runs the tunnel, MSS, L2, `rp_filter` and route-leaking recipes in throwaway
-network namespaces, and `scrub-loop.sh` runs the full attack → detect → divert → scrub → drop
-loop with a real `kapkan scrub` node. Both need a privileged container on a kernel with BPF/BTF,
-GRE and policy routing.
+<Callout type="note" title="Воспроизведите это сами">
+Оснастка, которая проверила каждый рецепт здесь, закоммичена в `engine/scripts/labnet/`:
+`plumbing.sh` прогоняет рецепты туннеля, MSS, L2, `rp_filter` и утечки маршрутов в одноразовых
+сетевых пространствах имён, а `scrub-loop.sh` прогоняет полный цикл атака → обнаружение → divert →
+очистка → отбрасывание с настоящим узлом `kapkan scrub`. Обоим нужен привилегированный контейнер на
+ядре с BPF/BTF, GRE и policy routing.
 </Callout>

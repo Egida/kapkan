@@ -26,7 +26,9 @@ ist sie einmal konfiguriert, muss jede Anfrage `Authorization: Bearer <token>` m
 tragen eine **Rolle**: Die `GET`-Routen benötigen die Rolle **viewer**, und die zustandsändernden
 Routen (`ban`, `unban`, `config/reload`) benötigen die Rolle **operator**. `config/reload` geht
 noch weiter: Es erfordert ein **ungebundenes (Admin-)Token**, sodass selbst ein operator-Token, das
-tenant-bezogen ist, mit `403` abgewiesen wird. Ein Lesezugriff mit einem
+tenant-bezogen ist, mit `403` abgewiesen wird. Der
+[Scrub-Knoten-Kanal](#der-scrub-knoten-kanal) verlangt die Rolle **agent** — das Credential eines
+Scrub-Knotens, das genau jene Routen und nichts sonst erreicht. Ein Lesezugriff mit einem
 viewer-Token funktioniert; eine Änderung mit einem viewer-Token liefert `403`; ein unbekanntes Token
 liefert `401`. Die `POST`-Endpunkte verlangen zusätzlich einen JSON-Content-Type — senden Sie
 `Content-Type: application/json`. Ein `POST` ohne diesen Header wird mit
@@ -56,6 +58,9 @@ beschränkt und liefert andernfalls `403`. Siehe
 | POST | `/api/v1/ban` | Eine Adresse manuell sperren. |
 | POST | `/api/v1/unban` | Eine Sperre manuell zurückziehen. |
 | POST | `/api/v1/config/reload` | Konfigurationsdatei neu einlesen (entspricht `SIGHUP`). |
+| GET | `/api/v1/dataplane/rules` | Der Regel-Feed für [Scrub-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten) (`agent`/ungebundenes `operator`); ETag-Long-Poll, bis zu 30 s gehalten. |
+| POST | `/api/v1/dataplane/nodes/{name}/report` | Der beratende Selbstreport eines Scrub-Knotens (`agent`/ungebundenes `operator`). |
+| GET | `/api/v1/dataplane/nodes` | Inventar der verwalteten Knoten: Lebendigkeit, Konfiguration, Ban-Zähler pro Knoten (ungebundenes `viewer`+). |
 | GET | `/metrics` | Prometheus-Metriken. |
 | GET | `/healthz` | Unauthentifizierte Liveness-/Readiness-Probe: `503`, bis vollständig gestartet, danach `200`. |
 
@@ -297,6 +302,7 @@ Gibt die vollständige Sperrtabelle zurück — aktive und historische. Jeder Ei
 | `next_hop` | string | Der Discard-Next-Hop. |
 | `community` | string | Die an die Route angehängte Community-Menge — die RTBH-Community bei einem Blackhole, die Divert-(Scrubbing-)Community bei einer Divert-Sperre — bei mehr als einer durch Leerzeichen verbunden. |
 | `local_pref` | number | Der an die Route angehängte `LOCAL_PREF`; entfällt, wenn null. |
+| `node` | string | Der [verwaltete Scrubbing-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten), auf den dieser Divert-Ban eingefroren ist; entfällt, wenn der Ban nicht zu einem verwalteten Knoten umleitet. |
 | `route` | string | Der vollständige Routen-String oder eine `flowspec: ...`-Zusammenfassung bei FlowSpec-Sperren. |
 | `state` | string | `active`, `withdrawn` oder `rejected`. |
 | `dry_run` | bool | Ob die Sperre virtuell war. |
@@ -444,6 +450,58 @@ restricted to unscoped (admin) tokens` abgewiesen wird.
 Falls die neue Konfiguration nicht geparst oder validiert werden kann, bleibt die laufende
 Konfiguration unverändert und der Endpunkt liefert HTTP `400` mit dem Fehler zurück. Siehe
 [Konfiguration](/docs/configuration).
+
+### Der Scrub-Knoten-Kanal
+
+Diese drei Endpunkte existieren für [verwaltete Scrubbing-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten)
+— Boxen, die [`kapkan scrub`](/docs/cli) ausführen. Sie verlangen die Rolle `agent` (das Credential
+eines Scrub-Knotens; siehe [Authentifizierung](/docs/authentication)) oder ein ungebundenes
+`operator`-Token, niemals ein `viewer`- oder ein tenant-bezogenes Token: Die Dokumente umspannen
+jeden Tenant, sodass ihre Begrenzung eine Flotten- und keine Pro-Anfrage-Angelegenheit ist.
+
+#### GET /api/v1/dataplane/rules
+
+Die Regeltabelle, die ein Knoten durchsetzt: jedes aktive [umgeleitete](/docs/scrubbing) Opfer, mit
+den zu verwerfenden [FlowSpec](/docs/flowspec)-Regeln und der zu spiegelnden TTL. Ein einfacher
+`GET` liefert das aktuelle Dokument mit einem Content-Hash-`ETag`; ein `GET`, dessen
+`If-None-Match` dieses ETag nennt, wird **gehalten**, bis sich die Tabelle ändert oder bis zu 30 s,
+und dann mit `304` beantwortet — ein Long-Poll, der Regel-Updates im Sub-Sekunden-Bereich über
+gewöhnliches HTTP liefert. Ein Knoten identifiziert sich mit `?node=<name>`, und **dieser Poll ist
+das Lebendigkeitssignal des Knotens** — der Name muss also ein konfigurierter Knoten sein (ein
+unbekannter Name ist `404`) und, außerhalb des token-losen lokalen Modus, muss die Anfrage ein
+echtes Token mitführen.
+
+```json
+{
+  "version": 1,
+  "bans": [
+    {
+      "target": "203.0.113.10",
+      "prefix": "203.0.113.10/32",
+      "method": "divert",
+      "expires_at": "2026-08-13T10:00:00Z",
+      "flowspec": [ { "dst": "203.0.113.10/32", "proto": 17, "action": "discard" } ]
+    }
+  ]
+}
+```
+
+#### POST /api/v1/dataplane/nodes/\{name\}/report
+
+Der beratende Selbstreport eines Knotens — Version, XDP-Modus, knotenseitiger Dry-Run, Last- und
+Drop-Summen — gespeichert für die [Konsole](/docs/dashboard). Er ist **niemals** ein
+Lebendigkeitssignal (das ist der Poll): Ein Report kann niemals einen toten Knoten als aktiv
+markiert halten. Der Body ist auf 64 KiB begrenzt (`413` darüber) und ein unbekanntes `{name}` ist
+`404`. Erfolg ist `204 No Content`.
+
+#### GET /api/v1/dataplane/nodes
+
+Das Knoteninventar, das die Nodes-Ansicht der Konsole rendert: jeder konfigurierte Knoten mit dem,
+was das Gehirn weiß (Konfiguration, Poll-Lebendigkeit, wie viele Bans zu ihm umleiten), verbunden
+mit seinem letzten Report. Ein Lesezugriff mit `viewer`-Rang, aber nur ungebundene Tokens — das
+Inventar nennt Next-Hops und Hostgruppen, was Deployment-Topologie ist. Die Anzahl allein
+(`nodes_total`) reitet für jede Rolle auf `/api/v1/status` mit, sodass eine Konsole ohne diesen
+Aufruf entscheiden kann, ob sie Knoten-Bedienelemente anzeigt.
 
 ### GET /metrics
 

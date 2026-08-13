@@ -76,6 +76,21 @@ Cada vecino configurado debería alcanzar `ESTABLISHED`. Si alguno se queda atas
 (`GET /api/v1/status` muestra tu *configuración* de BGP pero no el estado de la sesión en vivo: eso vive
 únicamente en los logs.)
 
+<Callout type="info" title="En un nodo de scrubbing, hazte otra pregunta">
+"La ruta llegó a mi router" es la pregunta de blackhole/divert. En un [nodo de scrubbing
+gestionado](/docs/scrubbing#nodos-de-scrubbing-gestionados) el descarte ocurre **en el kernel del
+nodo**, así que la pregunta es si XDP está adjunto y descartando. Compruébalo en el nodo:
+
+```sh
+kapkan dataplane status
+```
+
+Debería informar `ENFORCING` en la interfaz sucia con un recuento de reglas dinámicas en vivo. Desde
+el cerebro, la [vista de Nodos](/docs/dashboard) (o `GET /api/v1/dataplane/nodes`) muestra el nodo
+**vivo** — está vivo porque sigue sondeando reglas. Si el nodo aparece como perdido, el tráfico
+desviado está llegando a una máquina que no descarta nada.
+</Callout>
+
 ## 5. Observa cómo los bans expiran por sí solos
 
 ```sh

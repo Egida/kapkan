@@ -80,6 +80,22 @@ Jeder konfigurierte Neighbor sollte `ESTABLISHED` erreichen. Falls einer hängen
 (`GET /api/v1/status` zeigt Ihre BGP-*Konfiguration*, aber nicht den Live-Zustand der Sitzung —
 der steht nur in den Logs.)
 
+<Callout type="info" title="Auf einem Scrub-Knoten stellen Sie eine andere Frage">
+„Die Route hat meinen Router erreicht" ist die Blackhole-/Divert-Frage. Auf einem [verwalteten
+Scrubbing-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten) geschieht das Verwerfen **im Kernel
+des Knotens**, sodass die Frage lautet, ob XDP angehängt ist und verwirft. Prüfen Sie es auf dem
+Knoten:
+
+```sh
+kapkan dataplane status
+```
+
+Es sollte `ENFORCING` auf dem dirty Interface mit einer aktiven Anzahl dynamischer Regeln melden.
+Vom Gehirn aus zeigt die [Nodes-Ansicht](/docs/dashboard) (oder `GET /api/v1/dataplane/nodes`) den
+Knoten als **lebendig** — er ist lebendig, weil er weiterhin nach Regeln pollt. Zeigt der Knoten
+als verloren, erreicht der umgeleitete Verkehr eine Box, die nichts verwirft.
+</Callout>
+
 ## 5. Bans von selbst ablaufen lassen
 
 ```sh

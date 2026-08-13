@@ -1,7 +1,7 @@
 export const metadata = {
   title: "Référence CLI",
   description:
-    "Chaque option de ligne de commande du binaire kapkan — chemin de configuration, format et niveau des journaux, le pid file et le contrôle de processus `-s` à la manière de nginx, les options utilitaires de schéma/validation, et la commande `dataplane status`.",
+    "Chaque option de ligne de commande du binaire kapkan — chemin de configuration, format et niveau des journaux, le pid file et le contrôle de processus `-s` à la manière de nginx, les options utilitaires de schéma/validation, et les commandes `dataplane status` et `scrub`.",
 };
 
 # Référence CLI
@@ -240,6 +240,55 @@ réutilisation du code de démarrage du démon. Le démarrage du plan de donnée
 toutes les règles d'atténuation dynamiques présentes dans le noyau. Un diagnostic capable de faire
 cela en pleine attaque serait pire que pas de diagnostic du tout.
 </Callout>
+
+### `scrub`
+
+```sh
+kapkan scrub -config /etc/kapkan/scrub.yaml
+```
+
+Exécute le rôle [nœud de scrubbing](/docs/scrubbing#nœuds-de-nettoyage-gérés) : le même binaire,
+un travail différent. Il n'y a ni détection, ni BGP, ni écouteur de télémétrie — la machine reçoit
+le trafic que le cerveau lui a dévié, interroge en long-poll la table de règles du cerveau, et
+maintient son [plan de données](/docs/dataplane) XDP local en train d'appliquer exactement ce que
+le cerveau lui dit de supprimer. L'interrogation fait aussi office de signal de vivacité du nœud.
+
+Tout ce qui est spécifique au rôle vit dans son propre `scrub.yaml` ; le `config.yaml` du démon
+n'est **pas** lu (`-config` a ici pour valeur par défaut `/etc/kapkan/scrub.yaml`). Il comporte
+trois parties : le contrôleur à joindre, l'identité du nœud, et le même bloc `dataplane:` qu'un
+démon embarque.
+
+```yaml
+dry_run: true                     # the remote-role default — counts, drops nothing
+controller:
+  url: "https://kapkan.example.net:8443"   # the brain's API base (no path)
+  token_env: KAPKAN_AGENT_TOKEN            # env var holding the agent token (required)
+  name: scrub-fra1                         # must equal a scrubbing.nodes[] name on the brain
+dataplane:
+  interfaces: [eth0]              # the dirty side (diverted traffic arrives here)
+  xdp_mode: auto
+  pin_path: /sys/fs/bpf/kapkan
+```
+
+<Callout type="warning" title="Un nœud de scrubbing démarre en dry-run par défaut">
+`dry_run` vaut **true** par défaut pour un rôle distant — le nœud installe les règles et compte ce
+qu'elles *supprimeraient*, mais ne supprime rien, jusqu'à ce que vous définissiez explicitement
+`dry_run: false`. Il n'applique jamais une règle que le cerveau a marquée dry-run tant qu'elle est
+active, et il exige un vrai token agent : sans lui, ses interrogations ne portent aucune identité et
+le cerveau le compterait comme mort. Utilisez `https` en dehors d'un laboratoire — une
+`controller.url` en clair envoie le token en clair.
+</Callout>
+
+| Option | Défaut | Description |
+| --- | --- | --- |
+| `-config <path>` | `/etc/kapkan/scrub.yaml` | La configuration du nœud de scrubbing. |
+| `-log-format <fmt>` | `json` | `json` ou `text`. |
+| `-log-level <lvl>` | `info` | `debug`, `info`, `warn` ou `error`. |
+
+Confirmez qu'un nœud tourne avec `kapkan dataplane status` sur le nœud lui-même — il rapporte
+`ENFORCING` et le nombre de règles installées — et la [vue Nœuds](/docs/dashboard) du cerveau
+l'affiche vivant. Acheminer le trafic dévié jusqu'au nœud est le
+[guide d'intégration réseau](/docs/network-integration).
 
 ## Étapes suivantes
 

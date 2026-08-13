@@ -198,6 +198,15 @@ elementos quedan fijados al arrancar, y una recarga que cambie cualquiera de ell
 la [referencia de configuración](/docs/configuration) y, para cambiar el binario sin perder la
 mitigación, [Actualización](/docs/upgrading).
 
+<Callout type="warning" title="Un proxy inverso delante de la API necesita un read timeout largo">
+Si ejecutas [nodos de scrubbing](/docs/scrubbing#nodos-de-scrubbing-gestionados) y pones un proxy
+inverso delante de `api.listen`, el [feed de reglas del nodo de scrubbing](/docs/api) hace
+long-poll — una petición se retiene hasta 30 s. Un read timeout corto del proxy corta esa retención
+y el nodo se reconecta en cada petición en vez de una vez por cambio de reglas. Súbelo por encima de
+la retención: nginx `proxy_read_timeout 60s;` (o más); en Envoy, sustituye el route timeout por
+defecto de 15 s para esa ruta. La propia API deliberadamente no fija write timeout por la misma razón.
+</Callout>
+
 ## Compilar desde el código fuente
 
 La compilación requiere **Go 1.26 o más reciente**. El `Makefile` ofrece los objetivos

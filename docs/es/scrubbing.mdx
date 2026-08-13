@@ -9,9 +9,12 @@ export const metadata = {
 <Callout type="warning" title="Primero necesitas un centro de scrubbing">
 Divert solo funciona si ya operas (o pagas por) un **centro de scrubbing** — una máquina o
 servicio aparte que filtra el tráfico del ataque y reinyecta el tráfico limpio sobre GRE o una
-VRF. Si no tienes uno, esta página **no** es tu punto de partida: usa
-[blackhole](/docs/mitigation) o [FlowSpec](/docs/flowspec) en su lugar. Apuntar `next_hop` a un
-scrubber que no existe desvía el tráfico de la víctima al vacío.
+VRF. Ahora puedes operar el tuyo propio con el rol [`kapkan scrub`](/docs/cli) — un
+[nodo de scrubbing gestionado](#nodos-de-scrubbing-gestionados) que descarta el ataque en su
+propio kernel — o apuntar `next_hop` a un scrubber de terceros. Si no tienes ninguno, esta
+página **no** es tu punto de partida: usa [blackhole](/docs/mitigation) o
+[FlowSpec](/docs/flowspec) en su lugar. Apuntar `next_hop` a un scrubber que no existe desvía el
+tráfico de la víctima al vacío.
 </Callout>
 
 En términos simples: en vez de descartar el tráfico de la víctima, divert lo envía a una
@@ -93,6 +96,76 @@ Usa esa ventana para comprobar tu ruta de divert antes de que se mueva cualquier
 La ruta de divert que construye Kapkan se lee como `divert <prefix> next-hop <next_hop> community
 <community>` — la cadena que aparece en el campo `route` del [objeto ban](/docs/api), con
 `method: divert`.
+
+## Nodos de scrubbing gestionados
+
+El `next_hop` escalar de arriba desvía hacia **un** scrubber que operas tú o ejecuta un proveedor
+— Kapkan anuncia la ruta y el scrubber hace el resto. Un **nodo de scrubbing gestionado** es el
+scrubber propio de Kapkan: una máquina que ejecuta el rol [`kapkan scrub`](/docs/cli), recibe el
+tráfico desviado, descarta el ataque en su [plano de datos](/docs/dataplane) dentro del kernel y
+reinyecta lo que queda. Kapkan anuncia la víctima hacia el nodo **y** le dice al nodo exactamente
+qué descartar — las mismas reglas [FlowSpec](/docs/flowspec) que generó el detector — de modo que
+el nodo filtra el vector del ataque en vez de todos los paquetes hacia la víctima.
+
+Lista cada nodo bajo `scrubbing.nodes[]`. El `next_hop` escalar sigue siendo válido como el caso
+degenerado de un solo nodo y como destino comodín (catch-all) para los grupos que ningún nodo
+atiende (esa es la historia de migración: añade `nodes[]` junto a tu `next_hop` existente y ve
+moviendo los grupos de uno en uno).
+
+```yaml
+scrubbing:
+  next_hop: "192.0.2.100"        # still valid: the one-node case / catch-all target
+  node_selection: affinity       # affinity (default) | least_loaded | ecmp
+  on_all_nodes_lost: withdraw    # withdraw (default) | blackhole | flowspec
+  stale_after_seconds: 15        # a node unheard-from this long counts as lost
+  nodes:
+    - name: scrub-fra1           # must match the node's controller.name
+      next_hop: "192.0.2.10"     # the node's IPv4 BGP next-hop (required)
+      next_hop6: "2001:db8::10"  # required to divert IPv6 victims to this node
+      capacity_mbps: 10000       # shown in the console; used by least_loaded
+      hostgroups: [game-servers] # this node serves only these groups (empty = any)
+    - name: scrub-ams1
+      next_hop: "192.0.2.11"
+```
+
+| Clave | Significado |
+| --- | --- |
+| `nodes[].name` | Identidad del nodo. **Debe coincidir** con el `controller.name` que presenta el agente del nodo cuando sondea, o cada sondeo será un sonoro `404`. |
+| `nodes[].next_hop` / `next_hop6` | El o los next-hop BGP del nodo. `next_hop` es obligatorio; `next_hop6` es obligatorio para desviar víctimas IPv6 a ese nodo. |
+| `nodes[].capacity_mbps` | La capacidad de scrubbing del nodo, mostrada en la consola y usada por `least_loaded`. `0` significa desconocida. |
+| `nodes[].hostgroups` | Restringe qué [hostgroups](/docs/hostgroups) atiende este nodo. Vacío significa que acepta cualquier grupo. Un grupo cuya escalera desvía debe tener un nodo que lo atienda, o el `next_hop` escalar como fallback. |
+| `node_selection` | Cómo se elige un nodo para un nuevo ban: `affinity` (por defecto — el primer nodo configurado cuyos `hostgroups` reclaman la víctima), `least_loaded` o `ecmp`. **Hoy solo `affinity` está implementado**; los demás registran una advertencia al arrancar y recurren a él. |
+| `on_all_nodes_lost` | Qué hacer cuando ningún nodo gestionado es alcanzable: `withdraw` (por defecto — dejar de atraer el tráfico de la víctima), `blackhole` o `flowspec`. Mientras al menos un nodo sobreviva, la víctima se reanuncia hacia él en su lugar. |
+| `stale_after_seconds` | Cuánto tiempo puede pasar un nodo sin sondear antes de contar como perdido. Por defecto `15`. Para una muerte *silenciosa* (corte de energía, una partición — nada envía un FIN) el límite real de detección es este **más** la retención del long-poll en la que el nodo puede quedar aparcado (hasta 30 s); dimensiónalo según tu tolerancia a blackhole teniendo en cuenta esa suma. |
+
+### La elección de nodo se congela y sobrevive a la pérdida de nodos
+
+El nodo de un ban se elige **una vez, en el momento del ban** y se congela en el ban como sus
+atributos BGP — el tráfico de una víctima nunca salta entre sitios de scrubbing porque una recarga
+haya reordenado la lista. La selección prefiere nodos que estén realmente sondeando, así que un ban
+nuevo nunca apunta a un nodo que el cerebro ya puede ver que se fue.
+
+Cuando un nodo deja de sondear durante `stale_after_seconds`, el barrido mueve sus víctimas:
+
+- a un nodo elegible **superviviente** — reanunciado make-before-break sobre la misma ruta de host,
+  de modo que la víctima nunca queda brevemente desprotegida. Una vez movida, la elección se congela
+  de nuevo: que el nodo antiguo vuelva **no** trae la víctima de regreso.
+- a través de **`on_all_nodes_lost`** solo cuando *ningún* nodo elegible sobrevive. `flowspec`
+  necesita sus reglas, así que un ban de divert bajo esa política las genera en el momento del ban.
+
+<Callout type="info" title="La vitalidad es el sondeo, nunca el reporte">
+Un nodo está **vivo** porque sigue sondeando reglas al cerebro — ese sondeo es la única señal de
+vitalidad. El autoinforme de un nodo (carga, recuentos de descartes, versión, mostrados en la
+[consola](/docs/dashboard)) es orientativo: un token de nodo comprometido podría inflar un reporte,
+pero nunca puede mantener a un nodo muerto atrayendo tráfico desviado, porque nada actúa sobre el
+reporte. Un nodo recién añadido por una recarga (o tras un reinicio del cerebro) obtiene una ventana
+de aparición antes de poder ser juzgado como perdido, así que un despliegue rutinario nunca dispara
+`on_all_nodes_lost`.
+</Callout>
+
+Llevar el tráfico desviado **hasta** un nodo y sacar el tráfico limpio **de vuelta** — inserción
+L2, túneles GRE/IPIP con clamping de MSS, la ruta de retorno y las trampas de enrutamiento
+asimétrico — es tarea de tu red, cubierta en la [guía de integración de red](/docs/network-integration).
 
 ## Scrubbing por hostgroup
 

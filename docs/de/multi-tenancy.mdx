@@ -79,6 +79,16 @@ Ein ungebundenes Token ist ein Admin — das standardmäßige, vollständig abw�
 Verhalten. Ein Token, das an einen Mandanten gebunden ist, den keine Hostgruppe nutzt, wird beim
 Laden der Konfiguration abgelehnt (ein Tippfehler würde sonst stillschweigend nichts sehen).
 
+<Callout type="info" title="Die agent-Rolle liegt außerhalb dieser Achse">
+Das `agent`-Token eines [Scrub-Knotens](/docs/scrubbing#verwaltete-scrubbing-knoten) ist **kein**
+abgeschwächter viewer mit einem Mandanten — es steht vollständig außerhalb der Rollenleiter und
+**kann nicht** tenant-bezogen sein (die Kombination ist ein Konfigurationsfehler). Der [Regel-Feed
+und das Knoteninventar](/docs/api) umspannen bewusst jeden Mandanten: Ein Scrub-Knoten filtert für
+das gesamte Deployment, sodass die tenant-Begrenzung pro Knoten eine [Flotten](/docs/scrubbing)-
+und keine Token-Angelegenheit ist. Behandeln Sie ein agent-Token als deploymentweit und halten Sie
+es von Boxen fern, die kundenbezogene Daten vorhalten.
+</Callout>
+
 ## Durchsetzung
 
 Das Scoping ist **default-deny: ein gebundenes Token sieht immer nur seinen eigenen Mandanten.**
