@@ -82,6 +82,7 @@ export type WizardChrome = {
     frag: string;
     flows: string;
     hint: string;
+    perProto: string;
   };
   presets: {
     edge: { name: string; desc: string };
@@ -91,6 +92,10 @@ export type WizardChrome = {
   };
   search: { placeholder: string; empty: string };
   modifiedChip: string; // "{n}" placeholder
+  emptyList: string; // shown where a list has no entries yet
+  helpToggle: string; // toolbar switch: show every field description inline
+  helpOne: string; // per-field "what does this do?" button
+  sectionErrs: string; // "{n}" placeholder — error count chip in a section header
   importer: {
     btn: string;
     hint: string;
@@ -187,6 +192,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Fragments",
       flows: "Flows per second",
       hint: "Empty = disabled. Any crossed limit triggers (OR).",
+      perProto: "Per-protocol limits",
     },
     presets: {
       edge: { name: "Hosting edge", desc: "Recommended baseline for a hosting / provider edge" },
@@ -196,6 +202,10 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     },
     search: { placeholder: "Search settings…", empty: "Nothing found" },
     modifiedChip: "Modified · {n}",
+    emptyList: "Nothing yet — using the engine default",
+    helpToggle: "Descriptions",
+    helpOne: "What this does",
+    sectionErrs: "{n} to fix",
     importer: {
       btn: "Import YAML",
       hint: "Paste your kapkan config.yaml — the form fills from it. Keys the form cannot represent are listed, never dropped silently.",
@@ -306,6 +316,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Фрагменты",
       flows: "Потоков в секунду",
       hint: "Пусто = выключено. Срабатывает любой превышенный лимит (OR).",
+      perProto: "Лимиты по протоколам",
     },
     presets: {
       edge: { name: "Хостинг / edge", desc: "Рекомендуемая база для края сети хостинга или провайдера" },
@@ -315,6 +326,10 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     },
     search: { placeholder: "Поиск по настройкам…", empty: "Ничего не найдено" },
     modifiedChip: "Изменено · {n}",
+    emptyList: "Пусто — движок возьмёт значение по умолчанию",
+    helpToggle: "Пояснения",
+    helpOne: "Что это делает",
+    sectionErrs: "{n} с ошибкой",
     importer: {
       btn: "Импорт YAML",
       hint: "Вставьте ваш config.yaml — форма заполнится из него. Ключи, которых нет в форме, будут перечислены, а не потеряны молча.",
@@ -425,6 +440,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Fragmente",
       flows: "Flows pro Sekunde",
       hint: "Leer = deaktiviert. Jedes überschrittene Limit löst aus (OR).",
+      perProto: "Limits pro Protokoll",
     },
     presets: {
       edge: { name: "Hosting-Edge", desc: "Empfohlene Basis für den Netzrand eines Hosters/Providers" },
@@ -434,6 +450,10 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     },
     search: { placeholder: "Einstellungen durchsuchen…", empty: "Nichts gefunden" },
     modifiedChip: "Geändert · {n}",
+    emptyList: "Noch leer — es gilt der Engine-Standard",
+    helpToggle: "Beschreibungen",
+    helpOne: "Was das bewirkt",
+    sectionErrs: "{n} zu klären",
     importer: {
       btn: "YAML importieren",
       hint: "Fügen Sie Ihre kapkan config.yaml ein — das Formular füllt sich daraus. Nicht darstellbare Schlüssel werden aufgelistet, nie stillschweigend verworfen.",
@@ -544,6 +564,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Fragments",
       flows: "Flux par seconde",
       hint: "Vide = désactivé. Toute limite franchie déclenche (OR).",
+      perProto: "Limites par protocole",
     },
     presets: {
       edge: { name: "Bordure hosting", desc: "Base recommandée pour la bordure d'un hébergeur/opérateur" },
@@ -553,6 +574,10 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     },
     search: { placeholder: "Rechercher un réglage…", empty: "Aucun résultat" },
     modifiedChip: "Modifié · {n}",
+    emptyList: "Vide — la valeur par défaut du moteur s'applique",
+    helpToggle: "Descriptions",
+    helpOne: "Ce que ça fait",
+    sectionErrs: "{n} à corriger",
     importer: {
       btn: "Importer du YAML",
       hint: "Collez votre config.yaml kapkan — le formulaire se remplit. Les clés non représentables sont listées, jamais perdues en silence.",
@@ -663,6 +688,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Fragmentos",
       flows: "Flujos por segundo",
       hint: "Vacío = desactivado. Cualquier límite superado dispara (OR).",
+      perProto: "Límites por protocolo",
     },
     presets: {
       edge: { name: "Borde hosting", desc: "Base recomendada para el borde de un hosting/proveedor" },
@@ -672,6 +698,10 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     },
     search: { placeholder: "Buscar ajustes…", empty: "Sin resultados" },
     modifiedChip: "Modificado · {n}",
+    emptyList: "Vacío — se usa el valor por defecto del motor",
+    helpToggle: "Descripciones",
+    helpOne: "Qué hace esto",
+    sectionErrs: "{n} por corregir",
     importer: {
       btn: "Importar YAML",
       hint: "Pega tu config.yaml de kapkan — el formulario se rellena desde él. Las claves no representables se listan, nunca se pierden en silencio.",

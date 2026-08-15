@@ -301,6 +301,11 @@ const ALL_DEFS: SearchEntry[] = [
 // Module-level on purpose: defining this inside ConfigBuilder would give it a
 // new component identity every render, remounting the subtree and dropping
 // input focus on each keystroke.
+// One field row. Label + YAML key on the left, control on the right — the
+// settings-page shape, so a column of rows scans vertically instead of ragging.
+// The description is NOT printed by default: 50 always-on help paragraphs were
+// what made the page unreadable. It appears on demand (per field, or globally
+// via the toolbar switch); errors always show.
 function FieldShell({
   f,
   label,
@@ -310,6 +315,9 @@ function FieldShell({
   modified,
   onReset,
   resetTitle,
+  showHelp,
+  helpLabel,
+  wide,
   children,
 }: {
   f: FieldDef;
@@ -320,38 +328,73 @@ function FieldShell({
   modified?: boolean;
   onReset?: () => void;
   resetTitle?: string;
+  showHelp?: boolean;
+  helpLabel?: string;
+  wide?: boolean; // matrices and row editors take the full width instead of the right half
   children: React.ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
+  const helpVisible = !!help && (showHelp || open);
   return (
-    <div className={`-ml-3 border-l-2 pl-3 ${modified ? "border-accent/60" : "border-transparent"}`}>
-      <div className="mb-1 flex items-baseline justify-between gap-3">
-        <label htmlFor={`f-${f.path}`} className="text-sm font-medium">
-          {label}
-        </label>
-        <span className="flex shrink-0 items-baseline gap-2">
-          {modified && onReset && (
-            <button
-              type="button"
-              title={resetTitle}
-              aria-label={resetTitle}
-              onClick={onReset}
-              className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              ↺
-            </button>
+    <div
+      className={`group/field relative py-3 pl-3 ${
+        modified ? "before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-accent" : ""
+      }`}
+    >
+      {/* container query, not a viewport one: the row splits into label/control
+          columns based on how wide the FORM COLUMN actually is, so a narrow
+          middle column at 1024px keeps the stacked layout instead of squeezing */}
+      <div className={wide ? "space-y-2" : "gap-x-6 gap-y-2 @lg:flex @lg:items-start @lg:justify-between"}>
+        <div className={wide ? "" : "min-w-0 @lg:w-[46%] @lg:shrink-0 @lg:pt-1.5"}>
+          <div className="flex items-baseline gap-2">
+            <label htmlFor={`f-${f.path}`} className="text-[13.5px] font-medium leading-snug">
+              {label}
+            </label>
+            {help && !showHelp && (
+              <button
+                type="button"
+                title={helpLabel}
+                aria-label={helpLabel}
+                aria-expanded={open}
+                onClick={() => setOpen((v) => !v)}
+                className={`shrink-0 rounded-full border border-border px-1.5 text-[10px] leading-4 transition-opacity ${
+                  open ? "text-foreground" : "text-muted-foreground opacity-0 group-hover/field:opacity-100 focus-visible:opacity-100"
+                }`}
+              >
+                ?
+              </button>
+            )}
+            {modified && onReset && (
+              <button
+                type="button"
+                title={resetTitle}
+                aria-label={resetTitle}
+                onClick={onReset}
+                className="shrink-0 text-[11px] leading-4 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/field:opacity-100 focus-visible:opacity-100"
+              >
+                ↺
+              </button>
+            )}
+          </div>
+          <code className="mt-0.5 block font-mono text-[10.5px] leading-4 text-muted-foreground/70">
+            {f.path}
+          </code>
+        </div>
+        <div className={wide ? "" : "min-w-0 flex-1"}>
+          {children}
+          {(error || gloss) && (
+            <div className="mt-1 flex items-baseline justify-between gap-3">
+              {error ? <p className="text-xs text-red-500">{error}</p> : <span />}
+              {gloss && !error && (
+                <span className="ml-auto shrink-0 text-[11px] font-medium text-muted-foreground">{gloss}</span>
+              )}
+            </div>
           )}
-          <code className="font-mono text-[11px] text-muted-foreground/80">{f.path}</code>
-        </span>
+        </div>
       </div>
-      {children}
-      <div className="mt-1 flex items-baseline justify-between gap-3">
-        {error ? (
-          <p className="text-xs text-red-500">{error}</p>
-        ) : (
-          <p className="text-xs text-muted-foreground">{help}</p>
-        )}
-        {gloss && <span className="shrink-0 text-xs font-medium text-muted-foreground">{gloss}</span>}
-      </div>
+      {helpVisible && (
+        <p className="mt-2 max-w-[68ch] text-xs leading-relaxed text-muted-foreground">{help}</p>
+      )}
     </div>
   );
 }
@@ -375,6 +418,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   });
   // stage-3 service layer
   const [filterModified, setFilterModified] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const [searchFocus, setSearchFocus] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -840,6 +884,20 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
   // ------------------------------------------------------------------ fields
 
+  const WIDE_KINDS: FieldKind[] = [
+    "matrix",
+    "list",
+    "neighbors",
+    "boundary",
+    "escalation",
+    "hostgroups",
+    "scrubnodes",
+    "rlprofiles",
+    "staticrules",
+    "apitokens",
+    "method",
+  ];
+
   const shellProps = (f: FieldDef) => {
     const modified = fieldModified(f);
     return {
@@ -850,6 +908,9 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       modified,
       onReset: modified ? () => resetField(f) : undefined,
       resetTitle: t.reset.btn,
+      showHelp,
+      helpLabel: t.helpOne,
+      wide: WIDE_KINDS.includes(f.kind),
     };
   };
 
@@ -901,36 +962,32 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   }
 
   function renderBool(f: FieldDef) {
-    const modified = fieldModified(f);
+    // A boolean is its own control: render it as a switch row (label left,
+    // switch right) so it lines up with the value column of every other row.
+    const on = s[f.key!] as boolean;
     return (
-      <div key={f.path} className={`-ml-3 border-l-2 pl-3 ${modified ? "border-accent/60" : "border-transparent"}`}>
-        <div className="flex items-center justify-between gap-3">
-          <label className="flex cursor-pointer items-center gap-3 text-sm font-medium">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-[var(--accent)]"
-              checked={s[f.key!] as boolean}
-              onChange={(e) => set(f.key!, e.target.checked as WizardState[typeof f.key & keyof WizardState])}
+      <FieldShell key={f.path} {...shellProps(f)} error={null}>
+        <div className="flex @lg:justify-start">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            aria-labelledby={undefined}
+            aria-label={labelOf(f.path)}
+            onClick={() => set(f.key!, !on as WizardState[typeof f.key & keyof WizardState])}
+            className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full border transition-colors ${
+              on ? "border-accent bg-accent" : "border-border bg-muted"
+            }`}
+          >
+            <span
+              aria-hidden
+              className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-background transition-[left] ${
+                on ? "left-[18px]" : "left-0.5"
+              }`}
             />
-            <span>{labelOf(f.path)}</span>
-          </label>
-          <span className="flex shrink-0 items-baseline gap-2">
-            {modified && (
-              <button
-                type="button"
-                title={t.reset.btn}
-                aria-label={t.reset.btn}
-                onClick={() => resetField(f)}
-                className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                ↺
-              </button>
-            )}
-            <code className="font-mono text-[11px] text-muted-foreground/80">{f.path}</code>
-          </span>
+          </button>
         </div>
-        <p className="mt-1 pl-7 text-xs text-muted-foreground">{helpOf(f.path)}</p>
-      </div>
+      </FieldShell>
     );
   }
 
@@ -961,6 +1018,11 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={null}>
         <div className="space-y-2">
+          {values.length === 0 && (
+            <p className="rounded-md border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground">
+              {t.emptyList}
+            </p>
+          )}
           {values.map((v, i) => {
             const err = v.trim() ? validateString(f.path, v, vmsg) : null;
             return (
@@ -1022,32 +1084,55 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           aria-label={`${f.path}.${k}`}
           className={`${cellCls} ${bad ? "border-red-500" : "border-border"}`}
           inputMode="numeric"
+          placeholder="—"
           value={val[k]}
           spellCheck={false}
           onChange={(e) => upd(k, e.target.value)}
         />
       );
     };
+    // Only the "any traffic" limits are shown up front. Ten mostly-empty
+    // per-protocol boxes are what made this read as a broken spreadsheet, so
+    // they live behind a disclosure that opens itself when any of them is set.
+    const protoRows = rows.slice(1);
+    const protoSet = protoRows.some((r) => val[r.pps].trim() !== "" || val[r.mbps].trim() !== "");
+    const headers = (
+      <>
+        <span />
+        <span className="pl-1 font-mono text-[10.5px] text-muted-foreground">pps</span>
+        <span className="pl-1 font-mono text-[10.5px] text-muted-foreground">mbps</span>
+      </>
+    );
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={err}>
-        <div className="overflow-x-auto">
-          <div className="grid min-w-[320px] grid-cols-[minmax(90px,auto)_1fr_1fr] items-center gap-x-2 gap-y-1.5">
-            <span />
-            <span className="font-mono text-[11px] text-muted-foreground">pps</span>
-            <span className="font-mono text-[11px] text-muted-foreground">mbps</span>
-            {rows.map((r) => (
+        <div className="grid grid-cols-[minmax(78px,auto)_1fr_1fr] items-center gap-x-2 gap-y-1.5">
+          {headers}
+          <span className="text-xs text-muted-foreground">{rows[0].label}</span>
+          {cell(rows[0].pps)}
+          {cell(rows[0].mbps)}
+          <span className="text-xs text-muted-foreground">{t.thr.flows}</span>
+          {cell("flows_per_sec")}
+          <span />
+        </div>
+        <details className="group/proto mt-2" open={protoSet}>
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <span aria-hidden className="text-[9px] transition-transform group-open/proto:rotate-90">
+              ▶
+            </span>
+            {t.thr.perProto}
+          </summary>
+          <div className="mt-2 grid grid-cols-[minmax(78px,auto)_1fr_1fr] items-center gap-x-2 gap-y-1.5">
+            {headers}
+            {protoRows.map((r) => (
               <div key={r.pps} className="contents">
                 <span className="text-xs text-muted-foreground">{r.label}</span>
                 {cell(r.pps)}
                 {cell(r.mbps)}
               </div>
             ))}
-            <span className="text-xs text-muted-foreground">{t.thr.flows}</span>
-            {cell("flows_per_sec")}
-            <span />
           </div>
-        </div>
-        {!err && <p className="mt-1 text-[11px] text-muted-foreground/80">{t.thr.hint}</p>}
+        </details>
+        {!err && <p className="mt-2 text-[11px] text-muted-foreground/80">{t.thr.hint}</p>}
       </FieldShell>
     );
   }
@@ -1055,22 +1140,23 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   // Small building blocks for the repeatable-row editors.
   function rowShell(children: React.ReactNode, onRemove: () => void, key: number) {
     return (
-      <div key={key} className="rounded-md border border-border p-3">
-        <div className="flex flex-wrap items-start gap-2">
-          {children}
-          <button
-            type="button"
-            aria-label="remove"
-            className="ml-auto shrink-0 rounded-md border border-border px-3 py-1.5 text-muted-foreground hover:bg-muted"
-            onClick={onRemove}
-          >
-            ×
-          </button>
-        </div>
+      <div key={key} className="relative rounded-md border border-border bg-muted/20 p-2.5 pr-9">
+        <div className="flex flex-wrap items-end gap-2">{children}</div>
+        <button
+          type="button"
+          aria-label="remove"
+          className="absolute right-1.5 top-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-muted-foreground hover:border-border hover:bg-muted"
+          onClick={onRemove}
+        >
+          ×
+        </button>
       </div>
     );
   }
 
+  // Cells inside repeatable rows carry a caption instead of relying on a
+  // placeholder that vanishes the moment you type — a row of seven anonymous
+  // boxes was unreadable once filled.
   function rowInput(opts: {
     value: string;
     placeholder: string;
@@ -1080,16 +1166,18 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     error?: string | null;
   }) {
     return (
-      <div className={opts.width ?? "w-32"}>
+      <label className={`flex min-w-0 flex-col gap-0.5 ${opts.width ?? "w-32"}`}>
+        <span className="truncate font-mono text-[10px] leading-3 text-muted-foreground/80">
+          {opts.placeholder}
+        </span>
         <input
           className={`${cellCls} ${opts.error ? "border-red-500" : "border-border"}`}
           value={opts.value}
-          placeholder={opts.placeholder}
           spellCheck={false}
           inputMode={opts.numeric ? "numeric" : undefined}
           onChange={(e) => opts.onChange(e.target.value)}
         />
-      </div>
+      </label>
     );
   }
 
@@ -1101,20 +1189,26 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     emptyLabel?: string;
   }) {
     const enumOpts = fieldNode(opts.path)?.enum ?? [];
+    const caption = opts.path.split(".").pop() ?? opts.path;
     return (
-      <select
-        className={`${cellCls} border-border ${opts.width ?? "w-28"}`}
-        value={opts.value}
-        aria-label={opts.path}
-        onChange={(e) => opts.onChange(e.target.value)}
-      >
-        <option value="">{opts.emptyLabel ?? "—"}</option>
-        {enumOpts.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
+      <label className={`flex min-w-0 flex-col gap-0.5 ${opts.width ?? "w-28"}`}>
+        <span className="truncate font-mono text-[10px] leading-3 text-muted-foreground/80">
+          {caption}
+        </span>
+        <select
+          className={`${cellCls} border-border`}
+          value={opts.value}
+          aria-label={opts.path}
+          onChange={(e) => opts.onChange(e.target.value)}
+        >
+          <option value="">{opts.emptyLabel ?? "—"}</option>
+          {enumOpts.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+      </label>
     );
   }
 
@@ -1530,9 +1624,14 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           }
         >
           {f.subhead && !filterModified && (
-            <h3 className="mb-3 border-b border-border pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-              {t.subheads[f.subhead]}
-            </h3>
+            // group divider: a labelled hairline, so it never competes with the
+            // section card's own header strip
+            <div className="flex items-center gap-3 pb-1 pt-4">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                {t.subheads[f.subhead]}
+              </h3>
+              <span aria-hidden className="h-px flex-1 bg-border/70" />
+            </div>
           )}
           {node}
         </div>
@@ -1579,15 +1678,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       if (mod.length + methodMod.length === 0) return null;
       return (
         <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="scroll-mt-40">
-          <h2
-            id={`sec-${id}-h`}
-            className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-          >
-            {t.sections[id]}
-          </h2>
-          <div className="mt-2 rounded-lg border border-border bg-surface p-5">
-            <div className="space-y-5">{renderFieldList([...mod, ...methodMod])}</div>
-          </div>
+          {sectionCard(id, <div className="divide-y divide-border/60">{renderFieldList([...mod, ...methodMod])}</div>)}
         </section>
       );
     }
@@ -1596,42 +1687,65 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     const hint = t.advHints[id];
     return (
       <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="scroll-mt-40">
-        <h2
-          id={`sec-${id}-h`}
-          className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-        >
-          {t.sections[id]}
-        </h2>
-        <div className="mt-2 rounded-lg border border-border bg-surface p-5">
-          <div className="space-y-5">
-            {id === "mitigation" ? (
-              <>
-                {renderFieldList([defs[0]])}
-                <div className="space-y-2">
-                  {renderMethodGroup("flowspec")}
-                  {renderMethodGroup("scrubbing")}
-                  {renderMethodGroup("dataplane")}
+        {sectionCard(
+          id,
+          <>
+            <div className="divide-y divide-border/60">
+              {id === "mitigation" ? (
+                <>
+                  {renderFieldList([defs[0]])}
+                  <div className="space-y-2 py-3">
+                    {renderMethodGroup("flowspec")}
+                    {renderMethodGroup("scrubbing")}
+                    {renderMethodGroup("dataplane")}
+                  </div>
+                  {renderFieldList(basic.slice(1))}
+                </>
+              ) : (
+                renderFieldList(basic)
+              )}
+            </div>
+            {advanced.length > 0 && (
+              <details className="group -mx-5 -mb-4 mt-1 border-t border-border">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-3 text-[13px] font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  <span aria-hidden className="text-[9px] transition-transform group-open:rotate-90">
+                    ▶
+                  </span>
+                  {t.advanced}
+                  {hint && (
+                    <span className="truncate font-normal text-muted-foreground/70">— {hint}</span>
+                  )}
+                </summary>
+                <div className="divide-y divide-border/60 border-t border-border/60 px-5 pb-1">
+                  {renderFieldList(advanced)}
                 </div>
-                {renderFieldList(basic.slice(1))}
-              </>
-            ) : (
-              renderFieldList(basic)
+              </details>
             )}
-          </div>
-          {advanced.length > 0 && (
-            <details className="group mt-5 border-t border-border pt-4">
-              <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-                <span aria-hidden className="text-[10px] transition-transform group-open:rotate-90">
-                  ▶
-                </span>
-                {t.advanced}
-                {hint && <span className="font-normal text-muted-foreground/70">— {hint}</span>}
-              </summary>
-              <div className="mt-4 space-y-5">{renderFieldList(advanced)}</div>
-            </details>
+          </>,
+        )}
+      </section>
+    );
+  }
+
+  // Section card: a real header strip (title + status) over the body, echoing the
+  // engine console's card head/body — the floating uppercase mini-label above an
+  // unheaded box was one of the things that read as noise.
+  function sectionCard(id: SectionId, body: React.ReactNode) {
+    const errs = sectionErrors[id];
+    return (
+      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-5 py-2.5">
+          <h2 id={`sec-${id}-h`} className="text-[13px] font-semibold tracking-tight">
+            {t.sections[id]}
+          </h2>
+          {errs > 0 && (
+            <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-500">
+              {t.sectionErrs.replace("{n}", String(errs))}
+            </span>
           )}
         </div>
-      </section>
+        <div className="px-5 pb-4 pt-1">{body}</div>
+      </div>
     );
   }
 
@@ -1683,8 +1797,8 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
   const yamlPane = (
     <div id="yaml-pane" className="scroll-mt-40">
-      <div className="overflow-hidden rounded-lg border border-border bg-surface">
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2">
+      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/40 px-4 py-2">
           <span className="font-mono text-xs font-semibold text-muted-foreground">{t.output}</span>
           <div className="flex gap-2">
             <button
@@ -1703,7 +1817,9 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             </button>
           </div>
         </div>
-        <pre className="max-h-[50vh] overflow-auto px-4 py-3 font-mono text-xs leading-relaxed lg:max-h-[calc(100vh-26rem)]">
+        {/* the fade tells you the pane scrolls sideways instead of letting a
+            long line look like it was chopped off */}
+        <pre className="relative max-h-[50vh] overflow-auto px-4 py-3 font-mono text-xs leading-relaxed [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)] lg:max-h-[calc(100vh-24rem)]">
           {yamlLines.map((ln, i) => (
             <span
               key={i}
@@ -1715,15 +1831,15 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             </span>
           ))}
         </pre>
-      </div>
 
-      <div
-        className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+        {/* the engine verdict lives inside the pane: one card, not a stack of strips */}
+        <div
+          className={`border-t px-3 py-2 text-xs ${
           verdict.tone === "ok"
-            ? "border-emerald-500/40 bg-emerald-500/10"
+            ? "border-emerald-500/30 bg-emerald-500/10"
             : verdict.tone === "err"
-              ? "border-red-500/40 bg-red-500/10"
-              : "border-border bg-surface"
+              ? "border-red-500/30 bg-red-500/10"
+              : "border-border bg-muted/30"
         }`}
         role="status"
         aria-live="polite"
@@ -1757,21 +1873,18 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         ) : (
           <p className="text-muted-foreground">{verdict.text}</p>
         )}
+        </div>
       </div>
 
-      <p className="mt-3 text-xs text-muted-foreground">
-        {t.checkHint}{" "}
-        <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
-          kapkan -check-config config.yaml
-        </code>
-      </p>
-
-      {/* deploy runbook, generated from the chosen options */}
-      <div className="mt-4 rounded-lg border border-border bg-surface p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {/* deploy runbook: needed after the file is written, so it starts folded */}
+      <details className="group/rb mt-3 overflow-hidden rounded-xl border border-border bg-surface">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[13px] font-medium hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
+          <span aria-hidden className="text-[9px] transition-transform group-open/rb:rotate-90">
+            ▶
+          </span>
           {t.runbook.title}
-        </h3>
-        <ol className="mt-3 space-y-3">
+        </summary>
+        <ol className="space-y-3 border-t border-border px-4 py-3">
           {[
             { text: t.runbook.save, cmd: "sudo install -m 0644 config.yaml /etc/kapkan/config.yaml" },
             { text: t.runbook.check, cmd: "kapkan -check-config /etc/kapkan/config.yaml" },
@@ -1812,7 +1925,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             </li>
           ))}
         </ol>
-      </div>
+      </details>
     </div>
   );
 
@@ -1884,19 +1997,23 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         </div>
         {!s.dry_run && <p className="mt-2 text-xs font-medium text-red-500">{t.liveWarning}</p>}
 
-        {/* toolbar: presets · search · modified-filter · import · share · reset */}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              title={t.presets[p.id].desc}
-              onClick={() => applyPreset(p.diff)}
-              className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              {t.presets[p.id].name}
-            </button>
-          ))}
+        {/* Toolbar in three groups — presets (a segmented control), search, then
+            view toggles and the file actions — so eight identical pills stop
+            competing for attention. */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex rounded-full border border-border p-0.5">
+            {PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                title={t.presets[p.id].desc}
+                onClick={() => applyPreset(p.diff)}
+                className="rounded-full px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {t.presets[p.id].name}
+              </button>
+            ))}
+          </div>
 
           <div className="relative min-w-[170px] flex-1">
             <input
@@ -1948,6 +2065,18 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
           <button
             type="button"
+            aria-pressed={showHelp}
+            onClick={() => setShowHelp((v) => !v)}
+            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+              showHelp
+                ? "border-accent bg-accent/10 text-foreground"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            {t.helpToggle}
+          </button>
+          <button
+            type="button"
             aria-pressed={filterModified}
             disabled={modifiedCount === 0 && !filterModified}
             onClick={() => setFilterModified((v) => !v)}
@@ -1959,30 +2088,35 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           >
             {t.modifiedChip.replace("{n}", String(modifiedCount))}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setImportOpen((v) => !v);
-              setImportDiag(null);
-            }}
-            className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            {t.importer.btn}
-          </button>
-          <button
-            type="button"
-            onClick={shareLink}
-            className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            {shared ? t.share.copied : t.share.btn}
-          </button>
-          <button
-            type="button"
-            onClick={resetAll}
-            className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            {t.reset.btn}
-          </button>
+          <span aria-hidden className="hidden h-4 w-px bg-border sm:block" />
+
+          {/* file actions: quieter than the view toggles above */}
+          <div className="flex items-center gap-3 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setImportOpen((v) => !v);
+                setImportDiag(null);
+              }}
+              className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              {t.importer.btn}
+            </button>
+            <button
+              type="button"
+              onClick={shareLink}
+              className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              {shared ? t.share.copied : t.share.btn}
+            </button>
+            <button
+              type="button"
+              onClick={resetAll}
+              className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              {t.reset.btn}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2040,7 +2174,10 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         </div>
       )}
 
-      <div className="mt-6 lg:grid lg:grid-cols-[180px_minmax(0,1fr)_minmax(0,440px)] lg:items-start lg:gap-8 xl:grid-cols-[200px_minmax(0,1fr)_minmax(0,540px)]">
+      {/* Column budget matters more than it looks: at a common ~1340px viewport the old
+          200/1fr/540 split left the form just 428px, which is what turned dense rows into
+          mush. The rail and the YAML pane both give width back to the form. */}
+      <div className="mt-6 lg:grid lg:grid-cols-[168px_minmax(0,1fr)_minmax(0,420px)] lg:items-start lg:gap-6 xl:grid-cols-[176px_minmax(0,1fr)_minmax(0,470px)] xl:gap-7 2xl:grid-cols-[188px_minmax(0,1fr)_minmax(0,560px)]">
         {/* section rail */}
         <nav aria-label={t.nav} className="lg:sticky lg:top-32 lg:self-start">
           {/* mobile: horizontal chips */}
@@ -2084,7 +2221,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         </nav>
 
         {/* form column */}
-        <div className="min-w-0 space-y-8">{SECTION_IDS.map(renderSection)}</div>
+        <div className="@container min-w-0 space-y-8">{SECTION_IDS.map(renderSection)}</div>
 
         {/* YAML column */}
         <aside className="mt-10 min-w-0 lg:sticky lg:top-24 lg:mt-0 lg:self-start">{yamlPane}</aside>
