@@ -83,6 +83,35 @@ export type WizardChrome = {
     flows: string;
     hint: string;
   };
+  presets: {
+    edge: { name: string; desc: string };
+    single: { name: string; desc: string };
+    carrier: { name: string; desc: string };
+    confirm: string;
+  };
+  search: { placeholder: string; empty: string };
+  modifiedChip: string; // "{n}" placeholder
+  importer: {
+    btn: string;
+    hint: string;
+    apply: string;
+    cancel: string;
+    bad: string; // "{err}" placeholder
+    lost: string;
+    lostNote: string;
+    ok: string;
+  };
+  share: { btn: string; copied: string };
+  reset: { btn: string; confirm: string };
+  runbook: {
+    title: string;
+    save: string;
+    check: string;
+    apply: string;
+    dataplane: string;
+    watch: string;
+    live: string;
+  };
   validation: WizardValidation;
 };
 
@@ -158,6 +187,35 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Fragments",
       flows: "Flows per second",
       hint: "Empty = disabled. Any crossed limit triggers (OR).",
+    },
+    presets: {
+      edge: { name: "Hosting edge", desc: "Recommended baseline for a hosting / provider edge" },
+      single: { name: "Single server", desc: "Tighter thresholds for one box or a small subnet" },
+      carrier: { name: "ISP / carrier", desc: "High per-host thresholds plus carpet detection and attack samples" },
+      confirm: "Replace current settings with this preset? Your changes will be overwritten.",
+    },
+    search: { placeholder: "Search settings…", empty: "Nothing found" },
+    modifiedChip: "Modified · {n}",
+    importer: {
+      btn: "Import YAML",
+      hint: "Paste your kapkan config.yaml — the form fills from it. Keys the form cannot represent are listed, never dropped silently.",
+      apply: "Apply",
+      cancel: "Cancel",
+      bad: "Could not parse YAML: {err}",
+      lost: "Not represented in the form — these keys will be missing from the generated file:",
+      lostNote: "Some may simply match engine defaults.",
+      ok: "Imported — check the engine verdict.",
+    },
+    share: { btn: "Share", copied: "Link copied" },
+    reset: { btn: "Reset", confirm: "Restore defaults? Your changes will be lost." },
+    runbook: {
+      title: "Apply on the host",
+      save: "Save the file",
+      check: "Validate with the engine binary",
+      apply: "Reload the service",
+      dataplane: "Data plane needs the systemd drop-in with extra privileges (once)",
+      watch: "Watch-only: let it observe for about a week (logs + /api/v1/attacks), then set dry_run: false",
+      live: "LIVE mode: announcements go out as soon as this config is applied",
     },
     validation: {
       required: "required",
@@ -249,6 +307,35 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       flows: "Потоков в секунду",
       hint: "Пусто = выключено. Срабатывает любой превышенный лимит (OR).",
     },
+    presets: {
+      edge: { name: "Хостинг / edge", desc: "Рекомендуемая база для края сети хостинга или провайдера" },
+      single: { name: "Один сервер", desc: "Пороги пожёстче для одной машины или маленькой подсети" },
+      carrier: { name: "Оператор / крупная сеть", desc: "Высокие пороги на хост, плюс ковровые атаки и сэмплы" },
+      confirm: "Заменить текущие настройки пресетом? Ваши изменения будут перезаписаны.",
+    },
+    search: { placeholder: "Поиск по настройкам…", empty: "Ничего не найдено" },
+    modifiedChip: "Изменено · {n}",
+    importer: {
+      btn: "Импорт YAML",
+      hint: "Вставьте ваш config.yaml — форма заполнится из него. Ключи, которых нет в форме, будут перечислены, а не потеряны молча.",
+      apply: "Применить",
+      cancel: "Отмена",
+      bad: "Не удалось разобрать YAML: {err}",
+      lost: "Не отображается в форме — этих ключей не будет в сгенерированном файле:",
+      lostNote: "Часть может просто совпадать со значениями по умолчанию.",
+      ok: "Импортировано — проверьте вердикт движка.",
+    },
+    share: { btn: "Поделиться", copied: "Ссылка скопирована" },
+    reset: { btn: "Сбросить", confirm: "Вернуть значения по умолчанию? Изменения будут потеряны." },
+    runbook: {
+      title: "Применение на хосте",
+      save: "Сохраните файл",
+      check: "Проверьте конфиг бинарём движка",
+      apply: "Перезагрузите сервис",
+      dataplane: "Data plane требует systemd drop-in с доп. правами (один раз)",
+      watch: "Режим наблюдения: дайте поработать около недели (логи + /api/v1/attacks), затем dry_run: false",
+      live: "Боевой режим: анонсы пойдут сразу после применения этого конфига",
+    },
     validation: {
       required: "обязательно",
       enum: "должно быть одним из: {allowed}",
@@ -338,6 +425,35 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Fragmente",
       flows: "Flows pro Sekunde",
       hint: "Leer = deaktiviert. Jedes überschrittene Limit löst aus (OR).",
+    },
+    presets: {
+      edge: { name: "Hosting-Edge", desc: "Empfohlene Basis für den Netzrand eines Hosters/Providers" },
+      single: { name: "Einzelserver", desc: "Strengere Schwellen für eine Maschine oder ein kleines Subnetz" },
+      carrier: { name: "ISP / Carrier", desc: "Hohe Pro-Host-Schwellen plus Carpet-Erkennung und Samples" },
+      confirm: "Aktuelle Einstellungen durch dieses Preset ersetzen? Ihre Änderungen werden überschrieben.",
+    },
+    search: { placeholder: "Einstellungen durchsuchen…", empty: "Nichts gefunden" },
+    modifiedChip: "Geändert · {n}",
+    importer: {
+      btn: "YAML importieren",
+      hint: "Fügen Sie Ihre kapkan config.yaml ein — das Formular füllt sich daraus. Nicht darstellbare Schlüssel werden aufgelistet, nie stillschweigend verworfen.",
+      apply: "Übernehmen",
+      cancel: "Abbrechen",
+      bad: "YAML konnte nicht geparst werden: {err}",
+      lost: "Nicht im Formular darstellbar — diese Schlüssel fehlen in der erzeugten Datei:",
+      lostNote: "Einige entsprechen womöglich nur den Engine-Defaults.",
+      ok: "Importiert — prüfen Sie das Engine-Urteil.",
+    },
+    share: { btn: "Teilen", copied: "Link kopiert" },
+    reset: { btn: "Zurücksetzen", confirm: "Standardwerte wiederherstellen? Ihre Änderungen gehen verloren." },
+    runbook: {
+      title: "Auf dem Host anwenden",
+      save: "Datei speichern",
+      check: "Mit der Engine-Binary validieren",
+      apply: "Dienst neu laden",
+      dataplane: "Data Plane braucht das systemd-Drop-in mit zusätzlichen Rechten (einmalig)",
+      watch: "Beobachtungsmodus: etwa eine Woche beobachten (Logs + /api/v1/attacks), dann dry_run: false",
+      live: "LIVE-Modus: Ankündigungen gehen sofort nach dem Anwenden raus",
     },
     validation: {
       required: "erforderlich",
@@ -429,6 +545,35 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       flows: "Flux par seconde",
       hint: "Vide = désactivé. Toute limite franchie déclenche (OR).",
     },
+    presets: {
+      edge: { name: "Bordure hosting", desc: "Base recommandée pour la bordure d'un hébergeur/opérateur" },
+      single: { name: "Serveur unique", desc: "Seuils plus stricts pour une machine ou un petit sous-réseau" },
+      carrier: { name: "FAI / carrier", desc: "Seuils par hôte élevés, plus détection carpet et échantillons" },
+      confirm: "Remplacer les réglages actuels par ce preset ? Vos modifications seront écrasées.",
+    },
+    search: { placeholder: "Rechercher un réglage…", empty: "Aucun résultat" },
+    modifiedChip: "Modifié · {n}",
+    importer: {
+      btn: "Importer du YAML",
+      hint: "Collez votre config.yaml kapkan — le formulaire se remplit. Les clés non représentables sont listées, jamais perdues en silence.",
+      apply: "Appliquer",
+      cancel: "Annuler",
+      bad: "Impossible d'analyser le YAML : {err}",
+      lost: "Non représenté dans le formulaire — ces clés manqueront au fichier généré :",
+      lostNote: "Certaines peuvent simplement correspondre aux défauts du moteur.",
+      ok: "Importé — vérifiez le verdict du moteur.",
+    },
+    share: { btn: "Partager", copied: "Lien copié" },
+    reset: { btn: "Réinitialiser", confirm: "Restaurer les valeurs par défaut ? Vos modifications seront perdues." },
+    runbook: {
+      title: "Appliquer sur l'hôte",
+      save: "Enregistrez le fichier",
+      check: "Validez avec le binaire du moteur",
+      apply: "Rechargez le service",
+      dataplane: "Le data plane requiert le drop-in systemd avec privilèges (une fois)",
+      watch: "Observation seule : laissez tourner environ une semaine (logs + /api/v1/attacks), puis dry_run: false",
+      live: "Mode LIVE : les annonces partent dès l'application de cette configuration",
+    },
     validation: {
       required: "requis",
       enum: "doit être l'un de : {allowed}",
@@ -518,6 +663,35 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
       frag: "Fragmentos",
       flows: "Flujos por segundo",
       hint: "Vacío = desactivado. Cualquier límite superado dispara (OR).",
+    },
+    presets: {
+      edge: { name: "Borde hosting", desc: "Base recomendada para el borde de un hosting/proveedor" },
+      single: { name: "Servidor único", desc: "Umbrales más estrictos para una máquina o una subred pequeña" },
+      carrier: { name: "ISP / carrier", desc: "Umbrales altos por host, más detección carpet y muestras" },
+      confirm: "¿Reemplazar la configuración actual con este preset? Tus cambios se sobrescribirán.",
+    },
+    search: { placeholder: "Buscar ajustes…", empty: "Sin resultados" },
+    modifiedChip: "Modificado · {n}",
+    importer: {
+      btn: "Importar YAML",
+      hint: "Pega tu config.yaml de kapkan — el formulario se rellena desde él. Las claves no representables se listan, nunca se pierden en silencio.",
+      apply: "Aplicar",
+      cancel: "Cancelar",
+      bad: "No se pudo analizar el YAML: {err}",
+      lost: "No representado en el formulario — estas claves faltarán en el archivo generado:",
+      lostNote: "Algunas pueden coincidir simplemente con los valores por defecto del motor.",
+      ok: "Importado — revisa el veredicto del motor.",
+    },
+    share: { btn: "Compartir", copied: "Enlace copiado" },
+    reset: { btn: "Restablecer", confirm: "¿Restaurar los valores por defecto? Tus cambios se perderán." },
+    runbook: {
+      title: "Aplicar en el host",
+      save: "Guarda el archivo",
+      check: "Valida con el binario del motor",
+      apply: "Recarga el servicio",
+      dataplane: "El data plane necesita el drop-in de systemd con privilegios extra (una vez)",
+      watch: "Solo observación: déjalo una semana aprox. (logs + /api/v1/attacks), luego dry_run: false",
+      live: "Modo LIVE: los anuncios salen en cuanto se aplique esta configuración",
     },
     validation: {
       required: "obligatorio",

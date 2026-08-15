@@ -35,6 +35,17 @@ import {
 import { fieldMeta, fieldNode } from "@/lib/wizard/schema";
 import { validateNumber, validateString } from "@/lib/wizard/validate";
 import { loadEngineValidator, type EngineResult, type EngineValidator } from "@/lib/wizard/wasm";
+import {
+  applyDiff,
+  buildDiff,
+  clearLocal,
+  decodeShare,
+  encodeDiff,
+  loadLocal,
+  saveLocal,
+  type StateDiff,
+} from "@/lib/wizard/share";
+import { docToState, leafPaths } from "@/lib/wizard/import";
 
 const inputCls =
   "w-full min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-accent";
@@ -254,6 +265,39 @@ function guessErrorSection(err: string | undefined): SectionId | null {
 
 const splitCsv = (v: string) => v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
+// Applicability-named presets, stored as diffs over initialState (which IS the
+// recommended hosting-edge baseline). Every preset must pass the engine check.
+const PRESETS: Array<{ id: "edge" | "single" | "carrier"; diff: StateDiff }> = [
+  { id: "edge", diff: {} },
+  {
+    id: "single",
+    diff: {
+      thr: { ...emptyThresholds(), pps: "20000", mbps: "500", flows_per_sec: "10000", udp_pps: "10000" },
+      ttl_seconds: "300",
+      max_active_bans: "10",
+    },
+  },
+  {
+    id: "carrier",
+    diff: {
+      thr: { ...emptyThresholds(), pps: "200000", mbps: "5000", flows_per_sec: "80000" },
+      carpet_on: true,
+      carpet_min_hosts: "10",
+      carpetThr: { ...emptyThresholds(), pps: "2000000", mbps: "20000" },
+      samples_on: true,
+    },
+  },
+];
+
+// Flat def list with owning section/panel — drives search and the modified count.
+type SearchEntry = { f: FieldDef; section: SectionId; group?: "flowspec" | "scrubbing" | "dataplane" };
+const ALL_DEFS: SearchEntry[] = [
+  ...SECTION_IDS.flatMap((id) => FIELDS[id].map((f) => ({ f, section: id }))),
+  ...(Object.keys(METHOD_FIELDS) as Array<keyof typeof METHOD_FIELDS>).flatMap((g) =>
+    METHOD_FIELDS[g].map((f) => ({ f, section: "mitigation" as SectionId, group: g })),
+  ),
+];
+
 // Module-level on purpose: defining this inside ConfigBuilder would give it a
 // new component identity every render, remounting the subtree and dropping
 // input focus on each keystroke.
@@ -263,6 +307,9 @@ function FieldShell({
   help,
   gloss,
   error,
+  modified,
+  onReset,
+  resetTitle,
   children,
 }: {
   f: FieldDef;
@@ -270,15 +317,31 @@ function FieldShell({
   help?: string;
   gloss?: string | null;
   error: string | null;
+  modified?: boolean;
+  onReset?: () => void;
+  resetTitle?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div>
+    <div className={`-ml-3 border-l-2 pl-3 ${modified ? "border-accent/60" : "border-transparent"}`}>
       <div className="mb-1 flex items-baseline justify-between gap-3">
         <label htmlFor={`f-${f.path}`} className="text-sm font-medium">
           {label}
         </label>
-        <code className="shrink-0 font-mono text-[11px] text-muted-foreground/80">{f.path}</code>
+        <span className="flex shrink-0 items-baseline gap-2">
+          {modified && onReset && (
+            <button
+              type="button"
+              title={resetTitle}
+              aria-label={resetTitle}
+              onClick={onReset}
+              className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              ↺
+            </button>
+          )}
+          <code className="font-mono text-[11px] text-muted-foreground/80">{f.path}</code>
+        </span>
       </div>
       {children}
       <div className="mt-1 flex items-baseline justify-between gap-3">
@@ -310,6 +373,44 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     scrubbing: null,
     dataplane: null,
   });
+  // stage-3 service layer
+  const [filterModified, setFilterModified] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [searchFocus, setSearchFocus] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importDiag, setImportDiag] = useState<{ lost: string[]; error?: string } | null>(null);
+  const [shared, setShared] = useState(false);
+  const [flashPath, setFlashPath] = useState<string | null>(null);
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  const restoredRef = useRef(false);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Restore once: a share link wins over the local autosave.
+  useEffect(() => {
+    try {
+      const m = window.location.hash.match(/^#s=(.+)$/);
+      const diff = m ? decodeShare(m[1]) : loadLocal();
+      if (diff && Object.keys(diff).length > 0) {
+        // One-time mount restore of saved/shared work.
+        setS(applyDiff(diff));
+      }
+    } finally {
+      restoredRef.current = true;
+    }
+  }, []);
+
+  // Autosave + keep the URL shareable: both store the diff vs defaults.
+  useEffect(() => {
+    if (!restoredRef.current) return;
+    const id = setTimeout(() => {
+      const diff = buildDiff(s);
+      saveLocal(diff);
+      const hash = Object.keys(diff).length > 0 ? "#s=" + encodeDiff(diff) : "";
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + hash);
+    }, 500);
+    return () => clearTimeout(id);
+  }, [s]);
 
   const yaml = useMemo(() => emitConfig(s), [s]);
   const yamlLines = useMemo(() => yaml.split("\n"), [yaml]);
@@ -377,7 +478,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
         if (visible[0]) setActive(visible[0].target.id.slice(4) as SectionId);
       },
-      { rootMargin: "-112px 0px -55% 0px", threshold: 0 },
+      { rootMargin: "-160px 0px -55% 0px", threshold: 0 },
     );
     for (const id of SECTION_IDS) {
       const el = document.getElementById(`sec-${id}`);
@@ -631,6 +732,103 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   const totalErrors = SECTION_IDS.reduce((n, id) => n + sectionErrors[id], 0);
   const firstErrorSection = SECTION_IDS.find((id) => sectionErrors[id] > 0) ?? null;
 
+  // --- modified-vs-default tracking (the VS Code @modified pattern) ---
+  const fieldSlice = (st: WizardState, f: FieldDef): unknown =>
+    f.matrix ? st[f.matrix] : f.key ? st[f.key] : undefined;
+  const fieldModified = (f: FieldDef): boolean =>
+    JSON.stringify(fieldSlice(s, f)) !== JSON.stringify(fieldSlice(initialState, f));
+  function resetField(f: FieldDef) {
+    if (f.matrix) set(f.matrix, JSON.parse(JSON.stringify(initialState[f.matrix])));
+    else if (f.key) set(f.key, JSON.parse(JSON.stringify(initialState[f.key])) as WizardState[keyof WizardState]);
+  }
+  const modifiedCount = ALL_DEFS.reduce((n, e) => n + (fieldModified(e.f) ? 1 : 0), 0);
+
+  function applyPreset(diff: StateDiff) {
+    if (modifiedCount > 0 && !window.confirm(t.presets.confirm)) return;
+    setS(applyDiff(diff));
+    setImportDiag(null);
+  }
+
+  function resetAll() {
+    if (modifiedCount > 0 && !window.confirm(t.reset.confirm)) return;
+    clearLocal();
+    setS(JSON.parse(JSON.stringify(initialState)));
+    setImportDiag(null);
+    setFilterModified(false);
+  }
+
+  function shareLink() {
+    const diff = buildDiff(s);
+    const hash = Object.keys(diff).length > 0 ? "#s=" + encodeDiff(diff) : "";
+    const url = window.location.origin + window.location.pathname + window.location.search + hash;
+    navigator.clipboard?.writeText(url).then(() => {
+      setShared(true);
+      setTimeout(() => setShared(false), 1500);
+    });
+  }
+
+  async function doImport() {
+    try {
+      const { load } = await import("js-yaml");
+      const doc = load(importText);
+      if (!doc || typeof doc !== "object") throw new Error("not a YAML mapping");
+      const next = docToState(doc);
+      const emitted = load(emitConfig(next));
+      const emittedLeaves = new Set(leafPaths(emitted));
+      const lost = [...new Set(leafPaths(doc).filter((p) => !emittedLeaves.has(p)))];
+      setS(next);
+      setImportDiag({ lost });
+      setFilterModified(false);
+    } catch (e) {
+      setImportDiag({ lost: [], error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  function copyCmd(cmd: string) {
+    navigator.clipboard?.writeText(cmd).then(() => {
+      setCopiedCmd(cmd);
+      setTimeout(() => setCopiedCmd(null), 1500);
+    });
+  }
+
+  // Search across labels, YAML keys and help text; jump opens whatever hides
+  // the field (advanced <details>, a method panel) and flashes it.
+  const searchResults = (() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q || !searchFocus) return [];
+    return ALL_DEFS.map((entry) => {
+      const label = labelOf(entry.f.path).toLowerCase();
+      const path = entry.f.path.toLowerCase();
+      const help = (helpOf(entry.f.path) ?? "").toLowerCase();
+      const score = label.startsWith(q) ? 0 : label.includes(q) ? 1 : path.includes(q) ? 2 : help.includes(q) ? 3 : -1;
+      return { entry, score };
+    })
+      .filter((x) => x.score >= 0)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 12)
+      .map((x) => x.entry);
+  })();
+
+  function jumpToField(entry: SearchEntry) {
+    setSearchQ("");
+    setSearchFocus(false);
+    if (entry.group) setGroupOpen((p) => ({ ...p, [entry.group as string]: true }));
+    if (filterModified && !fieldModified(entry.f)) setFilterModified(false);
+    setFlashPath(entry.f.path);
+    setTimeout(() => {
+      const el = document.getElementById(`fw-${entry.f.path}`);
+      let d = el?.closest("details");
+      while (d) {
+        d.open = true;
+        d = d.parentElement?.closest("details") ?? null;
+      }
+      const target = el ?? document.getElementById(`sec-${entry.section}`);
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      target?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" });
+    }, 60);
+    setTimeout(() => setFlashPath(null), 1800);
+  }
+
   // Human gloss for *_seconds fields: "600" → "≈ 10 min".
   function secondsGloss(f: FieldDef): string | null {
     if (f.kind !== "number" || !f.path.endsWith("_seconds")) return null;
@@ -642,12 +840,18 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
   // ------------------------------------------------------------------ fields
 
-  const shellProps = (f: FieldDef) => ({
-    f,
-    label: labelOf(f.path),
-    help: helpOf(f.path),
-    gloss: secondsGloss(f),
-  });
+  const shellProps = (f: FieldDef) => {
+    const modified = fieldModified(f);
+    return {
+      f,
+      label: labelOf(f.path),
+      help: helpOf(f.path),
+      gloss: secondsGloss(f),
+      modified,
+      onReset: modified ? () => resetField(f) : undefined,
+      resetTitle: t.reset.btn,
+    };
+  };
 
   function renderText(f: FieldDef) {
     const value = s[f.key!] as string;
@@ -697,8 +901,9 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   }
 
   function renderBool(f: FieldDef) {
+    const modified = fieldModified(f);
     return (
-      <div key={f.path}>
+      <div key={f.path} className={`-ml-3 border-l-2 pl-3 ${modified ? "border-accent/60" : "border-transparent"}`}>
         <div className="flex items-center justify-between gap-3">
           <label className="flex cursor-pointer items-center gap-3 text-sm font-medium">
             <input
@@ -709,7 +914,20 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             />
             <span>{labelOf(f.path)}</span>
           </label>
-          <code className="shrink-0 font-mono text-[11px] text-muted-foreground/80">{f.path}</code>
+          <span className="flex shrink-0 items-baseline gap-2">
+            {modified && (
+              <button
+                type="button"
+                title={t.reset.btn}
+                aria-label={t.reset.btn}
+                onClick={() => resetField(f)}
+                className="font-mono text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                ↺
+              </button>
+            )}
+            <code className="font-mono text-[11px] text-muted-foreground/80">{f.path}</code>
+          </span>
         </div>
         <p className="mt-1 pl-7 text-xs text-muted-foreground">{helpOf(f.path)}</p>
       </div>
@@ -1298,11 +1516,20 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
   function renderFieldList(defs: FieldDef[]) {
     return defs.map((f) => {
+      if (filterModified && !fieldModified(f)) return null;
       const node = renderField(f);
       if (node === null) return null;
       return (
-        <div key={f.path}>
-          {f.subhead && (
+        <div
+          key={f.path}
+          id={`fw-${f.path}`}
+          className={
+            flashPath === f.path
+              ? "rounded-md ring-2 ring-accent ring-offset-2 ring-offset-surface"
+              : undefined
+          }
+        >
+          {f.subhead && !filterModified && (
             <h3 className="mb-3 border-b border-border pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
               {t.subheads[f.subhead]}
             </h3>
@@ -1339,11 +1566,36 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
   function renderSection(id: SectionId) {
     const defs = FIELDS[id];
+    // @modified filter: flat list of just the changed fields, section hidden
+    // entirely when it holds none.
+    if (filterModified) {
+      const mod = defs.filter(fieldModified);
+      const methodMod =
+        id === "mitigation"
+          ? (Object.keys(METHOD_FIELDS) as Array<keyof typeof METHOD_FIELDS>).flatMap((g) =>
+              METHOD_FIELDS[g].filter(fieldModified),
+            )
+          : [];
+      if (mod.length + methodMod.length === 0) return null;
+      return (
+        <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="scroll-mt-40">
+          <h2
+            id={`sec-${id}-h`}
+            className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+          >
+            {t.sections[id]}
+          </h2>
+          <div className="mt-2 rounded-lg border border-border bg-surface p-5">
+            <div className="space-y-5">{renderFieldList([...mod, ...methodMod])}</div>
+          </div>
+        </section>
+      );
+    }
     const basic = defs.filter((f) => !f.advanced);
     const advanced = defs.filter((f) => f.advanced);
     const hint = t.advHints[id];
     return (
-      <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="scroll-mt-28">
+      <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="scroll-mt-40">
         <h2
           id={`sec-${id}-h`}
           className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
@@ -1430,7 +1682,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   })();
 
   const yamlPane = (
-    <div id="yaml-pane" className="scroll-mt-28">
+    <div id="yaml-pane" className="scroll-mt-40">
       <div className="overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2">
           <span className="font-mono text-xs font-semibold text-muted-foreground">{t.output}</span>
@@ -1451,7 +1703,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             </button>
           </div>
         </div>
-        <pre className="max-h-[50vh] overflow-auto px-4 py-3 font-mono text-xs leading-relaxed lg:max-h-[calc(100vh-21rem)]">
+        <pre className="max-h-[50vh] overflow-auto px-4 py-3 font-mono text-xs leading-relaxed lg:max-h-[calc(100vh-26rem)]">
           {yamlLines.map((ln, i) => (
             <span
               key={i}
@@ -1513,6 +1765,54 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           kapkan -check-config config.yaml
         </code>
       </p>
+
+      {/* deploy runbook, generated from the chosen options */}
+      <div className="mt-4 rounded-lg border border-border bg-surface p-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {t.runbook.title}
+        </h3>
+        <ol className="mt-3 space-y-3">
+          {[
+            { text: t.runbook.save, cmd: "sudo install -m 0644 config.yaml /etc/kapkan/config.yaml" },
+            { text: t.runbook.check, cmd: "kapkan -check-config /etc/kapkan/config.yaml" },
+            ...(methodAuto.dataplane
+              ? [
+                  {
+                    text: t.runbook.dataplane,
+                    cmd: "sudo install -D -m 0644 /usr/share/kapkan/kapkan-dataplane.conf /etc/systemd/system/kapkan.service.d/10-dataplane.conf && sudo systemctl daemon-reload",
+                  },
+                ]
+              : []),
+            {
+              text: t.runbook.apply,
+              cmd: methodAuto.dataplane ? "sudo systemctl restart kapkan" : "sudo systemctl reload kapkan",
+            },
+            s.dry_run
+              ? { text: t.runbook.watch, cmd: "journalctl -u kapkan -f" }
+              : { text: t.runbook.live, cmd: undefined },
+          ].map((step, i) => (
+            <li key={i} className="text-xs">
+              <p className={step.cmd ? "text-muted-foreground" : "font-medium text-red-500"}>
+                {i + 1}. {step.text}
+              </p>
+              {step.cmd && (
+                <div className="mt-1 flex items-center gap-2">
+                  <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded bg-muted px-2 py-1 font-mono text-[11px]">
+                    {step.cmd}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyCmd(step.cmd as string)}
+                    className="shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                  >
+                    {copiedCmd === step.cmd ? t.copied : t.copy}
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
     </div>
   );
 
@@ -1583,11 +1883,166 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           )}
         </div>
         {!s.dry_run && <p className="mt-2 text-xs font-medium text-red-500">{t.liveWarning}</p>}
+
+        {/* toolbar: presets · search · modified-filter · import · share · reset */}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              title={t.presets[p.id].desc}
+              onClick={() => applyPreset(p.diff)}
+              className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {t.presets[p.id].name}
+            </button>
+          ))}
+
+          <div className="relative min-w-[170px] flex-1">
+            <input
+              value={searchQ}
+              placeholder={t.search.placeholder}
+              spellCheck={false}
+              onChange={(e) => setSearchQ(e.target.value)}
+              onFocus={() => {
+                if (blurTimer.current) clearTimeout(blurTimer.current);
+                setSearchFocus(true);
+              }}
+              onBlur={() => {
+                blurTimer.current = setTimeout(() => setSearchFocus(false), 150);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchResults[0]) jumpToField(searchResults[0]);
+                if (e.key === "Escape") {
+                  setSearchQ("");
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              className="w-full rounded-full border border-border bg-background px-3 py-1 text-xs outline-none transition-colors focus:border-accent"
+            />
+            {searchFocus && searchQ.trim() !== "" && (
+              <div className="absolute z-40 mt-1 max-h-72 w-full min-w-[260px] overflow-auto rounded-md border border-border bg-surface shadow-lg">
+                {searchResults.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">{t.search.empty}</p>
+                ) : (
+                  searchResults.map((r) => (
+                    <button
+                      key={r.f.path}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        jumpToField(r);
+                      }}
+                      className="flex w-full items-baseline justify-between gap-3 px-3 py-1.5 text-left text-sm hover:bg-muted"
+                    >
+                      <span className="truncate">{labelOf(r.f.path)}</span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                        {t.sections[r.section]} · {r.f.path}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            aria-pressed={filterModified}
+            disabled={modifiedCount === 0 && !filterModified}
+            onClick={() => setFilterModified((v) => !v)}
+            className={`rounded-full border px-3 py-1 text-xs transition-colors disabled:opacity-40 ${
+              filterModified
+                ? "border-accent bg-accent/10 text-foreground"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            {t.modifiedChip.replace("{n}", String(modifiedCount))}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setImportOpen((v) => !v);
+              setImportDiag(null);
+            }}
+            className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {t.importer.btn}
+          </button>
+          <button
+            type="button"
+            onClick={shareLink}
+            className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {shared ? t.share.copied : t.share.btn}
+          </button>
+          <button
+            type="button"
+            onClick={resetAll}
+            className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {t.reset.btn}
+          </button>
+        </div>
       </div>
+
+      {importOpen && (
+        <div className="mt-4 rounded-lg border border-border bg-surface p-4">
+          <p className="text-xs text-muted-foreground">{t.importer.hint}</p>
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            spellCheck={false}
+            rows={8}
+            placeholder={"dry_run: true\nnetworks:\n  - \"203.0.113.0/24\"\n…"}
+            className="mt-2 w-full rounded-md border border-border bg-background p-3 font-mono text-xs outline-none transition-colors focus:border-accent"
+          />
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={doImport}
+              className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:opacity-90"
+            >
+              {t.importer.apply}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setImportOpen(false);
+                setImportDiag(null);
+              }}
+              className="rounded-md border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
+            >
+              {t.importer.cancel}
+            </button>
+          </div>
+          {importDiag?.error && (
+            <p className="mt-2 text-xs text-red-500">{t.importer.bad.replace("{err}", importDiag.error)}</p>
+          )}
+          {importDiag && !importDiag.error && (
+            <div className="mt-2 text-xs">
+              <p className="font-medium text-emerald-600 dark:text-emerald-400">{t.importer.ok}</p>
+              {importDiag.lost.length > 0 && (
+                <>
+                  <p className="mt-1 font-medium text-amber-600 dark:text-amber-400">{t.importer.lost}</p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {importDiag.lost.map((p) => (
+                      <code key={p} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                        {p}
+                      </code>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-muted-foreground">{t.importer.lostNote}</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-6 lg:grid lg:grid-cols-[180px_minmax(0,1fr)_minmax(0,440px)] lg:items-start lg:gap-8 xl:grid-cols-[200px_minmax(0,1fr)_minmax(0,540px)]">
         {/* section rail */}
-        <nav aria-label={t.nav} className="lg:sticky lg:top-24 lg:self-start">
+        <nav aria-label={t.nav} className="lg:sticky lg:top-32 lg:self-start">
           {/* mobile: horizontal chips */}
           <div className="-mx-6 flex gap-2 overflow-x-auto px-6 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:hidden">
             {SECTION_IDS.map((id) => (
