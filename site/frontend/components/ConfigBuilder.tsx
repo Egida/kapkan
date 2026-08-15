@@ -7,6 +7,12 @@
 // networks → detection → mitigation → bans → notify → api); each field shows
 // a human label with the raw YAML key beside it, and rarely-needed fields sit
 // in one collapsed "Advanced" group per section.
+//
+// Coverage: every top-level subsystem of the engine config is editable here.
+// Per-hostgroup DEEP overrides (group-level bgp/baseline/flowspec/scrubbing/
+// escalation/outgoing thresholds) are deliberately YAML-only — the group card
+// covers the core (name, networks, calculation, ban, tenant, mitigation,
+// thresholds); the engine accepts hand-added keys the form does not render.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Locale } from "@/lib/i18n";
@@ -17,30 +23,64 @@ import {
   type SectionId,
   type WizardChrome,
 } from "@/lib/wizard/strings";
-import { emitConfig, initialState, type WizardState } from "@/lib/wizard/emit";
+import {
+  emitConfig,
+  emptyThresholds,
+  initialState,
+  THRESHOLD_KEYS,
+  type ThresholdKey,
+  type ThresholdSet,
+  type WizardState,
+} from "@/lib/wizard/emit";
 import { fieldMeta, fieldNode } from "@/lib/wizard/schema";
 import { validateNumber, validateString } from "@/lib/wizard/validate";
 import { loadEngineValidator, type EngineResult, type EngineValidator } from "@/lib/wizard/wasm";
 
 const inputCls =
   "w-full min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-accent";
+const cellCls =
+  "w-full min-w-0 rounded-md border bg-background px-2 py-1.5 font-mono text-xs outline-none transition-colors focus:border-accent";
+const miniBtnCls =
+  "rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted";
 
 // ---------------------------------------------------------------------------
 // Field registry: one declaration drives both rendering and per-section error
 // status. Order inside a section is render order; `advanced` fields collapse
-// into the section's Advanced group. (Full schema-driven coverage is stage 2 —
-// this registry still lists fields by hand.)
+// into the section's Advanced group; `showIf` gates fields behind a toggle.
 
-type FieldKind = "text" | "number" | "bool" | "select" | "list" | "neighbors" | "method";
+type FieldKind =
+  | "text"
+  | "number"
+  | "bool"
+  | "select"
+  | "list"
+  | "csv"
+  | "matrix"
+  | "neighbors"
+  | "method"
+  | "boundary"
+  | "escalation"
+  | "hostgroups"
+  | "scrubnodes"
+  | "rlprofiles"
+  | "staticrules"
+  | "apitokens";
+
+type SubheadKey = keyof WizardChrome["subheads"];
 
 type FieldDef = {
   kind: FieldKind;
-  key: keyof WizardState;
+  key?: keyof WizardState;
   path: string;
+  matrix?: "thr" | "thrOut" | "carpetThr";
+  itemPath?: string; // csv: schema path used to validate each token
   required?: boolean;
   mono?: boolean;
   advanced?: boolean;
-  subhead?: keyof WizardChrome["subheads"]; // rendered before this field
+  subhead?: SubheadKey; // rendered before this field
+  emptyOption?: boolean; // select: allow "" = engine default
+  numericCsv?: boolean; // csv: tokens must be integers
+  showIf?: (s: WizardState) => boolean;
 };
 
 const SECTION_IDS: SectionId[] = [
@@ -58,49 +98,138 @@ const FIELDS: Record<SectionId, FieldDef[]> = {
     { kind: "text", key: "sflow", path: "listen.sflow", mono: true },
     { kind: "text", key: "netflow", path: "listen.netflow", mono: true },
     { kind: "number", key: "default_rate", path: "sampling.default_rate", required: true },
+    { kind: "bool", key: "boundary_debug", path: "sampling.boundary_debug", advanced: true },
+    { kind: "boundary", key: "boundary", path: "sampling.boundary", advanced: true },
+    { kind: "list", key: "flow_sources", path: "flow_sources", advanced: true },
   ],
   networks: [
     { kind: "list", key: "networks", path: "networks" },
     { kind: "list", key: "whitelist", path: "protected_whitelist" },
+    { kind: "hostgroups", key: "hostgroups", path: "hostgroups" },
+    { kind: "text", key: "tenant", path: "tenant", advanced: true },
   ],
   detection: [
-    { kind: "number", key: "pps", path: "thresholds.pps", required: true },
-    { kind: "number", key: "mbps", path: "thresholds.mbps", required: true },
-    { kind: "number", key: "flows_per_sec", path: "thresholds.flows_per_sec", required: true },
-    { kind: "number", key: "tcp_syn_pps", path: "thresholds.tcp_syn_pps", advanced: true },
-    { kind: "number", key: "udp_pps", path: "thresholds.udp_pps", advanced: true },
+    { kind: "matrix", matrix: "thr", path: "thresholds", required: true },
+    { kind: "matrix", matrix: "thrOut", path: "thresholds_outgoing", advanced: true },
+    { kind: "bool", key: "baseline_on", path: "baseline.enabled", advanced: true, subhead: "baseline" },
+    { kind: "number", key: "baseline_factor", path: "baseline.factor", advanced: true, showIf: (s) => s.baseline_on },
+    { kind: "number", key: "baseline_half_life", path: "baseline.half_life_seconds", advanced: true, showIf: (s) => s.baseline_on },
+    { kind: "number", key: "baseline_warmup", path: "baseline.warmup_seconds", advanced: true, showIf: (s) => s.baseline_on },
+    { kind: "number", key: "baseline_floor_pps", path: "baseline.floor.pps", advanced: true, showIf: (s) => s.baseline_on },
+    { kind: "number", key: "baseline_floor_mbps", path: "baseline.floor.mbps", advanced: true, showIf: (s) => s.baseline_on },
+    { kind: "number", key: "baseline_floor_fps", path: "baseline.floor.flows_per_sec", advanced: true, showIf: (s) => s.baseline_on },
+    { kind: "bool", key: "carpet_on", path: "carpet", advanced: true, subhead: "carpet" },
+    { kind: "number", key: "carpet_v4", path: "carpet.aggregation_prefix_v4", advanced: true, showIf: (s) => s.carpet_on },
+    { kind: "number", key: "carpet_v6", path: "carpet.aggregation_prefix_v6", advanced: true, showIf: (s) => s.carpet_on },
+    { kind: "number", key: "carpet_min_hosts", path: "carpet.min_hosts", advanced: true, showIf: (s) => s.carpet_on },
+    { kind: "matrix", matrix: "carpetThr", path: "carpet.thresholds", advanced: true, showIf: (s) => s.carpet_on },
+    { kind: "select", key: "carpet_mitigation", path: "carpet.mitigation", advanced: true, emptyOption: true, showIf: (s) => s.carpet_on },
+    { kind: "number", key: "carpet_max_bans", path: "carpet.max_active_prefix_bans", advanced: true, showIf: (s) => s.carpet_on },
+    { kind: "bool", key: "samples_on", path: "samples", advanced: true, subhead: "samples" },
+    { kind: "number", key: "samples_buffer", path: "samples.buffer_flows", advanced: true, showIf: (s) => s.samples_on },
+    { kind: "number", key: "samples_per_attack", path: "samples.flows_per_attack", advanced: true, showIf: (s) => s.samples_on },
   ],
   mitigation: [
     { kind: "method", key: "mitigation", path: "mitigation", subhead: "method" },
+    // (method-specific groups are rendered between `method` and the BGP core —
+    // see METHOD_FIELDS below)
     { kind: "number", key: "local_asn", path: "bgp.local_asn", required: true, subhead: "bgp" },
     { kind: "text", key: "router_id", path: "bgp.router_id", required: true, mono: true },
     { kind: "text", key: "next_hop", path: "bgp.next_hop", required: true, mono: true },
     { kind: "text", key: "next_hop6", path: "bgp.next_hop6", mono: true },
     { kind: "text", key: "community", path: "bgp.community", required: true, mono: true },
     { kind: "neighbors", key: "neighbors", path: "bgp.neighbors" },
+    { kind: "csv", key: "bgp_communities", path: "bgp.communities", itemPath: "bgp.communities", mono: true, advanced: true },
+    { kind: "number", key: "bgp_listen_port", path: "bgp.listen_port", advanced: true },
+    { kind: "number", key: "bgp_local_pref", path: "bgp.local_pref", advanced: true },
     { kind: "bool", key: "gr_enabled", path: "bgp.graceful_restart.enabled", advanced: true },
     { kind: "number", key: "gr_restart_seconds", path: "bgp.graceful_restart.restart_seconds", advanced: true },
     { kind: "bool", key: "gr_long_lived", path: "bgp.graceful_restart.long_lived", advanced: true },
     { kind: "number", key: "gr_long_lived_stale", path: "bgp.graceful_restart.long_lived_stale_seconds", advanced: true },
+    { kind: "escalation", key: "escalation", path: "escalation", advanced: true, subhead: "escalation" },
   ],
   bans: [
     { kind: "number", key: "ttl_seconds", path: "ban.ttl_seconds", required: true },
     { kind: "number", key: "unban_hysteresis_seconds", path: "ban.unban_hysteresis_seconds", required: true },
     { kind: "number", key: "max_active_bans", path: "ban.max_active_bans", required: true },
+    { kind: "select", key: "ban_fallback", path: "ban.fallback", advanced: true, emptyOption: true },
+    { kind: "number", key: "ban_max_fraction", path: "ban.max_banned_fraction", advanced: true },
+    { kind: "number", key: "ban_max_per_window", path: "ban.max_bans_per_window", advanced: true },
+    { kind: "number", key: "ban_window_seconds", path: "ban.ban_window_seconds", advanced: true },
     { kind: "text", key: "state_file", path: "ban.state_file", mono: true, advanced: true },
   ],
   notify: [
     { kind: "text", key: "tg_token_env", path: "notify.telegram.token_env", mono: true, subhead: "telegram" },
     { kind: "text", key: "tg_chat_id", path: "notify.telegram.chat_id", mono: true },
-    { kind: "bool", key: "uc_enabled", path: "update_check.enabled", advanced: true },
-    { kind: "number", key: "uc_interval", path: "update_check.interval_seconds", advanced: true },
-    { kind: "select", key: "uc_channel", path: "update_check.channel", advanced: true },
-    { kind: "text", key: "uc_url", path: "update_check.url", mono: true, advanced: true },
-    { kind: "bool", key: "uc_notify", path: "update_check.notify", advanced: true },
+    { kind: "text", key: "wh_url", path: "notify.webhook.url", mono: true },
+    { kind: "text", key: "slack_url", path: "notify.slack.webhook_url", mono: true },
+    { kind: "text", key: "email_smtp", path: "notify.email.smtp_host", mono: true, advanced: true, subhead: "email" },
+    { kind: "text", key: "email_from", path: "notify.email.from", advanced: true },
+    { kind: "csv", key: "email_to", path: "notify.email.to", advanced: true },
+    { kind: "text", key: "email_user_env", path: "notify.email.username_env", mono: true, advanced: true },
+    { kind: "text", key: "email_pass_env", path: "notify.email.password_env", mono: true, advanced: true },
+    { kind: "bool", key: "email_tls", path: "notify.email.require_tls", advanced: true },
+    { kind: "text", key: "exec_command", path: "notify.exec.command", mono: true, advanced: true, subhead: "exec" },
+    { kind: "select", key: "exec_format", path: "notify.exec.format", advanced: true, emptyOption: true },
+    { kind: "number", key: "exec_timeout", path: "notify.exec.timeout_seconds", advanced: true },
+    { kind: "bool", key: "uc_enabled", path: "update_check.enabled", advanced: true, subhead: "updates" },
+    { kind: "number", key: "uc_interval", path: "update_check.interval_seconds", advanced: true, showIf: (s) => s.uc_enabled },
+    { kind: "select", key: "uc_channel", path: "update_check.channel", advanced: true, showIf: (s) => s.uc_enabled },
+    { kind: "text", key: "uc_url", path: "update_check.url", mono: true, advanced: true, showIf: (s) => s.uc_enabled },
+    { kind: "bool", key: "uc_notify", path: "update_check.notify", advanced: true, showIf: (s) => s.uc_enabled },
   ],
   api: [
     { kind: "text", key: "api_listen", path: "api.listen", required: true, mono: true },
+    { kind: "bool", key: "api_dashboard", path: "api.dashboard" },
     { kind: "text", key: "api_token_env", path: "api.token_env", mono: true },
+    { kind: "apitokens", key: "api_tokens", path: "api.tokens" },
+    { kind: "text", key: "ch_url", path: "storage.clickhouse.url", mono: true, advanced: true, subhead: "storage" },
+    { kind: "text", key: "ch_database", path: "storage.clickhouse.database", advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "text", key: "ch_user_env", path: "storage.clickhouse.username_env", mono: true, advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "text", key: "ch_pass_env", path: "storage.clickhouse.password_env", mono: true, advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "number", key: "ch_ttl_days", path: "storage.clickhouse.ttl_days", advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "number", key: "ch_flush", path: "storage.clickhouse.flush_interval_seconds", advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "number", key: "ch_batch", path: "storage.clickhouse.batch_size", advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "number", key: "ch_queue", path: "storage.clickhouse.queue_size", advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "number", key: "ch_traffic", path: "storage.clickhouse.traffic_interval_seconds", advanced: true, showIf: (s) => s.ch_url.trim() !== "" },
+    { kind: "bool", key: "geo_enabled", path: "geoip.enabled", advanced: true, subhead: "geoip" },
+    { kind: "text", key: "geo_asn_db", path: "geoip.asn_database", mono: true, advanced: true, showIf: (s) => s.geo_enabled },
+    { kind: "text", key: "geo_country_db", path: "geoip.country_database", mono: true, advanced: true, showIf: (s) => s.geo_enabled },
+  ],
+};
+
+// Method-specific groups, rendered as auto-opening panels right under the
+// method selector. Their errors count toward the mitigation section.
+const METHOD_FIELDS: Record<"flowspec" | "scrubbing" | "dataplane", FieldDef[]> = {
+  flowspec: [
+    { kind: "select", key: "flowspec_action", path: "flowspec.action", emptyOption: true },
+    { kind: "number", key: "flowspec_rate", path: "flowspec.rate_mbps" },
+    { kind: "bool", key: "flowspec_anchored", path: "flowspec.source_anchored" },
+    { kind: "number", key: "flowspec_minconc", path: "flowspec.min_source_concentration" },
+  ],
+  scrubbing: [
+    { kind: "text", key: "scrub_next_hop", path: "scrubbing.next_hop", mono: true },
+    { kind: "text", key: "scrub_next_hop6", path: "scrubbing.next_hop6", mono: true },
+    { kind: "text", key: "scrub_community", path: "scrubbing.community", mono: true },
+    { kind: "number", key: "scrub_local_pref", path: "scrubbing.local_pref" },
+    { kind: "scrubnodes", key: "scrub_nodes", path: "scrubbing.nodes" },
+    { kind: "select", key: "scrub_selection", path: "scrubbing.node_selection", emptyOption: true },
+    { kind: "select", key: "scrub_on_lost", path: "scrubbing.on_all_nodes_lost", emptyOption: true },
+    { kind: "number", key: "scrub_stale", path: "scrubbing.stale_after_seconds" },
+  ],
+  dataplane: [
+    { kind: "bool", key: "dp_enabled", path: "dataplane.enabled" },
+    { kind: "csv", key: "dp_interfaces", path: "dataplane.interfaces", mono: true },
+    { kind: "select", key: "dp_xdp_mode", path: "dataplane.xdp_mode", emptyOption: true },
+    { kind: "text", key: "dp_pin_path", path: "dataplane.pin_path", mono: true },
+    { kind: "select", key: "dp_on_exit", path: "dataplane.on_exit", emptyOption: true },
+    { kind: "bool", key: "dp_drop_malformed", path: "dataplane.drop_malformed" },
+    { kind: "list", key: "dp_allowlist", path: "dataplane.allowlist" },
+    { kind: "rlprofiles", key: "dp_profiles", path: "dataplane.ratelimit_profiles" },
+    { kind: "staticrules", key: "dp_rules", path: "dataplane.static_rules" },
+    { kind: "number", key: "dp_max_dynamic", path: "dataplane.limits.max_dynamic_rules" },
+    { kind: "number", key: "dp_max_static", path: "dataplane.limits.max_static_rules" },
+    { kind: "number", key: "dp_max_sources", path: "dataplane.limits.max_ratelimit_sources" },
   ],
 };
 
@@ -108,8 +237,8 @@ const FIELDS: Record<SectionId, FieldDef[]> = {
 // owns it, so the red verdict strip can jump to the right place.
 const ERROR_SECTION: Array<[RegExp, SectionId]> = [
   [/^(listen|sampling|flow_sources)/, "telemetry"],
-  [/^(networks|protected_whitelist|hostgroups)/, "networks"],
-  [/^(thresholds|baseline|carpet)/, "detection"],
+  [/^(networks|protected_whitelist|hostgroups|tenant)/, "networks"],
+  [/^(thresholds|baseline|carpet|samples)/, "detection"],
   [/^(bgp|mitigation|flowspec|scrubbing|dataplane|escalation)/, "mitigation"],
   [/^ban\b|^ban[.:]/, "bans"],
   [/^(notify|update_check)/, "notify"],
@@ -122,6 +251,8 @@ function guessErrorSection(err: string | undefined): SectionId | null {
   for (const [re, sec] of ERROR_SECTION) if (re.test(head)) return sec;
   return null;
 }
+
+const splitCsv = (v: string) => v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
 // Module-level on purpose: defining this inside ConfigBuilder would give it a
 // new component identity every render, remounting the subtree and dropping
@@ -173,6 +304,12 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   const [s, setS] = useState<WizardState>(initialState);
   const [copied, setCopied] = useState(false);
   const [active, setActive] = useState<SectionId>("telemetry");
+  // per-method-group manual open override; null = follow the active method
+  const [groupOpen, setGroupOpen] = useState<Record<string, boolean | null>>({
+    flowspec: null,
+    scrubbing: null,
+    dataplane: null,
+  });
 
   const yaml = useMemo(() => emitConfig(s), [s]);
   const yamlLines = useMemo(() => yaml.split("\n"), [yaml]);
@@ -278,27 +415,68 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     URL.revokeObjectURL(url);
   }
 
+  // Which mitigation methods the config actually uses (method, escalation
+  // rungs, hostgroup overrides, carpet) — drives the auto-open method panels.
+  const usesAction = (a: string) =>
+    s.mitigation === a ||
+    s.escalation.some((e) => e.action === a) ||
+    s.hostgroups.some((g) => g.mitigation === a) ||
+    s.carpet_mitigation === a;
+  const methodAuto: Record<"flowspec" | "scrubbing" | "dataplane", boolean> = {
+    flowspec: usesAction("flowspec"),
+    scrubbing: usesAction("divert"),
+    dataplane: usesAction("dataplane") || s.dp_enabled,
+  };
+
   // --- per-field validation, shared by the renderers and the section dots.
+  function matrixError(f: FieldDef): string | null {
+    const val = s[f.matrix!] as ThresholdSet;
+    for (const k of THRESHOLD_KEYS) {
+      const raw = val[k].trim();
+      if (f.required && f.matrix === "thr" && (k === "pps" || k === "mbps" || k === "flows_per_sec")) {
+        if (raw === "") return vmsg.required;
+      }
+      if (raw === "") continue;
+      const err = validateNumber(`${f.path}.${k}`, Number(raw), vmsg);
+      if (err) return err;
+    }
+    return null;
+  }
+
   function fieldError(f: FieldDef): string | null {
+    if (f.showIf && !f.showIf(s)) return null;
     switch (f.kind) {
       case "text": {
-        const v = s[f.key] as string;
+        const v = s[f.key!] as string;
         if (v.trim() === "") return f.required ? vmsg.required : null;
         return validateString(f.path, v, vmsg);
       }
       case "number": {
-        const v = s[f.key] as string;
+        const v = s[f.key!] as string;
         if (v.trim() === "") return f.required ? vmsg.required : null;
         return validateNumber(f.path, Number(v), vmsg);
       }
       case "list": {
-        for (const item of s[f.key] as string[]) {
+        for (const item of s[f.key!] as string[]) {
           if (!item.trim()) continue;
           const err = validateString(f.path, item, vmsg);
           if (err) return err;
         }
         return null;
       }
+      case "csv": {
+        for (const token of splitCsv(s[f.key!] as string)) {
+          if (f.numericCsv) {
+            if (!/^\d+$/.test(token)) return vmsg.notNumber;
+            continue;
+          }
+          const err = f.itemPath ? validateString(f.itemPath, token, vmsg) : null;
+          if (err) return err;
+        }
+        return null;
+      }
+      case "matrix":
+        return matrixError(f);
       case "neighbors": {
         for (const n of s.neighbors) {
           if (n.address.trim()) {
@@ -307,6 +485,128 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           }
           if (n.remote_asn.trim()) {
             const err = validateNumber("bgp.neighbors.remote_asn", Number(n.remote_asn), vmsg);
+            if (err) return err;
+          }
+          if (n.port.trim()) {
+            const err = validateNumber("bgp.neighbors.port", Number(n.port), vmsg);
+            if (err) return err;
+          }
+        }
+        return null;
+      }
+      case "boundary": {
+        for (const b of s.boundary) {
+          if (b.exporter.trim()) {
+            const err = validateString("sampling.boundary.exporter", b.exporter, vmsg);
+            if (err) return err;
+          }
+          for (const token of splitCsv(b.external_ifindexes)) {
+            if (!/^\d+$/.test(token)) return vmsg.notNumber;
+          }
+        }
+        return null;
+      }
+      case "escalation": {
+        for (const e of s.escalation) {
+          if (e.after_seconds.trim()) {
+            const err = validateNumber("escalation.after_seconds", Number(e.after_seconds), vmsg);
+            if (err) return err;
+          }
+          if (e.action) {
+            const err = validateString("escalation.action", e.action, vmsg);
+            if (err) return err;
+          }
+        }
+        return null;
+      }
+      case "hostgroups": {
+        for (const g of s.hostgroups) {
+          if (g.name.trim()) {
+            const err = validateString("hostgroups.name", g.name, vmsg);
+            if (err) return err;
+          }
+          for (const net of splitCsv(g.networks)) {
+            const err = validateString("hostgroups.networks", net, vmsg);
+            if (err) return err;
+          }
+          for (const k of THRESHOLD_KEYS) {
+            const raw = g.thr[k].trim();
+            if (raw === "") continue;
+            const err = validateNumber(`hostgroups.thresholds.${k}`, Number(raw), vmsg);
+            if (err) return err;
+          }
+        }
+        return null;
+      }
+      case "scrubnodes": {
+        for (const n of s.scrub_nodes) {
+          if (n.next_hop.trim()) {
+            const err = validateString("scrubbing.nodes.next_hop", n.next_hop, vmsg);
+            if (err) return err;
+          }
+          if (n.next_hop6.trim()) {
+            const err = validateString("scrubbing.nodes.next_hop6", n.next_hop6, vmsg);
+            if (err) return err;
+          }
+          if (n.capacity_mbps.trim()) {
+            const err = validateNumber("scrubbing.nodes.capacity_mbps", Number(n.capacity_mbps), vmsg);
+            if (err) return err;
+          }
+        }
+        return null;
+      }
+      case "rlprofiles": {
+        for (const p of s.dp_profiles) {
+          if (p.name.trim()) {
+            const err = validateString("dataplane.ratelimit_profiles.name", p.name, vmsg);
+            if (err) return err;
+          }
+          for (const [path, v] of [
+            ["dataplane.ratelimit_profiles.pps", p.pps],
+            ["dataplane.ratelimit_profiles.mbps", p.mbps],
+          ] as const) {
+            if (v.trim()) {
+              const err = validateNumber(path, Number(v), vmsg);
+              if (err) return err;
+            }
+          }
+        }
+        return null;
+      }
+      case "staticrules": {
+        for (const r of s.dp_rules) {
+          if (r.name.trim()) {
+            const err = validateString("dataplane.static_rules.name", r.name, vmsg);
+            if (err) return err;
+          }
+          if (r.src.trim()) {
+            const err = validateString("dataplane.static_rules.match.src", r.src, vmsg);
+            if (err) return err;
+          }
+          if (r.proto) {
+            const err = validateString("dataplane.static_rules.match.proto", r.proto, vmsg);
+            if (err) return err;
+          }
+          for (const [path, v] of [
+            ["dataplane.static_rules.match.src_port", r.src_port],
+            ["dataplane.static_rules.match.dst_port", r.dst_port],
+          ] as const) {
+            if (v.trim()) {
+              const err = validateNumber(path, Number(v), vmsg);
+              if (err) return err;
+            }
+          }
+        }
+        return null;
+      }
+      case "apitokens": {
+        for (const tk of s.api_tokens) {
+          if (tk.name.trim()) {
+            const err = validateString("api.tokens.name", tk.name, vmsg);
+            if (err) return err;
+          }
+          if (tk.role) {
+            const err = validateString("api.tokens.role", tk.role, vmsg);
             if (err) return err;
           }
         }
@@ -322,6 +622,9 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     for (const id of SECTION_IDS) {
       out[id] = FIELDS[id].reduce((n, f) => n + (fieldError(f) ? 1 : 0), 0);
     }
+    for (const defs of Object.values(METHOD_FIELDS)) {
+      out.mitigation += defs.reduce((n, f) => n + (fieldError(f) ? 1 : 0), 0);
+    }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s, vmsg]);
@@ -331,7 +634,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   // Human gloss for *_seconds fields: "600" → "≈ 10 min".
   function secondsGloss(f: FieldDef): string | null {
     if (f.kind !== "number" || !f.path.endsWith("_seconds")) return null;
-    const n = Number((s[f.key] as string).trim());
+    const n = Number((s[f.key!] as string).trim());
     if (!Number.isFinite(n) || n < 120) return null;
     if (n >= 5400) return t.hours.replace("{v}", (Math.round((n / 3600) * 10) / 10).toString());
     return t.minutes.replace("{v}", Math.round(n / 60).toString());
@@ -347,7 +650,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   });
 
   function renderText(f: FieldDef) {
-    const value = s[f.key] as string;
+    const value = s[f.key!] as string;
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
         <input
@@ -355,14 +658,14 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           className={`${inputCls}${f.mono ? " font-mono" : ""}`}
           value={value}
           spellCheck={false}
-          onChange={(e) => set(f.key, e.target.value as WizardState[typeof f.key])}
+          onChange={(e) => set(f.key!, e.target.value as WizardState[typeof f.key & keyof WizardState])}
         />
       </FieldShell>
     );
   }
 
   function renderNumber(f: FieldDef) {
-    const value = s[f.key] as string;
+    const value = s[f.key!] as string;
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
         <input
@@ -371,7 +674,23 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           inputMode="numeric"
           value={value}
           spellCheck={false}
-          onChange={(e) => set(f.key, e.target.value as WizardState[typeof f.key])}
+          onChange={(e) => set(f.key!, e.target.value as WizardState[typeof f.key & keyof WizardState])}
+        />
+      </FieldShell>
+    );
+  }
+
+  function renderCsv(f: FieldDef) {
+    const value = s[f.key!] as string;
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <input
+          id={`f-${f.path}`}
+          className={`${inputCls}${f.mono ? " font-mono" : ""}`}
+          value={value}
+          spellCheck={false}
+          placeholder="a, b, c"
+          onChange={(e) => set(f.key!, e.target.value as WizardState[typeof f.key & keyof WizardState])}
         />
       </FieldShell>
     );
@@ -385,8 +704,8 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             <input
               type="checkbox"
               className="h-4 w-4 accent-[var(--accent)]"
-              checked={s[f.key] as boolean}
-              onChange={(e) => set(f.key, e.target.checked as WizardState[typeof f.key])}
+              checked={s[f.key!] as boolean}
+              onChange={(e) => set(f.key!, e.target.checked as WizardState[typeof f.key & keyof WizardState])}
             />
             <span>{labelOf(f.path)}</span>
           </label>
@@ -400,13 +719,14 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   function renderSelect(f: FieldDef) {
     const opts = fieldNode(f.path)?.enum ?? [];
     return (
-      <FieldShell key={f.path} {...shellProps(f)} error={null}>
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
         <select
           id={`f-${f.path}`}
           className={inputCls}
-          value={s[f.key] as string}
-          onChange={(e) => set(f.key, e.target.value as WizardState[typeof f.key])}
+          value={s[f.key!] as string}
+          onChange={(e) => set(f.key!, e.target.value as WizardState[typeof f.key & keyof WizardState])}
         >
+          {f.emptyOption && <option value="">—</option>}
           {opts.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -418,8 +738,8 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   }
 
   function renderList(f: FieldDef) {
-    const values = s[f.key] as string[];
-    const key = f.key as "networks" | "whitelist";
+    const values = s[f.key!] as string[];
+    const key = f.key as "networks" | "whitelist" | "flow_sources" | "dp_allowlist";
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={null}>
         <div className="space-y-2">
@@ -451,11 +771,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </div>
             );
           })}
-          <button
-            type="button"
-            className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
-            onClick={() => set(key, [...values, ""])}
-          >
+          <button type="button" className={miniBtnCls} onClick={() => set(key, [...values, ""])}>
             {t.addItem}
           </button>
         </div>
@@ -463,61 +779,151 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     );
   }
 
-  function renderNeighbors(f: FieldDef) {
+  function renderMatrix(f: FieldDef) {
+    const mkey = f.matrix!;
+    const val = s[mkey] as ThresholdSet;
+    const upd = (k: ThresholdKey, v: string) =>
+      set(mkey, { ...val, [k]: v } as WizardState[typeof mkey]);
+    const rows: Array<{ label: string; pps: ThresholdKey; mbps: ThresholdKey }> = [
+      { label: t.thr.total, pps: "pps", mbps: "mbps" },
+      { label: t.thr.tcp, pps: "tcp_pps", mbps: "tcp_mbps" },
+      { label: t.thr.tcpSyn, pps: "tcp_syn_pps", mbps: "tcp_syn_mbps" },
+      { label: t.thr.udp, pps: "udp_pps", mbps: "udp_mbps" },
+      { label: t.thr.icmp, pps: "icmp_pps", mbps: "icmp_mbps" },
+      { label: t.thr.frag, pps: "frag_pps", mbps: "frag_mbps" },
+    ];
+    const err = matrixError(f);
+    const cell = (k: ThresholdKey) => {
+      const raw = val[k].trim();
+      const bad =
+        (raw !== "" && validateNumber(`${f.path}.${k}`, Number(raw), vmsg) !== null) ||
+        (f.required && f.matrix === "thr" && raw === "" &&
+          (k === "pps" || k === "mbps" || k === "flows_per_sec"));
+      return (
+        <input
+          aria-label={`${f.path}.${k}`}
+          className={`${cellCls} ${bad ? "border-red-500" : "border-border"}`}
+          inputMode="numeric"
+          value={val[k]}
+          spellCheck={false}
+          onChange={(e) => upd(k, e.target.value)}
+        />
+      );
+    };
     return (
-      <FieldShell key={f.path} {...shellProps(f)} error={null}>
-        <div className="space-y-3">
-          {s.neighbors.map((n, i) => {
-            const addrErr = n.address.trim()
-              ? validateString("bgp.neighbors.address", n.address, vmsg)
-              : null;
-            const asnErr = n.remote_asn.trim()
-              ? validateNumber("bgp.neighbors.remote_asn", Number(n.remote_asn), vmsg)
-              : null;
-            return (
-              <div key={i} className="rounded-md border border-border p-3">
-                <div className="flex gap-2">
-                  <input
-                    className={`${inputCls} font-mono`}
-                    placeholder="address"
-                    value={n.address}
-                    spellCheck={false}
-                    onChange={(e) => {
-                      const next = s.neighbors.slice();
-                      next[i] = { ...next[i], address: e.target.value };
-                      set("neighbors", next);
-                    }}
-                  />
-                  <input
-                    className={`${inputCls} w-32 font-mono`}
-                    inputMode="numeric"
-                    placeholder="remote_asn"
-                    value={n.remote_asn}
-                    onChange={(e) => {
-                      const next = s.neighbors.slice();
-                      next[i] = { ...next[i], remote_asn: e.target.value };
-                      set("neighbors", next);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    aria-label="remove"
-                    className="shrink-0 rounded-md border border-border px-3 text-muted-foreground hover:bg-muted"
-                    onClick={() => set("neighbors", s.neighbors.filter((_, j) => j !== i))}
-                  >
-                    ×
-                  </button>
-                </div>
-                {(addrErr || asnErr) && (
-                  <p className="mt-1 text-xs text-red-500">{addrErr ?? asnErr}</p>
-                )}
+      <FieldShell key={f.path} {...shellProps(f)} error={err}>
+        <div className="overflow-x-auto">
+          <div className="grid min-w-[320px] grid-cols-[minmax(90px,auto)_1fr_1fr] items-center gap-x-2 gap-y-1.5">
+            <span />
+            <span className="font-mono text-[11px] text-muted-foreground">pps</span>
+            <span className="font-mono text-[11px] text-muted-foreground">mbps</span>
+            {rows.map((r) => (
+              <div key={r.pps} className="contents">
+                <span className="text-xs text-muted-foreground">{r.label}</span>
+                {cell(r.pps)}
+                {cell(r.mbps)}
               </div>
-            );
-          })}
+            ))}
+            <span className="text-xs text-muted-foreground">{t.thr.flows}</span>
+            {cell("flows_per_sec")}
+            <span />
+          </div>
+        </div>
+        {!err && <p className="mt-1 text-[11px] text-muted-foreground/80">{t.thr.hint}</p>}
+      </FieldShell>
+    );
+  }
+
+  // Small building blocks for the repeatable-row editors.
+  function rowShell(children: React.ReactNode, onRemove: () => void, key: number) {
+    return (
+      <div key={key} className="rounded-md border border-border p-3">
+        <div className="flex flex-wrap items-start gap-2">
+          {children}
           <button
             type="button"
-            className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted"
-            onClick={() => set("neighbors", [...s.neighbors, { address: "", remote_asn: "" }])}
+            aria-label="remove"
+            className="ml-auto shrink-0 rounded-md border border-border px-3 py-1.5 text-muted-foreground hover:bg-muted"
+            onClick={onRemove}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function rowInput(opts: {
+    value: string;
+    placeholder: string;
+    onChange: (v: string) => void;
+    width?: string;
+    numeric?: boolean;
+    error?: string | null;
+  }) {
+    return (
+      <div className={opts.width ?? "w-32"}>
+        <input
+          className={`${cellCls} ${opts.error ? "border-red-500" : "border-border"}`}
+          value={opts.value}
+          placeholder={opts.placeholder}
+          spellCheck={false}
+          inputMode={opts.numeric ? "numeric" : undefined}
+          onChange={(e) => opts.onChange(e.target.value)}
+        />
+      </div>
+    );
+  }
+
+  function rowSelect(opts: {
+    value: string;
+    path: string;
+    onChange: (v: string) => void;
+    width?: string;
+    emptyLabel?: string;
+  }) {
+    const enumOpts = fieldNode(opts.path)?.enum ?? [];
+    return (
+      <select
+        className={`${cellCls} border-border ${opts.width ?? "w-28"}`}
+        value={opts.value}
+        aria-label={opts.path}
+        onChange={(e) => opts.onChange(e.target.value)}
+      >
+        <option value="">{opts.emptyLabel ?? "—"}</option>
+        {enumOpts.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  function renderNeighbors(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.neighbors)[number]>) => {
+      const next = s.neighbors.slice();
+      next[i] = { ...next[i], ...patch };
+      set("neighbors", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-2">
+          {s.neighbors.map((n, i) =>
+            rowShell(
+              <>
+                {rowInput({ value: n.address, placeholder: "address", width: "w-44 grow", onChange: (v) => updRow(i, { address: v }) })}
+                {rowInput({ value: n.remote_asn, placeholder: "remote_asn", numeric: true, width: "w-28", onChange: (v) => updRow(i, { remote_asn: v }) })}
+                {rowInput({ value: n.port, placeholder: "port", numeric: true, width: "w-20", onChange: (v) => updRow(i, { port: v }) })}
+              </>,
+              () => set("neighbors", s.neighbors.filter((_, j) => j !== i)),
+              i,
+            ),
+          )}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() => set("neighbors", [...s.neighbors, { address: "", remote_asn: "", port: "" }])}
           >
             {t.addNeighbor}
           </button>
@@ -526,8 +932,306 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     );
   }
 
+  function renderBoundary(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.boundary)[number]>) => {
+      const next = s.boundary.slice();
+      next[i] = { ...next[i], ...patch };
+      set("boundary", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-2">
+          {s.boundary.map((b, i) =>
+            rowShell(
+              <>
+                {rowInput({ value: b.exporter, placeholder: "exporter", width: "w-40 grow", onChange: (v) => updRow(i, { exporter: v }) })}
+                {rowInput({ value: b.external_ifindexes, placeholder: "external_ifindexes", width: "w-44", onChange: (v) => updRow(i, { external_ifindexes: v }) })}
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-[var(--accent)]"
+                    checked={b.egress_sampling}
+                    onChange={(e) => updRow(i, { egress_sampling: e.target.checked })}
+                  />
+                  egress_sampling
+                </label>
+              </>,
+              () => set("boundary", s.boundary.filter((_, j) => j !== i)),
+              i,
+            ),
+          )}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() =>
+              set("boundary", [...s.boundary, { exporter: "", external_ifindexes: "", egress_sampling: false }])
+            }
+          >
+            {t.addItem}
+          </button>
+        </div>
+      </FieldShell>
+    );
+  }
+
+  function renderEscalation(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.escalation)[number]>) => {
+      const next = s.escalation.slice();
+      next[i] = { ...next[i], ...patch };
+      set("escalation", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-2">
+          {s.escalation.map((e, i) =>
+            rowShell(
+              <>
+                {rowInput({ value: e.after_seconds, placeholder: "after_seconds", numeric: true, width: "w-32", onChange: (v) => updRow(i, { after_seconds: v }) })}
+                {rowSelect({ value: e.action, path: "escalation.action", width: "w-36", onChange: (v) => updRow(i, { action: v }) })}
+              </>,
+              () => set("escalation", s.escalation.filter((_, j) => j !== i)),
+              i,
+            ),
+          )}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() =>
+              set("escalation", [
+                ...s.escalation,
+                { after_seconds: s.escalation.length === 0 ? "0" : "", action: "" },
+              ])
+            }
+          >
+            {t.addItem}
+          </button>
+        </div>
+      </FieldShell>
+    );
+  }
+
+  function renderHostgroups(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.hostgroups)[number]>) => {
+      const next = s.hostgroups.slice();
+      next[i] = { ...next[i], ...patch };
+      set("hostgroups", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-3">
+          {s.hostgroups.map((g, i) => (
+            <div key={i} className="space-y-2 rounded-md border border-border p-3">
+              <div className="flex flex-wrap items-start gap-2">
+                {rowInput({ value: g.name, placeholder: "name", width: "w-36", onChange: (v) => updRow(i, { name: v }) })}
+                {rowInput({ value: g.networks, placeholder: "networks (CIDR, CIDR…)", width: "w-56 grow", onChange: (v) => updRow(i, { networks: v }) })}
+                {rowSelect({ value: g.calculation, path: "hostgroups.calculation", width: "w-28", onChange: (v) => updRow(i, { calculation: v }) })}
+                {rowSelect({ value: g.mitigation, path: "hostgroups.mitigation", width: "w-32", onChange: (v) => updRow(i, { mitigation: v }) })}
+                {rowInput({ value: g.tenant, placeholder: "tenant", width: "w-28", onChange: (v) => updRow(i, { tenant: v }) })}
+                <label className="flex items-center gap-2 py-1.5 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-[var(--accent)]"
+                    checked={g.ban}
+                    onChange={(e) => updRow(i, { ban: e.target.checked })}
+                  />
+                  ban
+                </label>
+                <button
+                  type="button"
+                  aria-label="remove"
+                  className="ml-auto shrink-0 rounded-md border border-border px-3 py-1.5 text-muted-foreground hover:bg-muted"
+                  onClick={() => set("hostgroups", s.hostgroups.filter((_, j) => j !== i))}
+                >
+                  ×
+                </button>
+              </div>
+              <details>
+                <summary className="cursor-pointer list-none text-xs text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  ▸ {labelOf("thresholds")}
+                </summary>
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {THRESHOLD_KEYS.map((k) => (
+                    <input
+                      key={k}
+                      aria-label={`hostgroups.thresholds.${k}`}
+                      className={`${cellCls} border-border`}
+                      inputMode="numeric"
+                      placeholder={k}
+                      value={g.thr[k]}
+                      spellCheck={false}
+                      onChange={(e) => updRow(i, { thr: { ...g.thr, [k]: e.target.value } })}
+                    />
+                  ))}
+                </div>
+              </details>
+            </div>
+          ))}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() =>
+              set("hostgroups", [
+                ...s.hostgroups,
+                { name: "", networks: "", calculation: "", ban: true, tenant: "", mitigation: "", thr: emptyThresholds() },
+              ])
+            }
+          >
+            {t.addItem}
+          </button>
+        </div>
+      </FieldShell>
+    );
+  }
+
+  function renderScrubNodes(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.scrub_nodes)[number]>) => {
+      const next = s.scrub_nodes.slice();
+      next[i] = { ...next[i], ...patch };
+      set("scrub_nodes", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-2">
+          {s.scrub_nodes.map((n, i) =>
+            rowShell(
+              <>
+                {rowInput({ value: n.name, placeholder: "name", width: "w-28", onChange: (v) => updRow(i, { name: v }) })}
+                {rowInput({ value: n.next_hop, placeholder: "next_hop", width: "w-32", onChange: (v) => updRow(i, { next_hop: v }) })}
+                {rowInput({ value: n.next_hop6, placeholder: "next_hop6", width: "w-32", onChange: (v) => updRow(i, { next_hop6: v }) })}
+                {rowInput({ value: n.capacity_mbps, placeholder: "capacity_mbps", numeric: true, width: "w-32", onChange: (v) => updRow(i, { capacity_mbps: v }) })}
+                {rowInput({ value: n.hostgroups, placeholder: "hostgroups", width: "w-36", onChange: (v) => updRow(i, { hostgroups: v }) })}
+              </>,
+              () => set("scrub_nodes", s.scrub_nodes.filter((_, j) => j !== i)),
+              i,
+            ),
+          )}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() =>
+              set("scrub_nodes", [
+                ...s.scrub_nodes,
+                { name: "", next_hop: "", next_hop6: "", capacity_mbps: "", hostgroups: "" },
+              ])
+            }
+          >
+            {t.addItem}
+          </button>
+        </div>
+      </FieldShell>
+    );
+  }
+
+  function renderRlProfiles(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.dp_profiles)[number]>) => {
+      const next = s.dp_profiles.slice();
+      next[i] = { ...next[i], ...patch };
+      set("dp_profiles", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-2">
+          {s.dp_profiles.map((p, i) =>
+            rowShell(
+              <>
+                {rowInput({ value: p.name, placeholder: "name", width: "w-36", onChange: (v) => updRow(i, { name: v }) })}
+                {rowInput({ value: p.pps, placeholder: "pps", numeric: true, width: "w-28", onChange: (v) => updRow(i, { pps: v }) })}
+                {rowInput({ value: p.mbps, placeholder: "mbps", numeric: true, width: "w-28", onChange: (v) => updRow(i, { mbps: v }) })}
+              </>,
+              () => set("dp_profiles", s.dp_profiles.filter((_, j) => j !== i)),
+              i,
+            ),
+          )}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() => set("dp_profiles", [...s.dp_profiles, { name: "", pps: "", mbps: "" }])}
+          >
+            {t.addItem}
+          </button>
+        </div>
+      </FieldShell>
+    );
+  }
+
+  function renderStaticRules(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.dp_rules)[number]>) => {
+      const next = s.dp_rules.slice();
+      next[i] = { ...next[i], ...patch };
+      set("dp_rules", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-2">
+          {s.dp_rules.map((r, i) =>
+            rowShell(
+              <>
+                {rowInput({ value: r.name, placeholder: "name", width: "w-32", onChange: (v) => updRow(i, { name: v }) })}
+                {rowInput({ value: r.src, placeholder: "match.src", width: "w-36", onChange: (v) => updRow(i, { src: v }) })}
+                {rowSelect({ value: r.proto, path: "dataplane.static_rules.match.proto", width: "w-24", onChange: (v) => updRow(i, { proto: v }) })}
+                {rowInput({ value: r.src_port, placeholder: "src_port", numeric: true, width: "w-24", onChange: (v) => updRow(i, { src_port: v }) })}
+                {rowInput({ value: r.dst_port, placeholder: "dst_port", numeric: true, width: "w-24", onChange: (v) => updRow(i, { dst_port: v }) })}
+                {rowSelect({ value: r.action, path: "dataplane.static_rules.action", width: "w-28", onChange: (v) => updRow(i, { action: v }) })}
+                {rowInput({ value: r.profile, placeholder: "profile", width: "w-28", onChange: (v) => updRow(i, { profile: v }) })}
+              </>,
+              () => set("dp_rules", s.dp_rules.filter((_, j) => j !== i)),
+              i,
+            ),
+          )}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() =>
+              set("dp_rules", [
+                ...s.dp_rules,
+                { name: "", src: "", proto: "", src_port: "", dst_port: "", action: "", profile: "" },
+              ])
+            }
+          >
+            {t.addItem}
+          </button>
+        </div>
+      </FieldShell>
+    );
+  }
+
+  function renderApiTokens(f: FieldDef) {
+    const updRow = (i: number, patch: Partial<(typeof s.api_tokens)[number]>) => {
+      const next = s.api_tokens.slice();
+      next[i] = { ...next[i], ...patch };
+      set("api_tokens", next);
+    };
+    return (
+      <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
+        <div className="space-y-2">
+          {s.api_tokens.map((tk, i) =>
+            rowShell(
+              <>
+                {rowInput({ value: tk.name, placeholder: "name", width: "w-32", onChange: (v) => updRow(i, { name: v }) })}
+                {rowInput({ value: tk.token_env, placeholder: "token_env", width: "w-44 grow", onChange: (v) => updRow(i, { token_env: v }) })}
+                {rowSelect({ value: tk.role, path: "api.tokens.role", width: "w-28", onChange: (v) => updRow(i, { role: v }) })}
+                {rowInput({ value: tk.tenant, placeholder: "tenant", width: "w-28", onChange: (v) => updRow(i, { tenant: v }) })}
+              </>,
+              () => set("api_tokens", s.api_tokens.filter((_, j) => j !== i)),
+              i,
+            ),
+          )}
+          <button
+            type="button"
+            className={miniBtnCls}
+            onClick={() =>
+              set("api_tokens", [...s.api_tokens, { name: "", token_env: "", role: "", tenant: "" }])
+            }
+          >
+            {t.addItem}
+          </button>
+        </div>
+      </FieldShell>
+    );
+  }
+
   function renderMethod(f: FieldDef) {
-    const opts = fieldNode("mitigation")?.enum ?? ["blackhole", "flowspec", "divert"];
+    const opts = fieldNode("mitigation")?.enum ?? ["blackhole", "flowspec", "divert", "dataplane"];
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={null}>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -536,7 +1240,10 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               key={o}
               type="button"
               aria-pressed={s.mitigation === o}
-              onClick={() => set("mitigation", o)}
+              onClick={() => {
+                set("mitigation", o);
+                setGroupOpen({ flowspec: null, scrubbing: null, dataplane: null });
+              }}
               className={`rounded-md border px-3 py-2 text-sm font-medium capitalize transition-colors ${
                 s.mitigation === o
                   ? "border-accent bg-accent/10 text-foreground"
@@ -551,7 +1258,8 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     );
   }
 
-  function renderField(f: FieldDef) {
+  function renderField(f: FieldDef): React.ReactNode {
+    if (f.showIf && !f.showIf(s)) return null;
     switch (f.kind) {
       case "text":
         return renderText(f);
@@ -563,11 +1271,70 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         return renderSelect(f);
       case "list":
         return renderList(f);
+      case "csv":
+        return renderCsv(f);
+      case "matrix":
+        return renderMatrix(f);
       case "neighbors":
         return renderNeighbors(f);
       case "method":
         return renderMethod(f);
+      case "boundary":
+        return renderBoundary(f);
+      case "escalation":
+        return renderEscalation(f);
+      case "hostgroups":
+        return renderHostgroups(f);
+      case "scrubnodes":
+        return renderScrubNodes(f);
+      case "rlprofiles":
+        return renderRlProfiles(f);
+      case "staticrules":
+        return renderStaticRules(f);
+      case "apitokens":
+        return renderApiTokens(f);
     }
+  }
+
+  function renderFieldList(defs: FieldDef[]) {
+    return defs.map((f) => {
+      const node = renderField(f);
+      if (node === null) return null;
+      return (
+        <div key={f.path}>
+          {f.subhead && (
+            <h3 className="mb-3 border-b border-border pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+              {t.subheads[f.subhead]}
+            </h3>
+          )}
+          {node}
+        </div>
+      );
+    });
+  }
+
+  function renderMethodGroup(id: "flowspec" | "scrubbing" | "dataplane") {
+    const auto = methodAuto[id];
+    const open = groupOpen[id] ?? auto;
+    const errs = METHOD_FIELDS[id].reduce((n, f) => n + (fieldError(f) ? 1 : 0), 0);
+    return (
+      <div key={id} className={`rounded-md border ${auto ? "border-accent/50" : "border-border"}`}>
+        <button
+          type="button"
+          aria-expanded={open}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium"
+          onClick={() => setGroupOpen((p) => ({ ...p, [id]: !open }))}
+        >
+          <span aria-hidden className={`text-[10px] transition-transform ${open ? "rotate-90" : ""}`}>
+            ▶
+          </span>
+          {t.subheads[id]}
+          {auto && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-accent" />}
+          {errs > 0 && <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-red-500" />}
+        </button>
+        {open && <div className="space-y-5 border-t border-border p-4">{renderFieldList(METHOD_FIELDS[id])}</div>}
+      </div>
+    );
   }
 
   function renderSection(id: SectionId) {
@@ -585,16 +1352,19 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         </h2>
         <div className="mt-2 rounded-lg border border-border bg-surface p-5">
           <div className="space-y-5">
-            {basic.map((f) => (
-              <div key={f.path}>
-                {f.subhead && (
-                  <h3 className="mb-3 border-b border-border pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                    {t.subheads[f.subhead]}
-                  </h3>
-                )}
-                {renderField(f)}
-              </div>
-            ))}
+            {id === "mitigation" ? (
+              <>
+                {renderFieldList([defs[0]])}
+                <div className="space-y-2">
+                  {renderMethodGroup("flowspec")}
+                  {renderMethodGroup("scrubbing")}
+                  {renderMethodGroup("dataplane")}
+                </div>
+                {renderFieldList(basic.slice(1))}
+              </>
+            ) : (
+              renderFieldList(basic)
+            )}
           </div>
           {advanced.length > 0 && (
             <details className="group mt-5 border-t border-border pt-4">
@@ -605,7 +1375,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
                 {t.advanced}
                 {hint && <span className="font-normal text-muted-foreground/70">— {hint}</span>}
               </summary>
-              <div className="mt-4 space-y-5">{advanced.map((f) => renderField(f))}</div>
+              <div className="mt-4 space-y-5">{renderFieldList(advanced)}</div>
             </details>
           )}
         </div>
