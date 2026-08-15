@@ -2,42 +2,182 @@
 // (no YAML dependency) so we control formatting, comments and — crucially — the
 // footgun-safe rules: dry_run is always written explicitly (and turning it off
 // is a loud, opt-in choice), secrets are emitted as environment-variable NAMES
-// never values, and empty optional fields are omitted so the engine applies its
-// own defaults.
+// never values, and empty optional fields/blocks are omitted so the engine
+// applies its own defaults. Section order mirrors engine/deploy/config.example.yaml
+// so generated files diff cleanly against the canonical example.
 
-export type Neighbor = { address: string; remote_asn: string };
+// Shared threshold matrix: the same key set backs `thresholds`,
+// `thresholds_outgoing`, `carpet.thresholds` and per-hostgroup thresholds.
+export const THRESHOLD_KEYS = [
+  "pps",
+  "mbps",
+  "flows_per_sec",
+  "tcp_pps",
+  "tcp_mbps",
+  "tcp_syn_pps",
+  "tcp_syn_mbps",
+  "udp_pps",
+  "udp_mbps",
+  "icmp_pps",
+  "icmp_mbps",
+  "frag_pps",
+  "frag_mbps",
+] as const;
+export type ThresholdKey = (typeof THRESHOLD_KEYS)[number];
+export type ThresholdSet = Record<ThresholdKey, string>; // "" = unset
+
+export function emptyThresholds(): ThresholdSet {
+  return Object.fromEntries(THRESHOLD_KEYS.map((k) => [k, ""])) as ThresholdSet;
+}
+
+export type Neighbor = { address: string; remote_asn: string; port: string };
+export type BoundaryRow = { exporter: string; external_ifindexes: string; egress_sampling: boolean };
+export type EscalationRow = { after_seconds: string; action: string };
+export type ScrubNode = {
+  name: string;
+  next_hop: string;
+  next_hop6: string;
+  capacity_mbps: string;
+  hostgroups: string; // comma-separated group names
+};
+export type RatelimitProfile = { name: string; pps: string; mbps: string };
+export type StaticRule = {
+  name: string;
+  src: string;
+  proto: string;
+  src_port: string;
+  dst_port: string;
+  action: string;
+  profile: string;
+};
+export type ApiToken = { name: string; token_env: string; role: string; tenant: string };
+export type Hostgroup = {
+  name: string;
+  networks: string; // comma-separated CIDRs
+  calculation: string; // "" = per_host (default)
+  ban: boolean;
+  tenant: string;
+  mitigation: string; // "" = inherit global
+  thr: ThresholdSet; // all empty = inherit global thresholds
+};
 
 export type WizardState = {
   dry_run: boolean;
+  // telemetry
   sflow: string;
   netflow: string;
   default_rate: string;
+  boundary_debug: boolean;
+  boundary: BoundaryRow[];
+  flow_sources: string[];
+  // networks & groups
   networks: string[];
   whitelist: string[];
-  pps: string;
-  mbps: string;
-  flows_per_sec: string;
-  tcp_syn_pps: string;
-  udp_pps: string;
+  hostgroups: Hostgroup[];
+  tenant: string;
+  // detection
+  thr: ThresholdSet;
+  thrOut: ThresholdSet;
+  baseline_on: boolean;
+  baseline_factor: string;
+  baseline_half_life: string;
+  baseline_warmup: string;
+  baseline_floor_pps: string;
+  baseline_floor_mbps: string;
+  baseline_floor_fps: string;
+  carpet_on: boolean;
+  carpet_v4: string;
+  carpet_v6: string;
+  carpet_min_hosts: string;
+  carpet_mitigation: string; // "" = alert-only
+  carpet_max_bans: string;
+  carpetThr: ThresholdSet;
+  samples_on: boolean;
+  samples_buffer: string;
+  samples_per_attack: string;
+  // mitigation
   mitigation: string;
+  flowspec_action: string; // "" = default (discard)
+  flowspec_rate: string;
+  flowspec_anchored: boolean;
+  flowspec_minconc: string;
+  escalation: EscalationRow[];
+  scrub_next_hop: string;
+  scrub_next_hop6: string;
+  scrub_community: string;
+  scrub_local_pref: string;
+  scrub_nodes: ScrubNode[];
+  scrub_selection: string; // "" = default (affinity)
+  scrub_on_lost: string; // "" = default (withdraw)
+  scrub_stale: string;
+  dp_enabled: boolean;
+  dp_interfaces: string; // comma-separated NIC names
+  dp_xdp_mode: string; // "" = default (auto)
+  dp_pin_path: string;
+  dp_on_exit: string; // "" = default (keep)
+  dp_drop_malformed: boolean;
+  dp_allowlist: string[];
+  dp_profiles: RatelimitProfile[];
+  dp_rules: StaticRule[];
+  dp_max_dynamic: string;
+  dp_max_static: string;
+  dp_max_sources: string;
+  // bans
   ttl_seconds: string;
   unban_hysteresis_seconds: string;
   max_active_bans: string;
+  ban_fallback: string; // "" = default (blackhole)
+  ban_max_fraction: string;
+  ban_max_per_window: string;
+  ban_window_seconds: string;
+  state_file: string;
+  // bgp
   local_asn: string;
   router_id: string;
   next_hop: string;
   next_hop6: string;
   community: string;
+  bgp_communities: string; // comma-separated, overrides `community`
+  bgp_listen_port: string;
+  bgp_local_pref: string;
   neighbors: Neighbor[];
-  tg_token_env: string;
-  tg_chat_id: string;
-  api_listen: string;
-  api_token_env: string;
   gr_enabled: boolean;
   gr_restart_seconds: string;
   gr_long_lived: boolean;
   gr_long_lived_stale: string;
-  state_file: string;
+  // notify
+  tg_token_env: string;
+  tg_chat_id: string;
+  wh_url: string;
+  slack_url: string;
+  email_smtp: string;
+  email_from: string;
+  email_to: string; // comma-separated
+  email_user_env: string;
+  email_pass_env: string;
+  email_tls: boolean;
+  exec_command: string;
+  exec_format: string; // "" = default (kapkan)
+  exec_timeout: string;
+  // storage / geoip
+  ch_url: string;
+  ch_database: string;
+  ch_user_env: string;
+  ch_pass_env: string;
+  ch_ttl_days: string;
+  ch_flush: string;
+  ch_batch: string;
+  ch_queue: string;
+  ch_traffic: string;
+  geo_enabled: boolean;
+  geo_asn_db: string;
+  geo_country_db: string;
+  // api
+  api_listen: string;
+  api_dashboard: boolean;
+  api_token_env: string;
+  api_tokens: ApiToken[];
+  // updates
   uc_enabled: boolean;
   uc_interval: string;
   uc_channel: string;
@@ -50,32 +190,108 @@ export const initialState: WizardState = {
   sflow: ":6343",
   netflow: ":2055",
   default_rate: "1000",
+  boundary_debug: false,
+  boundary: [],
+  flow_sources: [],
   networks: ["203.0.113.0/24"],
   whitelist: [],
-  pps: "80000",
-  mbps: "1000",
-  flows_per_sec: "35000",
-  tcp_syn_pps: "",
-  udp_pps: "",
+  hostgroups: [],
+  tenant: "",
+  thr: { ...emptyThresholds(), pps: "80000", mbps: "1000", flows_per_sec: "35000" },
+  thrOut: emptyThresholds(),
+  baseline_on: false,
+  baseline_factor: "",
+  baseline_half_life: "",
+  baseline_warmup: "",
+  baseline_floor_pps: "",
+  baseline_floor_mbps: "",
+  baseline_floor_fps: "",
+  carpet_on: false,
+  carpet_v4: "",
+  carpet_v6: "",
+  carpet_min_hosts: "",
+  carpet_mitigation: "",
+  carpet_max_bans: "",
+  carpetThr: emptyThresholds(),
+  samples_on: false,
+  samples_buffer: "",
+  samples_per_attack: "",
   mitigation: "blackhole",
+  flowspec_action: "",
+  flowspec_rate: "",
+  flowspec_anchored: false,
+  flowspec_minconc: "",
+  escalation: [],
+  scrub_next_hop: "",
+  scrub_next_hop6: "",
+  scrub_community: "",
+  scrub_local_pref: "",
+  scrub_nodes: [],
+  scrub_selection: "",
+  scrub_on_lost: "",
+  scrub_stale: "",
+  dp_enabled: false,
+  dp_interfaces: "",
+  dp_xdp_mode: "",
+  dp_pin_path: "",
+  dp_on_exit: "",
+  dp_drop_malformed: false,
+  dp_allowlist: [],
+  dp_profiles: [],
+  dp_rules: [],
+  dp_max_dynamic: "",
+  dp_max_static: "",
+  dp_max_sources: "",
   ttl_seconds: "600",
   unban_hysteresis_seconds: "120",
   max_active_bans: "50",
+  ban_fallback: "",
+  ban_max_fraction: "",
+  ban_max_per_window: "",
+  ban_window_seconds: "",
+  state_file: "",
   local_asn: "65001",
   router_id: "10.0.0.1",
   next_hop: "192.0.2.1",
   next_hop6: "",
   community: "65000:666",
-  neighbors: [{ address: "10.0.0.254", remote_asn: "65000" }],
-  tg_token_env: "",
-  tg_chat_id: "",
-  api_listen: "127.0.0.1:8080",
-  api_token_env: "",
+  bgp_communities: "",
+  bgp_listen_port: "",
+  bgp_local_pref: "",
+  neighbors: [{ address: "10.0.0.254", remote_asn: "65000", port: "" }],
   gr_enabled: true,
   gr_restart_seconds: "",
   gr_long_lived: false,
   gr_long_lived_stale: "",
-  state_file: "",
+  tg_token_env: "",
+  tg_chat_id: "",
+  wh_url: "",
+  slack_url: "",
+  email_smtp: "",
+  email_from: "",
+  email_to: "",
+  email_user_env: "",
+  email_pass_env: "",
+  email_tls: false,
+  exec_command: "",
+  exec_format: "",
+  exec_timeout: "",
+  ch_url: "",
+  ch_database: "",
+  ch_user_env: "",
+  ch_pass_env: "",
+  ch_ttl_days: "",
+  ch_flush: "",
+  ch_batch: "",
+  ch_queue: "",
+  ch_traffic: "",
+  geo_enabled: false,
+  geo_asn_db: "",
+  geo_country_db: "",
+  api_listen: "127.0.0.1:8080",
+  api_dashboard: true,
+  api_token_env: "",
+  api_tokens: [],
   uc_enabled: false,
   uc_interval: "",
   uc_channel: "stable",
@@ -85,6 +301,21 @@ export const initialState: WizardState = {
 
 const q = (v: string) => `"${v.replace(/"/g, '\\"')}"`;
 const num = (v: string) => v.trim();
+const csv = (v: string) => v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+
+// Threshold sub-block at `indent`; returns [] when every key is empty.
+function thresholdLines(t: ThresholdSet, indent: string): string[] {
+  const out: string[] = [];
+  for (const k of THRESHOLD_KEYS) {
+    const v = t[k].trim();
+    if (v !== "" && v !== "0") out.push(`${indent}${k}: ${v}`);
+  }
+  return out;
+}
+
+function anySet(t: ThresholdSet): boolean {
+  return THRESHOLD_KEYS.some((k) => t[k].trim() !== "" && t[k].trim() !== "0");
+}
 
 export function emitConfig(s: WizardState): string {
   const L: string[] = [];
@@ -100,13 +331,30 @@ export function emitConfig(s: WizardState): string {
   L.push("");
 
   L.push("listen:");
-  L.push(`  sflow: ${q(s.sflow)}`);
+  if (s.sflow.trim()) L.push(`  sflow: ${q(s.sflow)}`);
   if (s.netflow.trim()) L.push(`  netflow: ${q(s.netflow)}             # NetFlow v5/v9 + IPFIX share this socket`);
   L.push("");
 
   L.push("sampling:");
   L.push(`  default_rate: ${num(s.default_rate)}                # used when an exporter omits its own rate`);
+  if (s.boundary_debug) L.push("  boundary_debug: true                # calibration only — turn off after comparing counters");
+  if (s.boundary.some((b) => b.exporter.trim())) {
+    L.push("  boundary:                           # count only flows crossing these external interfaces");
+    for (const b of s.boundary) {
+      if (!b.exporter.trim()) continue;
+      L.push(`    - exporter: ${q(b.exporter.trim())}`);
+      const idx = csv(b.external_ifindexes);
+      if (idx.length) L.push(`      external_ifindexes: [${idx.join(", ")}]`);
+      if (b.egress_sampling) L.push("      egress_sampling: true         # set ONLY after boundary_debug shows ~2x");
+    }
+  }
   L.push("");
+
+  if (s.flow_sources.some((f) => f.trim())) {
+    L.push("flow_sources:                         # trusted exporter source addresses (metric labels)");
+    for (const f of s.flow_sources) if (f.trim()) L.push(`  - ${q(f.trim())}`);
+    L.push("");
+  }
 
   L.push("networks:                             # detection applies only inside these; no overlaps");
   for (const n of s.networks) if (n.trim()) L.push(`  - ${q(n.trim())}`);
@@ -119,15 +367,182 @@ export function emitConfig(s: WizardState): string {
   }
 
   L.push("thresholds:                           # per destination host, real (unsampled) units");
-  L.push(`  pps: ${num(s.pps)}`);
-  L.push(`  mbps: ${num(s.mbps)}`);
-  L.push(`  flows_per_sec: ${num(s.flows_per_sec)}`);
-  if (s.tcp_syn_pps.trim() && num(s.tcp_syn_pps) !== "0") L.push(`  tcp_syn_pps: ${num(s.tcp_syn_pps)}`);
-  if (s.udp_pps.trim() && num(s.udp_pps) !== "0") L.push(`  udp_pps: ${num(s.udp_pps)}`);
+  L.push(...thresholdLines(s.thr, "  "));
   L.push("");
+
+  if (anySet(s.thrOut)) {
+    L.push("thresholds_outgoing:                  # traffic LEAVING protected hosts (compromised machines)");
+    L.push(...thresholdLines(s.thrOut, "  "));
+    L.push("");
+  }
+
+  if (s.baseline_on) {
+    L.push("baseline:                             # learned thresholds: normal level × factor, bounded below by floor");
+    L.push("  enabled: true");
+    if (num(s.baseline_factor)) L.push(`  factor: ${num(s.baseline_factor)}`);
+    if (num(s.baseline_half_life)) L.push(`  half_life_seconds: ${num(s.baseline_half_life)}`);
+    if (num(s.baseline_warmup)) L.push(`  warmup_seconds: ${num(s.baseline_warmup)}`);
+    if (num(s.baseline_floor_pps) || num(s.baseline_floor_mbps) || num(s.baseline_floor_fps)) {
+      L.push("  floor:");
+      if (num(s.baseline_floor_pps)) L.push(`    pps: ${num(s.baseline_floor_pps)}`);
+      if (num(s.baseline_floor_mbps)) L.push(`    mbps: ${num(s.baseline_floor_mbps)}`);
+      if (num(s.baseline_floor_fps)) L.push(`    flows_per_sec: ${num(s.baseline_floor_fps)}`);
+    }
+    L.push("");
+  }
+
+  if (s.carpet_on) {
+    L.push("carpet:                               # subnet-spread (carpet-bombing) detection over aggregate prefixes");
+    if (num(s.carpet_v4)) L.push(`  aggregation_prefix_v4: ${num(s.carpet_v4)}`);
+    if (num(s.carpet_v6)) L.push(`  aggregation_prefix_v6: ${num(s.carpet_v6)}`);
+    if (num(s.carpet_min_hosts)) L.push(`  min_hosts: ${num(s.carpet_min_hosts)}`);
+    if (anySet(s.carpetThr)) {
+      L.push("  thresholds:                         # AGGREGATE volume over the prefix — set well above per-host");
+      L.push(...thresholdLines(s.carpetThr, "    "));
+    }
+    if (s.carpet_mitigation) L.push(`  mitigation: ${s.carpet_mitigation}`);
+    else L.push("  # mitigation:                       # empty = alert-only");
+    if (num(s.carpet_max_bans)) L.push(`  max_active_prefix_bans: ${num(s.carpet_max_bans)}`);
+    L.push("");
+  }
+
+  if (s.samples_on) {
+    L.push("samples:                              # buffer recent flows so detections carry their sources instantly");
+    L.push("  enabled: true");
+    if (num(s.samples_buffer)) L.push(`  buffer_flows: ${num(s.samples_buffer)}`);
+    if (num(s.samples_per_attack)) L.push(`  flows_per_attack: ${num(s.samples_per_attack)}`);
+    L.push("");
+  }
+
+  const groups = s.hostgroups.filter((g) => g.name.trim());
+  if (groups.length) {
+    L.push("hostgroups:                           # per-group thresholds/policy; longest prefix wins; must lie inside networks");
+    for (const g of groups) {
+      L.push(`  - name: ${g.name.trim()}`);
+      const nets = csv(g.networks);
+      if (nets.length) {
+        L.push("    networks:");
+        for (const n of nets) L.push(`      - ${q(n)}`);
+      }
+      if (g.calculation && g.calculation !== "per_host") L.push(`    calculation: ${g.calculation}`);
+      if (!g.ban) L.push("    ban: false                        # detect and notify, never auto-mitigate");
+      if (g.mitigation) L.push(`    mitigation: ${g.mitigation}`);
+      if (anySet(g.thr)) {
+        L.push("    thresholds:                       # omit keys to inherit the global thresholds");
+        L.push(...thresholdLines(g.thr, "      "));
+      }
+      if (g.tenant.trim()) L.push(`    tenant: ${q(g.tenant.trim())}`);
+    }
+    L.push("");
+  }
+
+  if (s.tenant.trim()) {
+    L.push(`tenant: ${q(s.tenant.trim())}                      # tenant label for the global fallback group`);
+    L.push("");
+  }
 
   if (s.mitigation && s.mitigation !== "blackhole") {
     L.push(`mitigation: ${s.mitigation}`);
+    L.push("");
+  }
+
+  const flowspecSet =
+    s.flowspec_action || num(s.flowspec_rate) || s.flowspec_anchored || num(s.flowspec_minconc);
+  if (flowspecSet) {
+    L.push("flowspec:");
+    if (s.flowspec_action) L.push(`  action: ${s.flowspec_action}`);
+    if (num(s.flowspec_rate)) L.push(`  rate_mbps: ${num(s.flowspec_rate)}               # required for rate_limit`);
+    if (s.flowspec_anchored) L.push("  source_anchored: true               # drop only dominant attacker sources");
+    if (num(s.flowspec_minconc)) L.push(`  min_source_concentration: ${num(s.flowspec_minconc)}`);
+    L.push("");
+  }
+
+  const rungs = s.escalation.filter((e) => e.action);
+  if (rungs.length) {
+    L.push("escalation:                           # supersedes `mitigation`; rungs may only strengthen");
+    for (const e of rungs) {
+      L.push(`  - {after_seconds: ${num(e.after_seconds) || "0"}, action: ${e.action}}`);
+    }
+    L.push("");
+  }
+
+  const scrubSet =
+    s.scrub_next_hop.trim() || s.scrub_next_hop6.trim() || s.scrub_community.trim() ||
+    num(s.scrub_local_pref) || s.scrub_nodes.some((n) => n.name.trim()) ||
+    s.scrub_selection || s.scrub_on_lost || num(s.scrub_stale);
+  if (scrubSet) {
+    L.push("scrubbing:                            # required for the divert action/method");
+    if (s.scrub_next_hop.trim()) L.push(`  next_hop: ${q(s.scrub_next_hop.trim())}         # scrubbing-center next-hop (v4)`);
+    if (s.scrub_next_hop6.trim()) L.push(`  next_hop6: ${q(s.scrub_next_hop6.trim())}`);
+    if (s.scrub_community.trim()) L.push(`  community: ${q(s.scrub_community.trim())}`);
+    if (num(s.scrub_local_pref)) L.push(`  local_pref: ${num(s.scrub_local_pref)}                   # raised so the divert route wins selection`);
+    const nodes = s.scrub_nodes.filter((n) => n.name.trim());
+    if (nodes.length) {
+      L.push("  nodes:                              # managed `kapkan scrub` boxes; scalar next_hop above = one-node case");
+      for (const n of nodes) {
+        L.push(`    - name: ${n.name.trim()}`);
+        if (n.next_hop.trim()) L.push(`      next_hop: ${q(n.next_hop.trim())}`);
+        if (n.next_hop6.trim()) L.push(`      next_hop6: ${q(n.next_hop6.trim())}`);
+        if (num(n.capacity_mbps)) L.push(`      capacity_mbps: ${num(n.capacity_mbps)}`);
+        const hgs = csv(n.hostgroups);
+        if (hgs.length) L.push(`      hostgroups: [${hgs.join(", ")}]`);
+      }
+    }
+    if (s.scrub_selection) L.push(`  node_selection: ${s.scrub_selection}`);
+    if (s.scrub_on_lost) L.push(`  on_all_nodes_lost: ${s.scrub_on_lost}`);
+    if (num(s.scrub_stale)) L.push(`  stale_after_seconds: ${num(s.scrub_stale)}`);
+    L.push("");
+  }
+
+  const dpSet =
+    s.dp_enabled || csv(s.dp_interfaces).length || s.dp_xdp_mode || s.dp_pin_path.trim() ||
+    s.dp_on_exit || s.dp_drop_malformed || s.dp_allowlist.some((a) => a.trim()) ||
+    s.dp_profiles.some((p) => p.name.trim()) || s.dp_rules.some((r) => r.name.trim()) ||
+    num(s.dp_max_dynamic) || num(s.dp_max_static) || num(s.dp_max_sources);
+  if (dpSet) {
+    L.push("dataplane:                            # in-kernel XDP drops on THIS box; needs CAP_BPF etc. (see docs)");
+    if (s.dp_enabled) L.push("  enabled: true");
+    const ifs = csv(s.dp_interfaces);
+    if (ifs.length) L.push(`  interfaces: [${ifs.join(", ")}]        # restart required`);
+    if (s.dp_xdp_mode) L.push(`  xdp_mode: ${s.dp_xdp_mode}`);
+    if (s.dp_pin_path.trim()) L.push(`  pin_path: ${s.dp_pin_path.trim()}`);
+    if (s.dp_on_exit) L.push(`  on_exit: ${s.dp_on_exit}`);
+    if (s.dp_drop_malformed) L.push("  drop_malformed: true                # unparseable frames are dropped, not passed");
+    if (s.dp_allowlist.some((a) => a.trim())) {
+      L.push("  allowlist:                          # SOURCE prefixes that always pass (before every rule)");
+      for (const a of s.dp_allowlist) if (a.trim()) L.push(`    - ${q(a.trim())}`);
+    }
+    const profiles = s.dp_profiles.filter((p) => p.name.trim());
+    if (profiles.length) {
+      L.push("  ratelimit_profiles:                 # named ceilings referenced by static rules");
+      for (const p of profiles) {
+        const parts = [`name: ${p.name.trim()}`];
+        if (num(p.pps)) parts.push(`pps: ${num(p.pps)}`);
+        if (num(p.mbps)) parts.push(`mbps: ${num(p.mbps)}`);
+        L.push(`    - {${parts.join(", ")}}`);
+      }
+    }
+    const rules = s.dp_rules.filter((r) => r.name.trim());
+    if (rules.length) {
+      L.push("  static_rules:                       # always-on operator rules, before detector rules");
+      for (const r of rules) {
+        L.push(`    - name: ${r.name.trim()}`);
+        const m: string[] = [];
+        if (r.src.trim()) m.push(`src: ${q(r.src.trim())}`);
+        if (r.proto) m.push(`proto: ${r.proto}`);
+        if (num(r.src_port)) m.push(`src_port: ${num(r.src_port)}`);
+        if (num(r.dst_port)) m.push(`dst_port: ${num(r.dst_port)}`);
+        if (m.length) L.push(`      match: {${m.join(", ")}}`);
+        if (r.action) L.push(`      action: ${r.action}`);
+        if (r.profile.trim()) L.push(`      profile: ${r.profile.trim()}`);
+      }
+    }
+    if (num(s.dp_max_dynamic) || num(s.dp_max_static) || num(s.dp_max_sources)) {
+      L.push("  limits:");
+      if (num(s.dp_max_dynamic)) L.push(`    max_dynamic_rules: ${num(s.dp_max_dynamic)}      # must be >= ban.max_active_bans * 8`);
+      if (num(s.dp_max_static)) L.push(`    max_static_rules: ${num(s.dp_max_static)}`);
+      if (num(s.dp_max_sources)) L.push(`    max_ratelimit_sources: ${num(s.dp_max_sources)}`);
+    }
     L.push("");
   }
 
@@ -135,8 +550,12 @@ export function emitConfig(s: WizardState): string {
   L.push(`  ttl_seconds: ${num(s.ttl_seconds)}                  # every ban auto-withdraws after this`);
   L.push(`  unban_hysteresis_seconds: ${num(s.unban_hysteresis_seconds)}     # stay below threshold this long before unban`);
   L.push(`  max_active_bans: ${num(s.max_active_bans)}`);
+  if (s.ban_fallback) L.push(`  fallback: ${s.ban_fallback}                 # when a flowspec/divert announce is rejected by the peer`);
+  if (num(s.ban_max_fraction)) L.push(`  max_banned_fraction: ${num(s.ban_max_fraction)}        # blast-radius guard (share of protected space)`);
+  if (num(s.ban_max_per_window)) L.push(`  max_bans_per_window: ${num(s.ban_max_per_window)}       # storm guard`);
+  if (num(s.ban_window_seconds)) L.push(`  ban_window_seconds: ${num(s.ban_window_seconds)}`);
   if (s.state_file.trim()) {
-    L.push(`  state_file: ${q(s.state_file.trim())}   # persist active bans across a restart (needs a writable dir; pairs with graceful_restart)`);
+    L.push(`  state_file: ${q(s.state_file.trim())}   # persist active bans across a restart (pairs with graceful_restart)`);
   }
   L.push("");
 
@@ -145,12 +564,20 @@ export function emitConfig(s: WizardState): string {
   L.push(`  router_id: ${q(s.router_id)}              # must be an IPv4 dotted-quad`);
   L.push(`  next_hop: ${q(s.next_hop)}              # IPv4 blackhole (discard) next-hop`);
   if (s.next_hop6.trim()) L.push(`  next_hop6: ${q(s.next_hop6.trim())}`);
-  L.push(`  community: ${q(s.community)}            # RTBH community your upstream honors`);
+  const comms = csv(s.bgp_communities);
+  if (comms.length) {
+    L.push(`  communities: [${comms.map(q).join(", ")}]   # full set (overrides community)`);
+  } else {
+    L.push(`  community: ${q(s.community)}            # RTBH community your upstream honors`);
+  }
+  if (num(s.bgp_listen_port)) L.push(`  listen_port: ${num(s.bgp_listen_port)}`);
+  if (num(s.bgp_local_pref)) L.push(`  local_pref: ${num(s.bgp_local_pref)}                    # LOCAL_PREF on blackholes (iBGP)`);
   L.push("  neighbors:");
   for (const n of s.neighbors) {
     if (!n.address.trim()) continue;
     L.push(`    - address: ${q(n.address.trim())}`);
     L.push(`      remote_asn: ${num(n.remote_asn)}`);
+    if (num(n.port)) L.push(`      port: ${num(n.port)}`);
   }
   // graceful_restart: on by default — emit only the knobs the operator changed.
   const gr: string[] = [];
@@ -164,30 +591,91 @@ export function emitConfig(s: WizardState): string {
   }
   L.push("");
 
+  const notifyLines: string[] = [];
   if (s.tg_token_env.trim()) {
+    notifyLines.push("  telegram:");
+    notifyLines.push(`    token_env: ${q(s.tg_token_env.trim())}     # NAME of the env var holding the bot token — never the token itself`);
+    if (s.tg_chat_id.trim()) notifyLines.push(`    chat_id: ${q(s.tg_chat_id.trim())}`);
+  }
+  if (s.wh_url.trim()) {
+    notifyLines.push("  webhook:");
+    notifyLines.push(`    url: ${q(s.wh_url.trim())}   # JSON POST on every attack start/end`);
+  }
+  if (s.slack_url.trim()) {
+    notifyLines.push("  slack:");
+    notifyLines.push(`    webhook_url: ${q(s.slack_url.trim())}`);
+  }
+  if (s.email_smtp.trim()) {
+    notifyLines.push("  email:                              # credentials from env vars, never the file");
+    notifyLines.push(`    smtp_host: ${q(s.email_smtp.trim())}`);
+    if (s.email_from.trim()) notifyLines.push(`    from: ${q(s.email_from.trim())}`);
+    const to = csv(s.email_to);
+    if (to.length) notifyLines.push(`    to: [${to.map(q).join(", ")}]`);
+    if (s.email_user_env.trim()) notifyLines.push(`    username_env: ${q(s.email_user_env.trim())}`);
+    if (s.email_pass_env.trim()) notifyLines.push(`    password_env: ${q(s.email_pass_env.trim())}`);
+    if (s.email_tls) notifyLines.push("    require_tls: true");
+  }
+  if (s.exec_command.trim()) {
+    notifyLines.push("  exec:                               # hook run on every attack event (no shell)");
+    notifyLines.push(`    command: ${q(s.exec_command.trim())}`);
+    if (s.exec_format) notifyLines.push(`    format: ${s.exec_format}              # fastnetmon: existing FastNetMon scripts run unchanged`);
+    if (num(s.exec_timeout)) notifyLines.push(`    timeout_seconds: ${num(s.exec_timeout)}`);
+  }
+  if (notifyLines.length) {
     L.push("notify:");
-    L.push("  telegram:");
-    L.push(`    token_env: ${q(s.tg_token_env.trim())}     # NAME of the env var holding the bot token — never the token itself`);
-    if (s.tg_chat_id.trim()) L.push(`    chat_id: ${q(s.tg_chat_id.trim())}`);
+    L.push(...notifyLines);
     L.push("");
   }
 
+  if (s.ch_url.trim()) {
+    L.push("storage:                              # optional ClickHouse history; best-effort, never blocks detection");
+    L.push("  clickhouse:");
+    L.push(`    url: ${q(s.ch_url.trim())}`);
+    if (s.ch_database.trim()) L.push(`    database: ${q(s.ch_database.trim())}`);
+    if (s.ch_user_env.trim()) L.push(`    username_env: ${q(s.ch_user_env.trim())}`);
+    if (s.ch_pass_env.trim()) L.push(`    password_env: ${q(s.ch_pass_env.trim())}`);
+    if (num(s.ch_ttl_days)) L.push(`    ttl_days: ${num(s.ch_ttl_days)}`);
+    if (num(s.ch_flush)) L.push(`    flush_interval_seconds: ${num(s.ch_flush)}`);
+    if (num(s.ch_batch)) L.push(`    batch_size: ${num(s.ch_batch)}`);
+    if (num(s.ch_queue)) L.push(`    queue_size: ${num(s.ch_queue)}`);
+    if (num(s.ch_traffic)) L.push(`    traffic_interval_seconds: ${num(s.ch_traffic)}`);
+    L.push("");
+  }
+
+  if (s.geo_enabled) {
+    L.push("geoip:                                # MaxMind .mmdb attribution of attack sources");
+    L.push("  enabled: true");
+    if (s.geo_asn_db.trim()) L.push(`  asn_database: ${q(s.geo_asn_db.trim())}`);
+    if (s.geo_country_db.trim()) L.push(`  country_database: ${q(s.geo_country_db.trim())}`);
+    L.push("");
+  }
+
+  L.push("api:");
+  L.push(`  listen: ${q(s.api_listen)}        # default localhost bind needs no auth`);
+  if (!s.api_dashboard) L.push("  dashboard: false                    # JSON API only, no embedded web UI");
+  const tokens = s.api_tokens.filter((tk) => tk.name.trim() && tk.token_env.trim());
+  if (tokens.length) {
+    L.push("  tokens:                             # role-based auth: viewer = read-only, operator = read + mutate");
+    for (const tk of tokens) {
+      const parts = [`name: ${tk.name.trim()}`, `token_env: ${q(tk.token_env.trim())}`];
+      if (tk.role) parts.push(`role: ${tk.role}`);
+      if (tk.tenant.trim()) parts.push(`tenant: ${q(tk.tenant.trim())}`);
+      L.push(`    - {${parts.join(", ")}}`);
+    }
+  } else if (s.api_token_env.trim()) {
+    L.push(`  token_env: ${q(s.api_token_env.trim())}      # REQUIRED before exposing the listener beyond localhost`);
+  } else {
+    L.push("  # token_env: \"KAPKAN_API_TOKEN\"   # set before exposing the API beyond localhost");
+  }
+
   if (s.uc_enabled) {
+    L.push("");
     L.push("update_check:                         # opt-in check for a newer release (no egress unless enabled)");
     L.push("  enabled: true");
     if (s.uc_interval.trim() && num(s.uc_interval) !== "0") L.push(`  interval_seconds: ${num(s.uc_interval)}`);
     if (s.uc_channel && s.uc_channel !== "stable") L.push(`  channel: ${s.uc_channel}`);
     if (s.uc_url.trim()) L.push(`  url: ${q(s.uc_url.trim())}`);
     if (s.uc_notify) L.push("  notify: true                        # also send 'update available' via notify channels");
-    L.push("");
-  }
-
-  L.push("api:");
-  L.push(`  listen: ${q(s.api_listen)}        # default localhost bind needs no auth`);
-  if (s.api_token_env.trim()) {
-    L.push(`  token_env: ${q(s.api_token_env.trim())}      # REQUIRED before exposing the listener beyond localhost`);
-  } else {
-    L.push("  # token_env: \"KAPKAN_API_TOKEN\"   # set before exposing the API beyond localhost");
   }
 
   return L.join("\n") + "\n";

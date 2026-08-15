@@ -6,7 +6,7 @@ import { site } from "@/lib/site";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { ConfigWizard } from "@/components/ConfigWizard";
+import { ConfigBuilder } from "@/components/ConfigBuilder";
 
 export function generateStaticParams() {
   return locales.map((lang) => ({ lang }));
@@ -69,8 +69,8 @@ export default async function ConfigPage({
           {t.privacy}
         </p>
 
-        <div className="mt-8">
-          <ConfigWizard lang={loc} />
+        <div className="mt-6">
+          <ConfigBuilder lang={loc} />
         </div>
       </main>
     </div>
