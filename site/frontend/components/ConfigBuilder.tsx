@@ -2493,13 +2493,13 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       {/* Below 1440 the YAML is a bottom dock whose collapsed state IS the status
           bar — one status surface instead of a stack of strips. */}
       {!wideLayout && (
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 shadow-[0_-6px_16px_-8px_rgba(0,0,0,0.35)] backdrop-blur">
         <button
           type="button"
           aria-expanded={dockOpen}
           aria-controls="yaml-dock-body"
           onClick={() => toggleDock(!dockOpen)}
-          className="flex h-11 w-full items-center gap-2.5 px-4 text-left"
+          className="flex h-11 w-full items-center gap-2.5 px-4 text-left transition-colors hover:bg-muted/40"
         >
           <span
             aria-hidden
@@ -2525,7 +2525,14 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           <code className="hidden shrink-0 font-mono text-[11px] text-muted-foreground sm:inline">
             config.yaml
           </code>
-          <span className="shrink-0 text-[12px] text-muted-foreground">
+          {/* Reads as a button but stays a span — the whole bar is already the <button>. */}
+          <span className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 text-[12px] font-medium">
+            <span
+              aria-hidden
+              className={`text-[9px] transition-transform ${dockOpen ? "" : "rotate-180"}`}
+            >
+              ▾
+            </span>
             {dockOpen ? t.yamlHide : t.yamlJump}
           </span>
         </button>

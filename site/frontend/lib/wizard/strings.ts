@@ -49,7 +49,7 @@ export type WizardChrome = {
   engineChecking: string;
   engineOff: string;
   engineSummary: string;
-  yamlJump: string; // mobile anchor to the YAML pane
+  yamlJump: string; // collapsed-dock toggle label (opens the bottom YAML dock)
   minutes: string; // "{v}" placeholder — seconds-field gloss
   hours: string; // "{v}" placeholder
   sections: Record<SectionId, string>;
@@ -151,7 +151,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     engineChecking: "Engine check running…",
     engineOff: "Engine validator unavailable in this browser — inline schema checks still apply.",
     engineSummary: "Engine summary",
-    yamlJump: "View YAML",
+    yamlJump: "Open YAML",
     minutes: "≈ {v} min",
     hours: "≈ {v} h",
     sections: {
@@ -282,7 +282,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     engineChecking: "Проверка движком…",
     engineOff: "Валидатор движка недоступен в этом браузере — работают только проверки по схеме.",
     engineSummary: "Сводка движка",
-    yamlJump: "К YAML",
+    yamlJump: "Открыть YAML",
     minutes: "≈ {v} мин",
     hours: "≈ {v} ч",
     sections: {
@@ -413,7 +413,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     engineChecking: "Engine-Prüfung läuft…",
     engineOff: "Engine-Validator in diesem Browser nicht verfügbar — Schema-Prüfungen gelten weiterhin.",
     engineSummary: "Engine-Übersicht",
-    yamlJump: "Zum YAML",
+    yamlJump: "YAML öffnen",
     minutes: "≈ {v} Min.",
     hours: "≈ {v} Std.",
     sections: {
@@ -544,7 +544,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     engineChecking: "Vérification moteur…",
     engineOff: "Validateur du moteur indisponible dans ce navigateur — les contrôles de schéma restent actifs.",
     engineSummary: "Résumé du moteur",
-    yamlJump: "Voir le YAML",
+    yamlJump: "Ouvrir le YAML",
     minutes: "≈ {v} min",
     hours: "≈ {v} h",
     sections: {
@@ -675,7 +675,7 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     engineChecking: "Comprobación del motor…",
     engineOff: "Validador del motor no disponible en este navegador — siguen activas las comprobaciones de esquema.",
     engineSummary: "Resumen del motor",
-    yamlJump: "Ver YAML",
+    yamlJump: "Abrir YAML",
     minutes: "≈ {v} min",
     hours: "≈ {v} h",
     sections: {
