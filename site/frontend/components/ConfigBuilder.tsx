@@ -375,7 +375,7 @@ function FieldShell({
       >
         <div className={wide ? "" : "min-w-0 @[34rem]/sec:pt-1.5"}>
           <div className="flex items-baseline gap-2">
-            <label htmlFor={`f-${f.path}`} className="text-[13.5px] font-medium leading-snug">
+            <label htmlFor={`f-${f.path}`} className="text-[13px] font-medium leading-snug">
               {label}
             </label>
             {help && !showHelp && (
@@ -404,7 +404,7 @@ function FieldShell({
               </button>
             )}
           </div>
-          <code className="mt-0.5 block font-mono text-[10.5px] leading-4 text-muted-foreground/70">
+          <code className="mt-0.5 block font-mono text-[11px] leading-4 text-muted-foreground/70">
             {f.path}
           </code>
         </div>
@@ -1204,8 +1204,8 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     const headers = (
       <>
         <span />
-        <span className="pl-1 font-mono text-[10.5px] text-muted-foreground">pps</span>
-        <span className="pl-1 font-mono text-[10.5px] text-muted-foreground">mbps</span>
+        <span className="pl-1 font-mono text-[11px] text-muted-foreground">pps</span>
+        <span className="pl-1 font-mono text-[11px] text-muted-foreground">mbps</span>
       </>
     );
     return (
