@@ -1,11 +1,20 @@
-// Localized strings for the config builder, per locale. Field LABELS stay as
-// the YAML keys (dry_run, pps, networks, bgp…) — they are what you write in the
-// file and what the docs reference verbatim — but every surrounding string
-// (page chrome, section titles, field help, validation messages, the engine
-// panel) is translated. EN field help is not duplicated here: it falls back to
-// the overlay's `description` (see helpText in ConfigWizard).
+// Localized strings for the config builder, per locale. Every field shows a
+// human label (wizardLabels) with the raw YAML key beside it — the key is what
+// you write in the file and what the docs reference verbatim, the label says
+// what the field does. Field help is localized in wizardHelp; EN help is not
+// duplicated here: it falls back to the overlay's `description` (see helpText
+// in ConfigBuilder).
 
 import type { Locale } from "@/lib/i18n";
+
+export type SectionId =
+  | "telemetry"
+  | "networks"
+  | "detection"
+  | "mitigation"
+  | "bans"
+  | "notify"
+  | "api";
 
 export type WizardValidation = {
   required: string;
@@ -21,7 +30,6 @@ export type WizardChrome = {
   title: string;
   intro: string;
   privacy: string;
-  basic: string;
   advanced: string;
   output: string;
   copy: string;
@@ -29,65 +37,81 @@ export type WizardChrome = {
   download: string;
   checkHint: string;
   docsCta: string;
-  accepts: string; // engine-accepts panel label
+  accepts: string; // engine-accepts strip label
   liveWarning: string;
   addItem: string;
   addNeighbor: string;
-  steps: string[];
-  back: string;
-  next: string;
-  reviewTitle: string;
-  reviewIntro: string;
-  sections: {
-    mode: string;
-    telemetry: string;
-    networks: string;
-    thresholds: string;
+  nav: string; // aria-label of the section rail
+  modeWatch: string; // watch-only pill label
+  modeLive: string; // live pill label
+  modeWatchDesc: string;
+  fieldErrors: string; // "{n}" placeholder
+  engineChecking: string;
+  engineOff: string;
+  engineSummary: string;
+  yamlJump: string; // mobile anchor to the YAML pane
+  minutes: string; // "{v}" placeholder — seconds-field gloss
+  hours: string; // "{v}" placeholder
+  sections: Record<SectionId, string>;
+  subheads: {
+    method: string;
     bgp: string;
-    mitigationMethod: string;
     perProtocol: string;
-    ban: string;
-    notify: string;
-    api: string;
+    telegram: string;
     updates: string;
   };
+  advHints: Partial<Record<SectionId, string>>;
   validation: WizardValidation;
 };
 
 export const wizardChrome: Record<Locale, WizardChrome> = {
   en: {
     title: "Config builder",
-    intro: "Assemble a Kapkan configuration file step by step. Sensible, dry-run-safe defaults are filled in — adjust them to your network.",
+    intro: "Assemble a Kapkan configuration on one page — the YAML updates live as you type. Sensible, watch-only-safe defaults are filled in; adjust them to your network.",
     privacy: "Runs entirely in your browser. Nothing you enter is sent anywhere.",
-    basic: "Basic",
     advanced: "Advanced",
-    output: "Generated config",
+    output: "config.yaml",
     copy: "Copy",
     copied: "Copied",
-    download: "Download config.yaml",
+    download: "Download",
     checkHint: "Validate on your host before going live:",
     docsCta: "Configuration reference",
     accepts: "Engine accepts this config",
-    liveWarning: "LIVE mode: real BGP blackhole announcements will be sent. Keep dry-run on until detection is validated.",
+    liveWarning: "LIVE mode: real BGP blackhole announcements will be sent. Keep watch-only on until detection is validated.",
     addItem: "+ Add",
     addNeighbor: "+ Add neighbor",
-    steps: ["Mode & telemetry", "Networks", "Thresholds", "Mitigation & BGP", "Ban, alerts & API", "Review & export"],
-    back: "Back",
-    next: "Next",
-    reviewTitle: "Review & export",
-    reviewIntro: "Check the engine result below, then copy or download your config.",
+    nav: "Config sections",
+    modeWatch: "Watch-only",
+    modeLive: "Live",
+    modeWatchDesc: "Mitigation is simulated, nothing is announced — safe to experiment.",
+    fieldErrors: "Field errors: {n}",
+    engineChecking: "Engine check running…",
+    engineOff: "Engine validator unavailable in this browser — inline schema checks still apply.",
+    engineSummary: "Engine summary",
+    yamlJump: "View YAML",
+    minutes: "≈ {v} min",
+    hours: "≈ {v} h",
     sections: {
-      mode: "Mode",
       telemetry: "Telemetry",
       networks: "Protected networks",
-      thresholds: "Thresholds",
-      bgp: "BGP / mitigation",
-      mitigationMethod: "Mitigation method",
-      perProtocol: "Per-protocol thresholds (optional)",
-      ban: "Ban lifecycle",
-      notify: "Notifications (Telegram)",
+      detection: "Detection",
+      mitigation: "Mitigation",
+      bans: "Bans",
+      notify: "Notifications",
       api: "API",
+    },
+    subheads: {
+      method: "Mitigation method",
+      bgp: "BGP",
+      perProtocol: "Per-protocol limits",
+      telegram: "Telegram",
       updates: "Updates",
+    },
+    advHints: {
+      detection: "TCP SYN / UDP limits",
+      mitigation: "Graceful Restart",
+      bans: "ban persistence",
+      notify: "update check",
     },
     validation: {
       required: "required",
@@ -109,37 +133,51 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
   },
   ru: {
     title: "Конструктор конфигурации",
-    intro: "Соберите конфиг Kapkan по шагам. Безопасные значения по умолчанию (dry-run включён) уже подставлены — подгоните под свою сеть.",
+    intro: "Соберите конфиг Kapkan на одной странице — YAML обновляется по мере ввода. Безопасные значения по умолчанию (режим наблюдения) уже подставлены, подгоните их под свою сеть.",
     privacy: "Работает полностью в браузере. Ничего из введённого никуда не отправляется.",
-    basic: "Основное",
     advanced: "Дополнительно",
-    output: "Готовый конфиг",
+    output: "config.yaml",
     copy: "Копировать",
     copied: "Скопировано",
-    download: "Скачать config.yaml",
-    checkHint: "Проверьте на своём хосте перед запуском в продакшн:",
+    download: "Скачать",
+    checkHint: "Проверьте на своём хосте перед боевым запуском:",
     docsCta: "Справочник конфигурации",
     accepts: "Движок принимает этот конфиг",
-    liveWarning: "Боевой режим: реальные BGP-анонсы blackhole будут отправлены. Держите dry-run включённым, пока детект не выверен.",
+    liveWarning: "Боевой режим: реальные BGP-анонсы blackhole будут отправлены. Держите режим наблюдения, пока детект не выверен.",
     addItem: "+ Добавить",
     addNeighbor: "+ Добавить соседа",
-    steps: ["Режим и телеметрия", "Сети", "Пороги", "Митигация и BGP", "Бан, алерты, API", "Обзор и экспорт"],
-    back: "Назад",
-    next: "Далее",
-    reviewTitle: "Обзор и экспорт",
-    reviewIntro: "Проверьте результат движка ниже, затем скопируйте или скачайте конфиг.",
+    nav: "Секции конфига",
+    modeWatch: "Только наблюдение",
+    modeLive: "Боевой режим",
+    modeWatchDesc: "Подавление имитируется, анонсы не отправляются — можно спокойно экспериментировать.",
+    fieldErrors: "Ошибки в полях: {n}",
+    engineChecking: "Проверка движком…",
+    engineOff: "Валидатор движка недоступен в этом браузере — работают только проверки по схеме.",
+    engineSummary: "Сводка движка",
+    yamlJump: "К YAML",
+    minutes: "≈ {v} мин",
+    hours: "≈ {v} ч",
     sections: {
-      mode: "Режим",
       telemetry: "Телеметрия",
       networks: "Защищаемые сети",
-      thresholds: "Пороги",
-      bgp: "BGP / митигация",
-      mitigationMethod: "Метод митигации",
-      perProtocol: "Пороги по протоколам (опц.)",
-      ban: "Жизненный цикл бана",
-      notify: "Уведомления (Telegram)",
+      detection: "Обнаружение",
+      mitigation: "Подавление",
+      bans: "Баны",
+      notify: "Уведомления",
       api: "API",
+    },
+    subheads: {
+      method: "Метод подавления",
+      bgp: "BGP",
+      perProtocol: "Лимиты по протоколам",
+      telegram: "Telegram",
       updates: "Обновления",
+    },
+    advHints: {
+      detection: "лимиты TCP SYN / UDP",
+      mitigation: "Graceful Restart",
+      bans: "персистентность банов",
+      notify: "проверка обновлений",
     },
     validation: {
       required: "обязательно",
@@ -161,37 +199,51 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
   },
   de: {
     title: "Konfigurations-Builder",
-    intro: "Erstellen Sie eine Kapkan-Konfiguration Schritt für Schritt. Sichere Standardwerte (Dry-Run aktiv) sind vorausgefüllt — passen Sie sie an Ihr Netz an.",
+    intro: "Erstellen Sie eine Kapkan-Konfiguration auf einer Seite — das YAML aktualisiert sich live beim Tippen. Sichere Standardwerte (Beobachtungsmodus) sind vorausgefüllt; passen Sie sie an Ihr Netz an.",
     privacy: "Läuft vollständig im Browser. Nichts von dem, was Sie eingeben, wird übertragen.",
-    basic: "Basis",
     advanced: "Erweitert",
-    output: "Erzeugte Konfiguration",
+    output: "config.yaml",
     copy: "Kopieren",
     copied: "Kopiert",
-    download: "config.yaml herunterladen",
+    download: "Herunterladen",
     checkHint: "Vor dem Live-Betrieb auf Ihrem Host prüfen:",
     docsCta: "Konfigurationsreferenz",
     accepts: "Engine akzeptiert diese Konfiguration",
-    liveWarning: "LIVE-Modus: echte BGP-Blackhole-Ankündigungen werden gesendet. Lassen Sie Dry-Run an, bis die Erkennung validiert ist.",
+    liveWarning: "LIVE-Modus: echte BGP-Blackhole-Ankündigungen werden gesendet. Bleiben Sie im Beobachtungsmodus, bis die Erkennung validiert ist.",
     addItem: "+ Hinzufügen",
     addNeighbor: "+ Nachbarn hinzufügen",
-    steps: ["Modus & Telemetrie", "Netze", "Schwellen", "Mitigation & BGP", "Ban, Alerts, API", "Prüfen & Export"],
-    back: "Zurück",
-    next: "Weiter",
-    reviewTitle: "Prüfen & exportieren",
-    reviewIntro: "Prüfen Sie das Engine-Ergebnis unten, dann kopieren oder laden Sie die Konfiguration herunter.",
+    nav: "Konfigurationsabschnitte",
+    modeWatch: "Nur beobachten",
+    modeLive: "Live",
+    modeWatchDesc: "Mitigation wird simuliert, nichts wird angekündigt — gefahrloses Experimentieren.",
+    fieldErrors: "Feldfehler: {n}",
+    engineChecking: "Engine-Prüfung läuft…",
+    engineOff: "Engine-Validator in diesem Browser nicht verfügbar — Schema-Prüfungen gelten weiterhin.",
+    engineSummary: "Engine-Übersicht",
+    yamlJump: "Zum YAML",
+    minutes: "≈ {v} Min.",
+    hours: "≈ {v} Std.",
     sections: {
-      mode: "Modus",
       telemetry: "Telemetrie",
       networks: "Geschützte Netze",
-      thresholds: "Schwellenwerte",
-      bgp: "BGP / Mitigation",
-      mitigationMethod: "Mitigationsmethode",
-      perProtocol: "Schwellen pro Protokoll (optional)",
-      ban: "Ban-Lebenszyklus",
-      notify: "Benachrichtigungen (Telegram)",
+      detection: "Erkennung",
+      mitigation: "Mitigation",
+      bans: "Bans",
+      notify: "Benachrichtigungen",
       api: "API",
+    },
+    subheads: {
+      method: "Mitigationsmethode",
+      bgp: "BGP",
+      perProtocol: "Limits pro Protokoll",
+      telegram: "Telegram",
       updates: "Updates",
+    },
+    advHints: {
+      detection: "TCP-SYN-/UDP-Limits",
+      mitigation: "Graceful Restart",
+      bans: "Ban-Persistenz",
+      notify: "Update-Prüfung",
     },
     validation: {
       required: "erforderlich",
@@ -213,37 +265,51 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
   },
   fr: {
     title: "Générateur de configuration",
-    intro: "Composez un fichier de configuration Kapkan étape par étape. Des valeurs par défaut sûres (dry-run activé) sont pré-remplies — adaptez-les à votre réseau.",
+    intro: "Composez une configuration Kapkan sur une seule page — le YAML se met à jour pendant la saisie. Des valeurs par défaut sûres (mode observation) sont pré-remplies ; adaptez-les à votre réseau.",
     privacy: "Fonctionne entièrement dans votre navigateur. Rien de ce que vous saisissez n'est envoyé.",
-    basic: "Essentiel",
     advanced: "Avancé",
-    output: "Configuration générée",
+    output: "config.yaml",
     copy: "Copier",
     copied: "Copié",
-    download: "Télécharger config.yaml",
+    download: "Télécharger",
     checkHint: "Validez sur votre hôte avant la mise en production :",
     docsCta: "Référence de configuration",
     accepts: "Le moteur accepte cette configuration",
-    liveWarning: "Mode LIVE : de vraies annonces BGP blackhole seront envoyées. Gardez le dry-run activé jusqu'à validation de la détection.",
+    liveWarning: "Mode LIVE : de vraies annonces BGP blackhole seront envoyées. Restez en observation jusqu'à validation de la détection.",
     addItem: "+ Ajouter",
     addNeighbor: "+ Ajouter un voisin",
-    steps: ["Mode & télémétrie", "Réseaux", "Seuils", "Atténuation & BGP", "Ban, alertes, API", "Vérifier & exporter"],
-    back: "Précédent",
-    next: "Suivant",
-    reviewTitle: "Vérifier & exporter",
-    reviewIntro: "Vérifiez le résultat du moteur ci-dessous, puis copiez ou téléchargez votre configuration.",
+    nav: "Sections de configuration",
+    modeWatch: "Observation seule",
+    modeLive: "Live",
+    modeWatchDesc: "L'atténuation est simulée, rien n'est annoncé — expérimentez sans risque.",
+    fieldErrors: "Erreurs de champs : {n}",
+    engineChecking: "Vérification moteur…",
+    engineOff: "Validateur du moteur indisponible dans ce navigateur — les contrôles de schéma restent actifs.",
+    engineSummary: "Résumé du moteur",
+    yamlJump: "Voir le YAML",
+    minutes: "≈ {v} min",
+    hours: "≈ {v} h",
     sections: {
-      mode: "Mode",
       telemetry: "Télémétrie",
       networks: "Réseaux protégés",
-      thresholds: "Seuils",
-      bgp: "BGP / atténuation",
-      mitigationMethod: "Méthode d'atténuation",
-      perProtocol: "Seuils par protocole (option.)",
-      ban: "Cycle de vie du ban",
-      notify: "Notifications (Telegram)",
+      detection: "Détection",
+      mitigation: "Atténuation",
+      bans: "Bans",
+      notify: "Notifications",
       api: "API",
+    },
+    subheads: {
+      method: "Méthode d'atténuation",
+      bgp: "BGP",
+      perProtocol: "Limites par protocole",
+      telegram: "Telegram",
       updates: "Mises à jour",
+    },
+    advHints: {
+      detection: "limites TCP SYN / UDP",
+      mitigation: "Graceful Restart",
+      bans: "persistance des bans",
+      notify: "vérification des mises à jour",
     },
     validation: {
       required: "requis",
@@ -265,37 +331,51 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
   },
   es: {
     title: "Generador de configuración",
-    intro: "Arma un archivo de configuración de Kapkan paso a paso. Se rellenan valores por defecto seguros (dry-run activado) — ajústalos a tu red.",
+    intro: "Arma una configuración de Kapkan en una sola página — el YAML se actualiza en vivo mientras escribes. Se rellenan valores por defecto seguros (modo observación); ajústalos a tu red.",
     privacy: "Se ejecuta por completo en tu navegador. Nada de lo que introduces se envía a ningún sitio.",
-    basic: "Básico",
     advanced: "Avanzado",
-    output: "Configuración generada",
+    output: "config.yaml",
     copy: "Copiar",
     copied: "Copiado",
-    download: "Descargar config.yaml",
+    download: "Descargar",
     checkHint: "Valida en tu host antes de pasar a producción:",
     docsCta: "Referencia de configuración",
     accepts: "El motor acepta esta configuración",
-    liveWarning: "Modo LIVE: se enviarán anuncios BGP blackhole reales. Mantén dry-run activado hasta validar la detección.",
+    liveWarning: "Modo LIVE: se enviarán anuncios BGP blackhole reales. Mantén el modo observación hasta validar la detección.",
     addItem: "+ Añadir",
     addNeighbor: "+ Añadir vecino",
-    steps: ["Modo y telemetría", "Redes", "Umbrales", "Mitigación y BGP", "Ban, alertas, API", "Revisar y exportar"],
-    back: "Atrás",
-    next: "Siguiente",
-    reviewTitle: "Revisar y exportar",
-    reviewIntro: "Revisa el resultado del motor abajo y luego copia o descarga tu configuración.",
+    nav: "Secciones de configuración",
+    modeWatch: "Solo observación",
+    modeLive: "Live",
+    modeWatchDesc: "La mitigación se simula, nada se anuncia — experimenta sin riesgo.",
+    fieldErrors: "Errores de campos: {n}",
+    engineChecking: "Comprobación del motor…",
+    engineOff: "Validador del motor no disponible en este navegador — siguen activas las comprobaciones de esquema.",
+    engineSummary: "Resumen del motor",
+    yamlJump: "Ver YAML",
+    minutes: "≈ {v} min",
+    hours: "≈ {v} h",
     sections: {
-      mode: "Modo",
       telemetry: "Telemetría",
       networks: "Redes protegidas",
-      thresholds: "Umbrales",
-      bgp: "BGP / mitigación",
-      mitigationMethod: "Método de mitigación",
-      perProtocol: "Umbrales por protocolo (opc.)",
-      ban: "Ciclo de vida del baneo",
-      notify: "Notificaciones (Telegram)",
+      detection: "Detección",
+      mitigation: "Mitigación",
+      bans: "Baneos",
+      notify: "Notificaciones",
       api: "API",
+    },
+    subheads: {
+      method: "Método de mitigación",
+      bgp: "BGP",
+      perProtocol: "Límites por protocolo",
+      telegram: "Telegram",
       updates: "Actualizaciones",
+    },
+    advHints: {
+      detection: "límites TCP SYN / UDP",
+      mitigation: "Graceful Restart",
+      bans: "persistencia de baneos",
+      notify: "comprobación de actualizaciones",
     },
     validation: {
       required: "obligatorio",
@@ -314,6 +394,192 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
         url: "debe ser una URL http(s)",
       },
     },
+  },
+};
+
+// Human field labels, keyed by yaml path. The raw key is shown beside the
+// label in the UI, so labels describe the effect, not the syntax. EN is the
+// fallback for any locale that misses a key.
+export const wizardLabels: Record<Locale, Record<string, string>> = {
+  en: {
+    "listen.sflow": "sFlow listen address",
+    "listen.netflow": "NetFlow / IPFIX listen address",
+    "sampling.default_rate": "Default sampling rate",
+    networks: "Protected prefixes",
+    protected_whitelist: "Never-ban addresses",
+    "thresholds.pps": "Packets per second",
+    "thresholds.mbps": "Megabits per second",
+    "thresholds.flows_per_sec": "Flows per second",
+    "thresholds.tcp_syn_pps": "Pure TCP SYN packets/s",
+    "thresholds.udp_pps": "UDP packets/s",
+    mitigation: "Default method",
+    "bgp.local_asn": "Local ASN",
+    "bgp.router_id": "Router ID",
+    "bgp.next_hop": "Blackhole next-hop (IPv4)",
+    "bgp.next_hop6": "Blackhole next-hop (IPv6)",
+    "bgp.community": "RTBH community",
+    "bgp.neighbors": "Neighbors",
+    "bgp.graceful_restart.enabled": "Graceful Restart",
+    "bgp.graceful_restart.restart_seconds": "Restart hold time",
+    "bgp.graceful_restart.long_lived": "Long-Lived GR (RFC 9494)",
+    "bgp.graceful_restart.long_lived_stale_seconds": "LLGR stale time",
+    "ban.ttl_seconds": "Ban lifetime",
+    "ban.unban_hysteresis_seconds": "Unban hysteresis",
+    "ban.max_active_bans": "Max simultaneous bans",
+    "ban.state_file": "Ban state file",
+    "notify.telegram.token_env": "Bot token env var",
+    "notify.telegram.chat_id": "Chat ID",
+    "update_check.enabled": "Check for updates",
+    "update_check.interval_seconds": "Check interval",
+    "update_check.channel": "Release channel",
+    "update_check.url": "Releases endpoint override",
+    "update_check.notify": "Notify about updates",
+    "api.listen": "API listen address",
+    "api.token_env": "API token env var",
+  },
+  ru: {
+    "listen.sflow": "Адрес приёма sFlow",
+    "listen.netflow": "Адрес приёма NetFlow / IPFIX",
+    "sampling.default_rate": "Частота сэмплирования по умолчанию",
+    networks: "Защищаемые префиксы",
+    protected_whitelist: "Никогда не банить",
+    "thresholds.pps": "Пакетов в секунду",
+    "thresholds.mbps": "Мегабит в секунду",
+    "thresholds.flows_per_sec": "Потоков в секунду",
+    "thresholds.tcp_syn_pps": "Чистых TCP SYN пакетов/с",
+    "thresholds.udp_pps": "UDP-пакетов/с",
+    mitigation: "Метод по умолчанию",
+    "bgp.local_asn": "Локальный ASN",
+    "bgp.router_id": "Router ID",
+    "bgp.next_hop": "Next-hop для blackhole (IPv4)",
+    "bgp.next_hop6": "Next-hop для blackhole (IPv6)",
+    "bgp.community": "RTBH-community",
+    "bgp.neighbors": "Соседи",
+    "bgp.graceful_restart.enabled": "Graceful Restart",
+    "bgp.graceful_restart.restart_seconds": "Удержание при рестарте",
+    "bgp.graceful_restart.long_lived": "Long-Lived GR (RFC 9494)",
+    "bgp.graceful_restart.long_lived_stale_seconds": "Stale-время LLGR",
+    "ban.ttl_seconds": "Время жизни бана",
+    "ban.unban_hysteresis_seconds": "Гистерезис разбана",
+    "ban.max_active_bans": "Максимум одновременных банов",
+    "ban.state_file": "Файл состояния банов",
+    "notify.telegram.token_env": "Env-переменная с токеном бота",
+    "notify.telegram.chat_id": "ID чата",
+    "update_check.enabled": "Проверять обновления",
+    "update_check.interval_seconds": "Интервал проверки",
+    "update_check.channel": "Канал релизов",
+    "update_check.url": "Свой endpoint релизов",
+    "update_check.notify": "Уведомлять об обновлениях",
+    "api.listen": "Адрес API",
+    "api.token_env": "Env-переменная API-токена",
+  },
+  de: {
+    "listen.sflow": "sFlow-Empfangsadresse",
+    "listen.netflow": "NetFlow-/IPFIX-Empfangsadresse",
+    "sampling.default_rate": "Standard-Sampling-Rate",
+    networks: "Geschützte Präfixe",
+    protected_whitelist: "Nie bannen",
+    "thresholds.pps": "Pakete pro Sekunde",
+    "thresholds.mbps": "Megabit pro Sekunde",
+    "thresholds.flows_per_sec": "Flows pro Sekunde",
+    "thresholds.tcp_syn_pps": "Reine TCP-SYN-Pakete/s",
+    "thresholds.udp_pps": "UDP-Pakete/s",
+    mitigation: "Standardmethode",
+    "bgp.local_asn": "Lokale ASN",
+    "bgp.router_id": "Router-ID",
+    "bgp.next_hop": "Blackhole-Next-Hop (IPv4)",
+    "bgp.next_hop6": "Blackhole-Next-Hop (IPv6)",
+    "bgp.community": "RTBH-Community",
+    "bgp.neighbors": "Nachbarn",
+    "bgp.graceful_restart.enabled": "Graceful Restart",
+    "bgp.graceful_restart.restart_seconds": "Haltezeit beim Neustart",
+    "bgp.graceful_restart.long_lived": "Long-Lived GR (RFC 9494)",
+    "bgp.graceful_restart.long_lived_stale_seconds": "LLGR-Stale-Zeit",
+    "ban.ttl_seconds": "Ban-Lebensdauer",
+    "ban.unban_hysteresis_seconds": "Unban-Hysterese",
+    "ban.max_active_bans": "Max. gleichzeitige Bans",
+    "ban.state_file": "Ban-Statusdatei",
+    "notify.telegram.token_env": "Env-Variable mit Bot-Token",
+    "notify.telegram.chat_id": "Chat-ID",
+    "update_check.enabled": "Auf Updates prüfen",
+    "update_check.interval_seconds": "Prüfintervall",
+    "update_check.channel": "Release-Kanal",
+    "update_check.url": "Eigener Releases-Endpunkt",
+    "update_check.notify": "Über Updates benachrichtigen",
+    "api.listen": "API-Adresse",
+    "api.token_env": "Env-Variable des API-Tokens",
+  },
+  fr: {
+    "listen.sflow": "Adresse d'écoute sFlow",
+    "listen.netflow": "Adresse d'écoute NetFlow / IPFIX",
+    "sampling.default_rate": "Taux d'échantillonnage par défaut",
+    networks: "Préfixes protégés",
+    protected_whitelist: "Ne jamais bannir",
+    "thresholds.pps": "Paquets par seconde",
+    "thresholds.mbps": "Mégabits par seconde",
+    "thresholds.flows_per_sec": "Flux par seconde",
+    "thresholds.tcp_syn_pps": "Paquets TCP SYN purs/s",
+    "thresholds.udp_pps": "Paquets UDP/s",
+    mitigation: "Méthode par défaut",
+    "bgp.local_asn": "ASN local",
+    "bgp.router_id": "Router ID",
+    "bgp.next_hop": "Next-hop blackhole (IPv4)",
+    "bgp.next_hop6": "Next-hop blackhole (IPv6)",
+    "bgp.community": "Communauté RTBH",
+    "bgp.neighbors": "Voisins",
+    "bgp.graceful_restart.enabled": "Graceful Restart",
+    "bgp.graceful_restart.restart_seconds": "Temps de maintien au redémarrage",
+    "bgp.graceful_restart.long_lived": "Long-Lived GR (RFC 9494)",
+    "bgp.graceful_restart.long_lived_stale_seconds": "Temps stale LLGR",
+    "ban.ttl_seconds": "Durée de vie du ban",
+    "ban.unban_hysteresis_seconds": "Hystérésis de débannissement",
+    "ban.max_active_bans": "Bans simultanés max",
+    "ban.state_file": "Fichier d'état des bans",
+    "notify.telegram.token_env": "Variable d'env. du token du bot",
+    "notify.telegram.chat_id": "ID du chat",
+    "update_check.enabled": "Vérifier les mises à jour",
+    "update_check.interval_seconds": "Intervalle de vérification",
+    "update_check.channel": "Canal de versions",
+    "update_check.url": "Endpoint des releases personnalisé",
+    "update_check.notify": "Notifier les mises à jour",
+    "api.listen": "Adresse de l'API",
+    "api.token_env": "Variable d'env. du token API",
+  },
+  es: {
+    "listen.sflow": "Dirección de escucha sFlow",
+    "listen.netflow": "Dirección de escucha NetFlow / IPFIX",
+    "sampling.default_rate": "Tasa de muestreo por defecto",
+    networks: "Prefijos protegidos",
+    protected_whitelist: "Nunca banear",
+    "thresholds.pps": "Paquetes por segundo",
+    "thresholds.mbps": "Megabits por segundo",
+    "thresholds.flows_per_sec": "Flujos por segundo",
+    "thresholds.tcp_syn_pps": "Paquetes TCP SYN puros/s",
+    "thresholds.udp_pps": "Paquetes UDP/s",
+    mitigation: "Método por defecto",
+    "bgp.local_asn": "ASN local",
+    "bgp.router_id": "Router ID",
+    "bgp.next_hop": "Next-hop de blackhole (IPv4)",
+    "bgp.next_hop6": "Next-hop de blackhole (IPv6)",
+    "bgp.community": "Comunidad RTBH",
+    "bgp.neighbors": "Vecinos",
+    "bgp.graceful_restart.enabled": "Graceful Restart",
+    "bgp.graceful_restart.restart_seconds": "Retención al reiniciar",
+    "bgp.graceful_restart.long_lived": "Long-Lived GR (RFC 9494)",
+    "bgp.graceful_restart.long_lived_stale_seconds": "Tiempo stale de LLGR",
+    "ban.ttl_seconds": "Vida del baneo",
+    "ban.unban_hysteresis_seconds": "Histéresis de desbaneo",
+    "ban.max_active_bans": "Baneos simultáneos máx.",
+    "ban.state_file": "Archivo de estado de baneos",
+    "notify.telegram.token_env": "Variable de entorno del token del bot",
+    "notify.telegram.chat_id": "ID del chat",
+    "update_check.enabled": "Comprobar actualizaciones",
+    "update_check.interval_seconds": "Intervalo de comprobación",
+    "update_check.channel": "Canal de versiones",
+    "update_check.url": "Endpoint de releases propio",
+    "update_check.notify": "Notificar actualizaciones",
+    "api.listen": "Dirección de la API",
+    "api.token_env": "Variable de entorno del token de la API",
   },
 };
 
