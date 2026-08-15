@@ -1023,7 +1023,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
         <input
           id={`f-${f.path}`}
-          className={`${inputCls}${f.mono ? " font-mono" : ""}`}
+          className={`${inputCls} ${f.mono ? "max-w-[22rem] font-mono" : "max-w-[26rem]"}`}
           value={value}
           placeholder={placeholderFor(f)}
           spellCheck={false}
@@ -1039,7 +1039,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
         <input
           id={`f-${f.path}`}
-          className={`${inputCls} font-mono`}
+          className={`${inputCls} max-w-[11rem] font-mono`}
           inputMode="numeric"
           value={value}
           placeholder={placeholderFor(f)}
@@ -1056,7 +1056,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
         <input
           id={`f-${f.path}`}
-          className={`${inputCls}${f.mono ? " font-mono" : ""}`}
+          className={`${inputCls} max-w-[30rem]${f.mono ? " font-mono" : ""}`}
           value={value}
           spellCheck={false}
           placeholder="a, b, c"
@@ -1102,7 +1102,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       <FieldShell key={f.path} {...shellProps(f)} error={fieldError(f)}>
         <select
           id={`f-${f.path}`}
-          className={inputCls}
+          className={`${inputCls} max-w-[16rem]`}
           value={s[f.key!] as string}
           onChange={(e) => set(f.key!, e.target.value as WizardState[typeof f.key & keyof WizardState])}
         >
@@ -1124,7 +1124,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
       <FieldShell key={f.path} {...shellProps(f)} error={null}>
         <div className="space-y-2">
           {values.length === 0 && (
-            <p className="rounded-md border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground">
+            <p className="max-w-[26rem] rounded-md border border-dashed border-border px-3 py-1.5 text-xs text-muted-foreground">
               {t.emptyList}
             </p>
           )}
@@ -1134,7 +1134,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               <div key={i}>
                 <div className="flex gap-2">
                   <input
-                    className={`${inputCls} font-mono`}
+                    className={`${inputCls} max-w-[26rem] font-mono`}
                     value={v}
                     spellCheck={false}
                     onChange={(e) => {
@@ -1210,7 +1210,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     );
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={err}>
-        <div className="grid grid-cols-[minmax(78px,auto)_1fr_1fr] items-center gap-x-2 gap-y-1.5">
+        <div className="grid max-w-[30rem] grid-cols-[minmax(88px,1fr)_7rem_7rem] items-center gap-x-2 gap-y-1.5">
           {headers}
           <span className="text-xs text-muted-foreground">{rows[0].label}</span>
           {cell(rows[0].pps)}
@@ -1234,7 +1234,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             </span>
             {t.thr.perProto}
           </summary>
-          <div className="mt-2 grid grid-cols-[minmax(78px,auto)_1fr_1fr] items-center gap-x-2 gap-y-1.5">
+          <div className="mt-2 grid max-w-[30rem] grid-cols-[minmax(88px,1fr)_7rem_7rem] items-center gap-x-2 gap-y-1.5">
             {headers}
             {protoRows.map((r) => (
               <div key={r.pps} className="contents">
