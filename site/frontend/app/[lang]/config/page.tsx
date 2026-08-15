@@ -61,15 +61,19 @@ export default async function ConfigPage({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-10">
-        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{t.title}</h1>
-        <p className="mt-2 max-w-2xl text-muted-foreground">{t.intro}</p>
-        <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span aria-hidden>🔒</span>
-          {t.privacy}
-        </p>
+      {/* The tool goes wide (the form column was the thing being squeezed); the
+          intro block stays narrow so the page still reads as kapkan.io. */}
+      <main className="mx-auto w-full max-w-[104rem] flex-1 px-6 pb-10 pt-8 lg:px-8">
+        <div className="max-w-2xl">
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{t.title}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{t.intro}</p>
+          <p className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+            <span aria-hidden>🔒</span>
+            {t.privacy}
+          </p>
+        </div>
 
-        <div className="mt-6">
+        <div className="mt-5">
           <ConfigBuilder lang={loc} />
         </div>
       </main>

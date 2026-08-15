@@ -93,6 +93,13 @@ export type WizardChrome = {
   search: { placeholder: string; empty: string };
   modifiedChip: string; // "{n}" placeholder
   emptyList: string; // shown where a list has no entries yet
+  presetLabel: string; // preset menu trigger
+  inUse: string; // badge on a mitigation method the config actually uses
+  rowUntitled: string; // repeatable row with no name yet
+  removeRow: string;
+  yamlShow: string;
+  yamlHide: string;
+  thrOff: string; // placeholder in an unset threshold cell
   helpToggle: string; // toolbar switch: show every field description inline
   helpOne: string; // per-field "what does this do?" button
   sectionErrs: string; // "{n}" placeholder — error count chip in a section header
@@ -203,6 +210,13 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     search: { placeholder: "Search settings…", empty: "Nothing found" },
     modifiedChip: "Modified · {n}",
     emptyList: "Nothing yet — using the engine default",
+    presetLabel: "Preset",
+    inUse: "in use",
+    rowUntitled: "Untitled",
+    removeRow: "Remove",
+    yamlShow: "Show YAML",
+    yamlHide: "Hide YAML",
+    thrOff: "off",
     helpToggle: "Descriptions",
     helpOne: "What this does",
     sectionErrs: "{n} to fix",
@@ -327,6 +341,13 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     search: { placeholder: "Поиск по настройкам…", empty: "Ничего не найдено" },
     modifiedChip: "Изменено · {n}",
     emptyList: "Пусто — движок возьмёт значение по умолчанию",
+    presetLabel: "Готовый набор",
+    inUse: "используется",
+    rowUntitled: "Без имени",
+    removeRow: "Удалить",
+    yamlShow: "Показать YAML",
+    yamlHide: "Скрыть YAML",
+    thrOff: "выкл",
     helpToggle: "Пояснения",
     helpOne: "Что это делает",
     sectionErrs: "{n} с ошибкой",
@@ -451,6 +472,13 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     search: { placeholder: "Einstellungen durchsuchen…", empty: "Nichts gefunden" },
     modifiedChip: "Geändert · {n}",
     emptyList: "Noch leer — es gilt der Engine-Standard",
+    presetLabel: "Vorlage",
+    inUse: "aktiv",
+    rowUntitled: "Ohne Namen",
+    removeRow: "Entfernen",
+    yamlShow: "YAML zeigen",
+    yamlHide: "YAML ausblenden",
+    thrOff: "aus",
     helpToggle: "Beschreibungen",
     helpOne: "Was das bewirkt",
     sectionErrs: "{n} zu klären",
@@ -575,6 +603,13 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     search: { placeholder: "Rechercher un réglage…", empty: "Aucun résultat" },
     modifiedChip: "Modifié · {n}",
     emptyList: "Vide — la valeur par défaut du moteur s'applique",
+    presetLabel: "Préréglage",
+    inUse: "utilisé",
+    rowUntitled: "Sans nom",
+    removeRow: "Supprimer",
+    yamlShow: "Afficher le YAML",
+    yamlHide: "Masquer le YAML",
+    thrOff: "off",
     helpToggle: "Descriptions",
     helpOne: "Ce que ça fait",
     sectionErrs: "{n} à corriger",
@@ -699,6 +734,13 @@ export const wizardChrome: Record<Locale, WizardChrome> = {
     search: { placeholder: "Buscar ajustes…", empty: "Sin resultados" },
     modifiedChip: "Modificado · {n}",
     emptyList: "Vacío — se usa el valor por defecto del motor",
+    presetLabel: "Preajuste",
+    inUse: "en uso",
+    rowUntitled: "Sin nombre",
+    removeRow: "Eliminar",
+    yamlShow: "Mostrar YAML",
+    yamlHide: "Ocultar YAML",
+    thrOff: "off",
     helpToggle: "Descripciones",
     helpOne: "Qué hace esto",
     sectionErrs: "{n} por corregir",

@@ -265,6 +265,28 @@ function guessErrorSection(err: string | undefined): SectionId | null {
 
 const splitCsv = (v: string) => v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
+// Split a generated line into [code, comment]. Quote-aware on purpose: a "#" in
+// a webhook URL fragment (notify.webhook.url, notify.slack.webhook_url) is data,
+// and a naive indexOf("#") rendered half the URL as a grey comment.
+function splitComment(ln: string): [string, string] {
+  let inQuote = false;
+  for (let i = 0; i < ln.length; i++) {
+    const ch = ln[i];
+    if (inQuote && ch === "\\") {
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (ch === "#" && !inQuote && (i === 0 || /\s/.test(ln[i - 1]))) {
+      return [ln.slice(0, i), ln.slice(i)];
+    }
+  }
+  return [ln, ""];
+}
+
 // Applicability-named presets, stored as diffs over initialState (which IS the
 // recommended hosting-edge baseline). Every preset must pass the engine check.
 const PRESETS: Array<{ id: "edge" | "single" | "carrier"; diff: StateDiff }> = [
@@ -342,10 +364,16 @@ function FieldShell({
       }`}
     >
       {/* container query, not a viewport one: the row splits into label/control
-          columns based on how wide the FORM COLUMN actually is, so a narrow
-          middle column at 1024px keeps the stacked layout instead of squeezing */}
-      <div className={wide ? "space-y-2" : "gap-x-6 gap-y-2 @lg:flex @lg:items-start @lg:justify-between"}>
-        <div className={wide ? "" : "min-w-0 @lg:w-[46%] @lg:shrink-0 @lg:pt-1.5"}>
+          columns based on how wide the SECTION actually is, so a narrow form
+          column keeps the stacked layout instead of squeezing */}
+      <div
+        className={
+          wide
+            ? "space-y-2"
+            : "gap-x-6 gap-y-2 @[34rem]/sec:grid @[34rem]/sec:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] @[34rem]/sec:items-start"
+        }
+      >
+        <div className={wide ? "" : "min-w-0 @[34rem]/sec:pt-1.5"}>
           <div className="flex items-baseline gap-2">
             <label htmlFor={`f-${f.path}`} className="text-[13.5px] font-medium leading-snug">
               {label}
@@ -418,7 +446,15 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   });
   // stage-3 service layer
   const [filterModified, setFilterModified] = useState(false);
+  // Deterministic initial values — a static export hydrates with these, then a
+  // mount effect applies what the operator chose last time.
   const [showHelp, setShowHelp] = useState(false);
+  const [dockOpen, setDockOpen] = useState(true);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  // The YAML pane has exactly ONE mount at a time — a CSS-hidden second copy
+  // would duplicate every id inside it (including #yaml-pane).
+  const [wideLayout, setWideLayout] = useState(false);
+  const [protoOpen, setProtoOpen] = useState<Record<string, boolean>>({});
   const [searchQ, setSearchQ] = useState("");
   const [searchFocus, setSearchFocus] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -429,6 +465,49 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
   const restoredRef = useRef(false);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // View preferences live outside the config state on purpose: they must never
+  // reach buildDiff / the share hash / the saved diff.
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1440px)");
+    let stored: string | null = null;
+    try {
+      // one-time hydration of view prefs; deterministic defaults render first
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (localStorage.getItem("kapkan.cfg.help") === "1") setShowHelp(true);
+      stored = localStorage.getItem("kapkan.cfg.dock");
+    } catch {
+      /* storage blocked — defaults are fine */
+    }
+    // Where there is room the file stays open beside the form; where there is
+    // not, it collapses to the status strip (which still carries the verdict)
+    // so the form owns the screen. An explicit choice always wins.
+    setDockOpen(stored === null ? mq.matches : stored === "1");
+    const sync = () => setWideLayout(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  function toggleHelp() {
+    setShowHelp((v) => {
+      try {
+        localStorage.setItem("kapkan.cfg.help", v ? "0" : "1");
+      } catch {
+        /* ignore */
+      }
+      return !v;
+    });
+  }
+
+  function toggleDock(next: boolean) {
+    setDockOpen(next);
+    try {
+      localStorage.setItem("kapkan.cfg.dock", next ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
 
   // Restore once: a share link wins over the local autosave.
   useEffect(() => {
@@ -522,7 +601,9 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
         if (visible[0]) setActive(visible[0].target.id.slice(4) as SectionId);
       },
-      { rootMargin: "-160px 0px -55% 0px", threshold: 0 },
+      // matches the two-row sticky bar (97px); the bar's height is invariant —
+      // the live-mode warning reuses row 1 instead of adding a third row
+      { rootMargin: "-104px 0px -55% 0px", threshold: 0 },
     );
     for (const id of SECTION_IDS) {
       const el = document.getElementById(`sec-${id}`);
@@ -786,6 +867,19 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     else if (f.key) set(f.key, JSON.parse(JSON.stringify(initialState[f.key])) as WizardState[keyof WizardState]);
   }
   const modifiedCount = ALL_DEFS.reduce((n, e) => n + (fieldModified(e.f) ? 1 : 0), 0);
+  // per-section deviation count for the rail (must come after fieldModified —
+  // a useMemo body runs during render, so an earlier call would hit its TDZ)
+  const sectionModified = useMemo(() => {
+    const out = {} as Record<SectionId, number>;
+    for (const id of SECTION_IDS) {
+      out[id] = FIELDS[id].reduce((n, f) => n + (fieldModified(f) ? 1 : 0), 0);
+    }
+    for (const defs of Object.values(METHOD_FIELDS)) {
+      out.mitigation += defs.reduce((n, f) => n + (fieldModified(f) ? 1 : 0), 0);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s]);
 
   function applyPreset(diff: StateDiff) {
     if (modifiedCount > 0 && !window.confirm(t.presets.confirm)) return;
@@ -884,6 +978,15 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
   // ------------------------------------------------------------------ fields
 
+  // An empty box says nothing; an empty box showing the value the engine would
+  // use says what leaving it empty MEANS. Booleans have a switch, and the three
+  // overlay defaults that are literally "" still deserve the em dash.
+  function placeholderFor(f: FieldDef): string {
+    const d = fieldMeta(f.path).defaultWhenAbsent;
+    if (d === undefined || typeof d === "boolean") return "—";
+    return String(d) || "—";
+  }
+
   const WIDE_KINDS: FieldKind[] = [
     "matrix",
     "list",
@@ -922,6 +1025,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           id={`f-${f.path}`}
           className={`${inputCls}${f.mono ? " font-mono" : ""}`}
           value={value}
+          placeholder={placeholderFor(f)}
           spellCheck={false}
           onChange={(e) => set(f.key!, e.target.value as WizardState[typeof f.key & keyof WizardState])}
         />
@@ -938,6 +1042,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           className={`${inputCls} font-mono`}
           inputMode="numeric"
           value={value}
+          placeholder={placeholderFor(f)}
           spellCheck={false}
           onChange={(e) => set(f.key!, e.target.value as WizardState[typeof f.key & keyof WizardState])}
         />
@@ -967,7 +1072,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     const on = s[f.key!] as boolean;
     return (
       <FieldShell key={f.path} {...shellProps(f)} error={null}>
-        <div className="flex @lg:justify-start">
+        <div className="flex @[34rem]/sec:justify-start">
           <button
             type="button"
             role="switch"
@@ -1084,7 +1189,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           aria-label={`${f.path}.${k}`}
           className={`${cellCls} ${bad ? "border-red-500" : "border-border"}`}
           inputMode="numeric"
-          placeholder="—"
+          placeholder={t.thrOff}
           value={val[k]}
           spellCheck={false}
           onChange={(e) => upd(k, e.target.value)}
@@ -1114,7 +1219,15 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           {cell("flows_per_sec")}
           <span />
         </div>
-        <details className="group/proto mt-2" open={protoSet}>
+        {/* uncontrolled-with-an-override: `open={protoSet}` alone re-asserted
+            itself on every render, so the operator could not close the group */}
+        <details
+          className="group/proto mt-2"
+          open={protoOpen[f.path] ?? protoSet}
+          onToggle={(e) =>
+            setProtoOpen((p) => ({ ...p, [f.path]: (e.currentTarget as HTMLDetailsElement).open }))
+          }
+        >
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
             <span aria-hidden className="text-[9px] transition-transform group-open/proto:rotate-90">
               ▶
@@ -1138,18 +1251,41 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   }
 
   // Small building blocks for the repeatable-row editors.
-  function rowShell(children: React.ReactNode, onRemove: () => void, key: number) {
+  // Every repeatable row gets a header naming WHICH row it is (its index in the
+  // YAML plus whatever identifies it), so a list of five stops being five
+  // identical boxes of inputs.
+  function rowShell(
+    children: React.ReactNode,
+    onRemove: () => void,
+    key: number,
+    meta?: { basePath: string; title?: string },
+  ) {
     return (
-      <div key={key} className="relative rounded-md border border-border bg-muted/20 p-2.5 pr-9">
-        <div className="flex flex-wrap items-end gap-2">{children}</div>
-        <button
-          type="button"
-          aria-label="remove"
-          className="absolute right-1.5 top-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-muted-foreground hover:border-border hover:bg-muted"
-          onClick={onRemove}
-        >
-          ×
-        </button>
+      <div key={key} className="overflow-hidden rounded-lg border border-border bg-background/40">
+        {meta && (
+          <div className="flex items-center gap-2 border-b border-border/70 bg-muted px-3 py-1.5">
+            <code className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/70">
+              {`${meta.basePath}[${key}]`}
+            </code>
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
+              {meta.title?.trim() ? (
+                meta.title
+              ) : (
+                <span className="font-normal text-muted-foreground/60">{t.rowUntitled}</span>
+              )}
+            </span>
+            <button
+              type="button"
+              aria-label={t.removeRow}
+              title={t.removeRow}
+              className="shrink-0 rounded p-1 text-[13px] leading-none text-muted-foreground/60 hover:bg-red-500/10 hover:text-red-500"
+              onClick={onRemove}
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <div className="flex flex-wrap items-end gap-2 px-3 py-2.5">{children}</div>
       </div>
     );
   }
@@ -1230,6 +1366,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </>,
               () => set("neighbors", s.neighbors.filter((_, j) => j !== i)),
               i,
+              { basePath: "bgp.neighbors", title: n.address },
             ),
           )}
           <button
@@ -1270,6 +1407,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </>,
               () => set("boundary", s.boundary.filter((_, j) => j !== i)),
               i,
+              { basePath: "sampling.boundary", title: b.exporter },
             ),
           )}
           <button
@@ -1303,6 +1441,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </>,
               () => set("escalation", s.escalation.filter((_, j) => j !== i)),
               i,
+              { basePath: "escalation", title: e.action ? `+${e.after_seconds || 0}s → ${e.action}` : "" },
             ),
           )}
           <button
@@ -1415,6 +1554,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </>,
               () => set("scrub_nodes", s.scrub_nodes.filter((_, j) => j !== i)),
               i,
+              { basePath: "scrubbing.nodes", title: n.name },
             ),
           )}
           <button
@@ -1452,6 +1592,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </>,
               () => set("dp_profiles", s.dp_profiles.filter((_, j) => j !== i)),
               i,
+              { basePath: "dataplane.ratelimit_profiles", title: p.name },
             ),
           )}
           <button
@@ -1488,6 +1629,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </>,
               () => set("dp_rules", s.dp_rules.filter((_, j) => j !== i)),
               i,
+              { basePath: "dataplane.static_rules", title: r.name },
             ),
           )}
           <button
@@ -1526,6 +1668,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </>,
               () => set("api_tokens", s.api_tokens.filter((_, j) => j !== i)),
               i,
+              { basePath: "api.tokens", title: tk.name },
             ),
           )}
           <button
@@ -1677,7 +1820,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           : [];
       if (mod.length + methodMod.length === 0) return null;
       return (
-        <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="scroll-mt-40">
+        <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="@container/sec scroll-mt-[6.5rem]">
           {sectionCard(id, <div className="divide-y divide-border/60">{renderFieldList([...mod, ...methodMod])}</div>)}
         </section>
       );
@@ -1686,7 +1829,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     const advanced = defs.filter((f) => f.advanced);
     const hint = t.advHints[id];
     return (
-      <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="scroll-mt-40">
+      <section key={id} id={`sec-${id}`} aria-labelledby={`sec-${id}-h`} className="@container/sec scroll-mt-[6.5rem]">
         {sectionCard(
           id,
           <>
@@ -1734,7 +1877,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     const errs = sectionErrors[id];
     return (
       <div className="overflow-hidden rounded-xl border border-border bg-surface">
-        <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-5 py-2.5">
+        <div className="flex items-center gap-3 border-b border-border bg-muted px-5 py-2.5">
           <h2 id={`sec-${id}-h`} className="text-[13px] font-semibold tracking-tight">
             {t.sections[id]}
           </h2>
@@ -1751,13 +1894,13 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
 
   // ------------------------------------------------------------- YAML pane
 
-  // Line-level tint: keys accented, comments muted. The emitter never writes
-  // "#" inside a quoted value, so splitting at the first "#" is safe here.
+  // Line-level tint: keys accented, comments muted. The alignment padding the
+  // emitter writes is dropped here — in a 26rem pane it is the difference
+  // between a line that fits and a line that looks chopped off.
   function renderYamlLine(ln: string) {
     if (ln === "") return " ";
-    const ci = ln.indexOf("#");
-    const code = ci >= 0 ? ln.slice(0, ci) : ln;
-    const comment = ci >= 0 ? ln.slice(ci) : "";
+    const [rawCode, comment] = splitComment(ln);
+    const code = rawCode.replace(/\s+$/, "");
     const m = code.match(/^(\s*(?:- )?)([A-Za-z0-9_]+)(:)(.*)$/);
     return (
       <>
@@ -1771,7 +1914,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         ) : (
           code
         )}
-        {comment && <span className="text-muted-foreground/70">{comment}</span>}
+        {comment && <span className="text-muted-foreground/60">{(code ? "  " : "") + comment}</span>}
       </>
     );
   }
@@ -1795,35 +1938,88 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
     };
   })();
 
+  // The verdict sits ABOVE the code: it is a statement about the file below it.
+  const verdictStrip = (
+    <div
+      className={`border-b px-3 py-2 text-[12px] ${
+        verdict.tone === "ok"
+          ? "border-emerald-500/30 bg-emerald-500/10"
+          : verdict.tone === "err"
+            ? "border-red-500/30 bg-red-500/10"
+            : "border-border"
+      }`}
+      role="status"
+      aria-live="polite"
+    >
+      {verdict.tone === "ok" ? (
+        verdict.summary ? (
+          <details>
+            <summary className="cursor-pointer font-medium text-emerald-600 dark:text-emerald-400">
+              ✓ {verdict.text}{" "}
+              <span className="font-normal text-muted-foreground">· {t.engineSummary}</span>
+            </summary>
+            <pre className="mt-2 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-muted-foreground">
+              {verdict.summary}
+            </pre>
+          </details>
+        ) : (
+          <p className="font-medium text-emerald-600 dark:text-emerald-400">✓ {verdict.text}</p>
+        )
+      ) : verdict.tone === "err" ? (
+        verdict.section ? (
+          <button
+            type="button"
+            onClick={() => scrollToSection(verdict.section as SectionId)}
+            className="w-full text-left font-medium text-red-500 hover:underline"
+          >
+            ✗ {verdict.text}
+          </button>
+        ) : (
+          <p className="font-medium text-red-500">✗ {verdict.text}</p>
+        )
+      ) : (
+        <p className="text-muted-foreground">{verdict.text}</p>
+      )}
+    </div>
+  );
+
   const yamlPane = (
-    <div id="yaml-pane" className="scroll-mt-40">
+    <div id="yaml-pane" className="scroll-mt-[6.5rem]">
       <div className="overflow-hidden rounded-xl border border-border bg-surface">
-        <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/40 px-4 py-2">
-          <span className="font-mono text-xs font-semibold text-muted-foreground">{t.output}</span>
-          <div className="flex gap-2">
+        <div className="flex items-center gap-2 border-b border-border bg-muted px-3 py-2">
+          <span className="font-mono text-[12px] font-semibold text-muted-foreground">{t.output}</span>
+          <button
+            type="button"
+            onClick={copy}
+            className="ml-auto h-7 rounded-md border border-border px-2.5 text-[12px] font-medium hover:bg-muted"
+          >
+            {copied ? t.copied : t.copy}
+          </button>
+          <button
+            type="button"
+            onClick={download}
+            className="h-7 rounded-md bg-accent px-2.5 text-[12px] font-medium text-accent-foreground hover:opacity-90"
+          >
+            {t.download}
+          </button>
+          {wideLayout && (
             <button
               type="button"
-              onClick={copy}
-              className="rounded-md border border-border px-3 py-1 text-xs font-medium hover:bg-muted"
+              onClick={() => toggleDock(false)}
+              title={t.yamlHide}
+              aria-label={t.yamlHide}
+              className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-muted"
             >
-              {copied ? t.copied : t.copy}
+              »
             </button>
-            <button
-              type="button"
-              onClick={download}
-              className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground hover:opacity-90"
-            >
-              {t.download}
-            </button>
-          </div>
+          )}
         </div>
-        {/* the fade tells you the pane scrolls sideways instead of letting a
-            long line look like it was chopped off */}
-        <pre className="relative max-h-[50vh] overflow-auto px-4 py-3 font-mono text-xs leading-relaxed [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)] lg:max-h-[calc(100vh-24rem)]">
+        {verdictStrip}
+        <pre className="max-h-[50vh] overflow-auto px-3 py-3 font-mono text-[12px] leading-[1.6] min-[1440px]:max-h-[calc(100vh-18rem)]">
           {yamlLines.map((ln, i) => (
             <span
               key={i}
-              className={`block whitespace-pre rounded-sm px-1 -mx-1 transition-colors duration-700 ${
+              className={`-mx-1 block whitespace-pre-wrap break-words rounded-sm px-1 pl-[calc(0.25rem+2ch)] [text-indent:-2ch] transition-colors duration-700 ${
                 hotLines.has(i) ? "bg-accent/20 duration-0" : ""
               }`}
             >
@@ -1832,59 +2028,16 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           ))}
         </pre>
 
-        {/* the engine verdict lives inside the pane: one card, not a stack of strips */}
-        <div
-          className={`border-t px-3 py-2 text-xs ${
-          verdict.tone === "ok"
-            ? "border-emerald-500/30 bg-emerald-500/10"
-            : verdict.tone === "err"
-              ? "border-red-500/30 bg-red-500/10"
-              : "border-border bg-muted/30"
-        }`}
-        role="status"
-        aria-live="polite"
-      >
-        {verdict.tone === "ok" ? (
-          verdict.summary ? (
-            <details>
-              <summary className="cursor-pointer font-medium text-emerald-600 dark:text-emerald-400">
-                ✓ {verdict.text}{" "}
-                <span className="font-normal text-muted-foreground">· {t.engineSummary}</span>
-              </summary>
-              <pre className="mt-2 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-muted-foreground">
-                {verdict.summary}
-              </pre>
-            </details>
-          ) : (
-            <p className="font-medium text-emerald-600 dark:text-emerald-400">✓ {verdict.text}</p>
-          )
-        ) : verdict.tone === "err" ? (
-          verdict.section ? (
-            <button
-              type="button"
-              onClick={() => scrollToSection(verdict.section as SectionId)}
-              className="w-full text-left font-medium text-red-500 hover:underline"
-            >
-              ✗ {verdict.text}
-            </button>
-          ) : (
-            <p className="font-medium text-red-500">✗ {verdict.text}</p>
-          )
-        ) : (
-          <p className="text-muted-foreground">{verdict.text}</p>
-        )}
-        </div>
-      </div>
-
-      {/* deploy runbook: needed after the file is written, so it starts folded */}
-      <details className="group/rb mt-3 overflow-hidden rounded-xl border border-border bg-surface">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[13px] font-medium hover:bg-muted/40 [&::-webkit-details-marker]:hidden">
+      {/* deploy runbook: needed after the file is written, so it starts folded —
+          and it lives in the same card, so the pane is one object, not a stack */}
+      <details className="group/rb border-t border-border">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-[12px] font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground [&::-webkit-details-marker]:hidden">
           <span aria-hidden className="text-[9px] transition-transform group-open/rb:rotate-90">
             ▶
           </span>
           {t.runbook.title}
         </summary>
-        <ol className="space-y-3 border-t border-border px-4 py-3">
+        <ol className="space-y-3 border-t border-border px-3 py-3">
           {[
             { text: t.runbook.save, cmd: "sudo install -m 0644 config.yaml /etc/kapkan/config.yaml" },
             { text: t.runbook.check, cmd: "kapkan -check-config /etc/kapkan/config.yaml" },
@@ -1926,6 +2079,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
           ))}
         </ol>
       </details>
+      </div>
     </div>
   );
 
@@ -1941,10 +2095,20 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
   );
 
   return (
-    <div className="pb-16 lg:pb-0">
-      {/* mode bar: the watch-only / live state of the whole config, always visible */}
-      <div className="sticky top-0 z-30 -mx-6 border-b border-border bg-background/90 px-6 py-3 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div
+      className={
+        wideLayout ? "" : dockOpen ? "pb-[calc(45vh+3rem)]" : "pb-14"
+      }
+    >
+      {/* Mode + tools. Two rows of a FIXED height at lg+: every sticky offset and
+          the scrollspy rootMargin encode this bar's 97px, so the live-mode warning
+          reuses row 1's descriptive slot instead of adding a third row. */}
+      <div
+        className={`z-30 -mx-6 border-b bg-background/90 px-6 backdrop-blur lg:sticky lg:top-0 lg:-mx-8 lg:px-8 ${
+          s.dry_run ? "border-border" : "border-b-2 border-red-500/60"
+        }`}
+      >
+        <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 py-2 lg:h-12 lg:py-0">
           <span
             className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ${
               s.dry_run
@@ -1981,8 +2145,12 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             dry_run: {String(s.dry_run)}
           </code>
 
-          <span className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground md:inline">
-            {s.dry_run ? t.modeWatchDesc : ""}
+          <span
+            className={`hidden min-w-0 flex-1 truncate text-xs md:inline ${
+              s.dry_run ? "text-muted-foreground" : "font-medium text-red-500"
+            }`}
+          >
+            {s.dry_run ? t.modeWatchDesc : t.liveWarning}
           </span>
 
           {totalErrors > 0 && firstErrorSection && (
@@ -1995,27 +2163,11 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             </button>
           )}
         </div>
-        {!s.dry_run && <p className="mt-2 text-xs font-medium text-red-500">{t.liveWarning}</p>}
 
-        {/* Toolbar in three groups — presets (a segmented control), search, then
-            view toggles and the file actions — so eight identical pills stop
-            competing for attention. */}
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex rounded-full border border-border p-0.5">
-            {PRESETS.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                title={t.presets[p.id].desc}
-                onClick={() => applyPreset(p.diff)}
-                className="rounded-full px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                {t.presets[p.id].name}
-              </button>
-            ))}
-          </div>
-
-          <div className="relative min-w-[170px] flex-1">
+        {/* Toolbar in three zones: find · view · source. Eight identical pills in
+            one row is what made this read as a browser extension bar. */}
+        <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/60 py-2 lg:h-12 lg:py-0">
+          <div className="relative w-full max-w-[20rem] flex-1">
             <input
               value={searchQ}
               placeholder={t.search.placeholder}
@@ -2035,8 +2187,20 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
                   (e.target as HTMLInputElement).blur();
                 }
               }}
-              className="w-full rounded-full border border-border bg-background px-3 py-1 text-xs outline-none transition-colors focus:border-accent"
+              className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2.5 text-[13px] outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20"
             />
+            <svg
+              aria-hidden
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
             {searchFocus && searchQ.trim() !== "" && (
               <div className="absolute z-40 mt-1 max-h-72 w-full min-w-[260px] overflow-auto rounded-md border border-border bg-surface shadow-lg">
                 {searchResults.length === 0 ? (
@@ -2063,35 +2227,86 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             )}
           </div>
 
+          {/* zone B — view toggles look like toggles, not like more buttons */}
           <button
             type="button"
-            aria-pressed={showHelp}
-            onClick={() => setShowHelp((v) => !v)}
-            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-              showHelp
-                ? "border-accent bg-accent/10 text-foreground"
-                : "border-border text-muted-foreground hover:bg-muted"
-            }`}
+            role="switch"
+            aria-checked={showHelp}
+            onClick={toggleHelp}
+            className="flex shrink-0 items-center gap-2 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
           >
+            <span
+              aria-hidden
+              className={`relative h-4 w-7 rounded-full border transition-colors ${
+                showHelp ? "border-accent bg-accent" : "border-border bg-muted"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-background transition-[left] ${
+                  showHelp ? "left-[14px]" : "left-0.5"
+                }`}
+              />
+            </span>
             {t.helpToggle}
           </button>
-          <button
-            type="button"
-            aria-pressed={filterModified}
-            disabled={modifiedCount === 0 && !filterModified}
-            onClick={() => setFilterModified((v) => !v)}
-            className={`rounded-full border px-3 py-1 text-xs transition-colors disabled:opacity-40 ${
-              filterModified
-                ? "border-accent bg-accent/10 text-foreground"
-                : "border-border text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            {t.modifiedChip.replace("{n}", String(modifiedCount))}
-          </button>
-          <span aria-hidden className="hidden h-4 w-px bg-border sm:block" />
+          {modifiedCount > 0 && (
+            <button
+              type="button"
+              aria-pressed={filterModified}
+              onClick={() => setFilterModified((v) => !v)}
+              className={`h-8 shrink-0 rounded-md border px-2.5 text-[12px] transition-colors ${
+                filterModified
+                  ? "border-accent bg-accent/10 text-foreground"
+                  : "border-border text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              {t.modifiedChip.replace("{n}", String(modifiedCount))}
+            </button>
+          )}
+          {/* zone C — source of the config: a preset menu (its descriptions are
+              visible here instead of hiding in a title) then the file actions */}
+          <div className="relative ml-auto shrink-0">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={presetsOpen}
+              onClick={() => setPresetsOpen((v) => !v)}
+              onBlur={() => setTimeout(() => setPresetsOpen(false), 150)}
+              className="h-8 rounded-md border border-border px-3 text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {t.presetLabel} ▾
+            </button>
+            {presetsOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 z-40 mt-1 w-72 rounded-lg border border-border bg-surface p-1 shadow-lg"
+              >
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="menuitem"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setPresetsOpen(false);
+                      applyPreset(p.diff);
+                    }}
+                    className="block w-full rounded-md px-3 py-2 text-left transition-colors hover:bg-muted"
+                  >
+                    <span className="block text-sm font-medium">{t.presets[p.id].name}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {t.presets[p.id].desc}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <span aria-hidden className="hidden h-5 w-px bg-border md:block" />
 
           {/* file actions: quieter than the view toggles above */}
-          <div className="flex items-center gap-3 text-xs">
+          <div className="flex shrink-0 items-center gap-3 text-[12px]">
             <button
               type="button"
               onClick={() => {
@@ -2174,12 +2389,22 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         </div>
       )}
 
-      {/* Column budget matters more than it looks: at a common ~1340px viewport the old
-          200/1fr/540 split left the form just 428px, which is what turned dense rows into
-          mush. The rail and the YAML pane both give width back to the form. */}
-      <div className="mt-6 lg:grid lg:grid-cols-[168px_minmax(0,1fr)_minmax(0,420px)] lg:items-start lg:gap-6 xl:grid-cols-[176px_minmax(0,1fr)_minmax(0,470px)] xl:gap-7 2xl:grid-cols-[188px_minmax(0,1fr)_minmax(0,560px)]">
+      {/* Three regimes. The old 200/1fr/540 split inside a 1280px container left the
+          form 428px — and it stayed 428px however wide the monitor got. Below 1440
+          the YAML lives in a bottom dock so the form owns the width; from 1440 it
+          takes a third column that the operator can collapse to a strip. */}
+      {/* All three regimes use the same variant FORM (min-[…]) on purpose: mixing
+          `lg:` with an arbitrary min-width makes the named breakpoint win at
+          1440+ regardless of order, and the YAML column silently wraps away. */}
+      <div
+        className={`mt-6 min-[1024px]:grid min-[1024px]:grid-cols-[13rem_minmax(0,1fr)] min-[1024px]:items-start min-[1024px]:gap-8 ${
+          dockOpen
+            ? "min-[1440px]:grid-cols-[13rem_minmax(0,1fr)_26rem] min-[1600px]:grid-cols-[13rem_minmax(0,1fr)_30rem]"
+            : "min-[1440px]:grid-cols-[13rem_minmax(0,1fr)_2.5rem]"
+        }`}
+      >
         {/* section rail */}
-        <nav aria-label={t.nav} className="lg:sticky lg:top-32 lg:self-start">
+        <nav aria-label={t.nav} className="min-[1024px]:sticky min-[1024px]:top-[6.5rem] min-[1024px]:self-start">
           {/* mobile: horizontal chips */}
           <div className="-mx-6 flex gap-2 overflow-x-auto px-6 pb-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:hidden">
             {SECTION_IDS.map((id) => (
@@ -2198,22 +2423,29 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
               </button>
             ))}
           </div>
-          {/* desktop: vertical list */}
-          <ul className="hidden space-y-0.5 text-sm lg:block">
+          {/* desktop: vertical list on a spine. No green dots — absence of red
+              is the signal; a column of seven ticks is decoration. */}
+          <ul className="hidden border-l border-border lg:block">
             {SECTION_IDS.map((id) => (
               <li key={id}>
                 <button
                   type="button"
                   onClick={() => scrollToSection(id)}
                   aria-current={active === id ? "true" : undefined}
-                  className={`flex w-full items-center justify-between gap-2 rounded-md border-l-2 py-1.5 pl-3 pr-2 text-left transition-colors ${
+                  className={`-ml-px flex w-full items-center gap-2 border-l-2 py-2 pl-3 pr-2 text-left text-[13px] transition-colors ${
                     active === id
-                      ? "border-accent font-medium text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                      ? "rounded-r-md border-accent bg-accent/5 font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground"
                   }`}
                 >
-                  <span className="truncate">{t.sections[id]}</span>
-                  {dot(id)}
+                  <span className="min-w-0 flex-1 truncate">{t.sections[id]}</span>
+                  {sectionErrors[id] > 0 ? (
+                    <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+                  ) : sectionModified[id] > 0 ? (
+                    <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground/70">
+                      {sectionModified[id]}
+                    </span>
+                  ) : null}
                 </button>
               </li>
             ))}
@@ -2221,32 +2453,89 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
         </nav>
 
         {/* form column */}
-        <div className="@container min-w-0 space-y-8">{SECTION_IDS.map(renderSection)}</div>
+        <div className="min-w-0 space-y-6">{SECTION_IDS.map(renderSection)}</div>
 
-        {/* YAML column */}
-        <aside className="mt-10 min-w-0 lg:sticky lg:top-24 lg:mt-0 lg:self-start">{yamlPane}</aside>
+        {/* YAML column — only from 1440px; below that it lives in the dock */}
+        {wideLayout && dockOpen ? (
+          <aside className="min-w-0 min-[1440px]:sticky min-[1440px]:top-[6.5rem] min-[1440px]:self-start">
+            {yamlPane}
+          </aside>
+        ) : wideLayout ? (
+          <aside className="min-[1440px]:sticky min-[1440px]:top-[6.5rem] min-[1440px]:self-start">
+            <button
+              type="button"
+              onClick={() => toggleDock(true)}
+              title={t.yamlShow}
+              aria-label={t.yamlShow}
+              className="flex h-48 w-10 flex-col items-center justify-between rounded-xl border border-border bg-surface py-3 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <span aria-hidden className="text-xs">
+                «
+              </span>
+              <span className="rotate-180 font-mono text-[11px] tracking-wide [writing-mode:vertical-rl]">
+                config.yaml
+              </span>
+              <span
+                aria-hidden
+                className={`h-2 w-2 rounded-full ${
+                  verdict.tone === "ok"
+                    ? "bg-emerald-500"
+                    : verdict.tone === "err"
+                      ? "bg-red-500"
+                      : "bg-border"
+                }`}
+              />
+            </button>
+          </aside>
+        ) : null}
       </div>
 
-      {/* mobile status bar */}
-      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center justify-between gap-3 border-t border-border bg-background/95 px-4 py-2 backdrop-blur lg:hidden">
-        <span
-          className={`min-w-0 truncate text-xs font-medium ${
-            verdict.tone === "ok"
-              ? "text-emerald-600 dark:text-emerald-400"
-              : verdict.tone === "err"
-                ? "text-red-500"
-                : "text-muted-foreground"
-          }`}
+      {/* Below 1440 the YAML is a bottom dock whose collapsed state IS the status
+          bar — one status surface instead of a stack of strips. */}
+      {!wideLayout && (
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur">
+        <button
+          type="button"
+          aria-expanded={dockOpen}
+          aria-controls="yaml-dock-body"
+          onClick={() => toggleDock(!dockOpen)}
+          className="flex h-11 w-full items-center gap-2.5 px-4 text-left"
         >
-          {verdict.tone === "ok" ? "✓" : verdict.tone === "err" ? "✗" : "…"} {verdict.text}
-        </span>
-        <a
-          href="#yaml-pane"
-          className="shrink-0 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground"
-        >
-          {t.yamlJump}
-        </a>
+          <span
+            aria-hidden
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              verdict.tone === "ok"
+                ? "bg-emerald-500"
+                : verdict.tone === "err"
+                  ? "bg-red-500"
+                  : "bg-muted-foreground/50"
+            }`}
+          />
+          <span
+            className={`min-w-0 flex-1 truncate text-[12px] font-medium ${
+              verdict.tone === "ok"
+                ? "text-emerald-600 dark:text-emerald-400"
+                : verdict.tone === "err"
+                  ? "text-red-500"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {verdict.text}
+          </span>
+          <code className="hidden shrink-0 font-mono text-[11px] text-muted-foreground sm:inline">
+            config.yaml
+          </code>
+          <span className="shrink-0 text-[12px] text-muted-foreground">
+            {dockOpen ? t.yamlHide : t.yamlJump}
+          </span>
+        </button>
+        {dockOpen && (
+          <div id="yaml-dock-body" className="max-h-[45vh] overflow-auto border-t border-border px-4 py-3">
+            {yamlPane}
+          </div>
+        )}
       </div>
+      )}
     </div>
   );
 }
