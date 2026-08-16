@@ -84,9 +84,10 @@ responde, los bloqueos se registran — y la única diferencia visible es que lo
 descartar no se están descartando. Por eso «¿está conectado?» es una métrica y no algo que haya que
 inferir de una línea de log en el arranque.
 
-<Callout type="warning" title="Cuatro series existen incluso sin plano de datos">
+<Callout type="warning" title="Cinco series existen incluso sin plano de datos">
 `kapkan_dataplane_degraded`, `kapkan_dataplane_pins_rebuilt`,
-`kapkan_dataplane_policy_generation` y `kapkan_dataplane_policy_apply_seconds` no llevan
+`kapkan_dataplane_shadowed_static_rules`, `kapkan_dataplane_policy_generation` y
+`kapkan_dataplane_policy_apply_seconds` no llevan
 etiquetas, así que se registran en el arranque y las exporta cualquier build — con valor `0` en un
 host que nunca ha cargado un programa BPF. No leas `kapkan_dataplane_degraded == 0` como «el plano
 de datos está sano»: en un host que solo usa BGP significa que no hay nada que degradar. Condiciona
@@ -101,6 +102,7 @@ es la presencia de `kapkan_dataplane_xdp_mode`.
 | `kapkan_dataplane_attach_errors_total` | `interface` | Intentos de conexión fallidos, incluidos los reintentos del watcher. Si sube *junto con* `kapkan_dataplane_degraded`, es una NIC que no acepta el programa; si sube *sin* él, es un enlace inestable que se está recuperando. |
 | `kapkan_dataplane_reattach_total` | `interface` | Veces que el programa se volvió a conectar a una interfaz tras perder la conexión. Es lo que hace visible una NIC intermitente: cada scrape individual dice «sano» y este contador dice que no lo estuvo. |
 | `kapkan_dataplane_pins_rebuilt` | — | `1` cuando en el arranque se encontró un programa pinneado existente, se rechazó y se reconstruyó — esperable tras una actualización que cambia el objeto BPF, su disposición de maps o `dataplane.limits`. El coste es que las reglas dinámicas del proceso anterior se pierden; los ataques activos se vuelven a mitigar en su siguiente intervalo de detección. |
+| `kapkan_dataplane_shadowed_static_rules` | — | Reglas estáticas de la configuración que nunca pueden actuar, porque la allowlist o una regla estática anterior ya se lleva todos los paquetes que seleccionan. `0` es el único valor sano, y cualquier otro merece una alerta: este defecto no tiene ningún otro síntoma numérico, ya que el propio contador de la regla muerta también está a cero — exactamente el aspecto de una regla correcta cuyo tráfico no ha llegado. Se vuelve a publicar en cada aplicación de política, así que baja a `0` con la recarga que corrige la configuración. Consulta [Reglas que nunca pueden actuar](/docs/dataplane-tuning#reglas-que-nunca-pueden-actuar). |
 | `kapkan_dataplane_packets_total` | `verdict` | Paquetes por veredicto XDP terminal (`pass_default`, `pass_allow_src`, `drop_static`, `drop_rl`, …). Se cuenta exactamente un veredicto terminal por paquete — lee [Veredictos terminales y observaciones](#veredictos-terminales-y-observaciones) antes de sumarlo. |
 | `kapkan_dataplane_bytes_total` | `verdict` | Bytes, por los mismos veredictos terminales. Una gráfica de paquetes por segundo por sí sola no distingue un SYN flood de 64 bytes de una reflexión de amplificación de 1500 bytes, y cada una exige una respuesta distinta. |
 | `kapkan_dataplane_observations_total` | `kind` | Observaciones de la ruta de datos que acompañan a un veredicto terminal en lugar de sustituirlo: `dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`. Es una métrica aparte a propósito — véase más abajo. |

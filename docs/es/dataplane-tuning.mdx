@@ -68,6 +68,60 @@ con él.
 Las dos nunca chocan: las reglas estáticas ocupan su propio mapa (paso 3 anterior), las reglas
 dinámicas ocupan otro (pasos 4–5), y cada una se dimensiona con su propio límite.
 
+## Reglas que nunca pueden actuar
+
+Entre las reglas estáticas **gana la primera coincidencia**: el plano de datos se detiene en la
+primera regla cuyo `match` satisface el paquete. Por eso una regla cuyo conjunto de coincidencias
+está *contenido* en el de una regla anterior es política muerta: el recorrido se para siempre por
+encima de ella, y nunca puede llevarse un paquete.
+
+```yaml
+static_rules:
+  - name: drop_https_flood
+    match: { proto: tcp, dst_port: 443 }
+    action: drop
+  - name: pass_partner_https          # never fires: drop_https_flood takes these packets first
+    match: { src: 198.51.100.0/24, proto: tcp, dst_port: 443 }
+    action: pass
+```
+
+La [allowlist](#qué-evalúa-el-kernel-y-en-qué-orden) hace lo mismo desde la precedencia 1: una
+coincidencia deja pasar el paquete y termina la evaluación antes de mirar una sola regla estática,
+así que añadir un prefijo a `dataplane.allowlist` desactiva todo descarte estático dirigido a un
+origen que esté dentro.
+
+Kapkan comprueba ambos ejes en **cada aplicación de política** — en el arranque y en cada recarga —
+y nombra las reglas que encuentra en cinco sitios:
+
+- una línea de registro `WARN` que las lista;
+- `shadowed_statics` en el informe de recarga;
+- la condición `policy_shadowed` en `/healthz` y `/api/v1/status`, que persiste hasta que una
+  recarga corrige la configuración;
+- la [métrica](/docs/metrics) `kapkan_dataplane_shadowed_static_rules`, cuyo único valor sano es
+  `0`;
+- un `WARNING` de `kapkan -check-config`, el único sitio donde el defecto puede detectarse *antes*
+  de que llegue el tráfico que la regla debía filtrar.
+
+<Callout type="warning" title="Se informa, no se rechaza">
+Una regla inalcanzable es un aviso, nunca un error de arranque. Una regla muerta no aplica nada, así
+que rechazar la configuración cambiaría un defecto que hoy no cuesta ni un paquete por un demonio de
+mitigación que no arranca — en una máquina cuyo único trabajo es filtrar cuando llegue un ataque.
+Kapkan ejecuta la configuración; simplemente no deja de contártelo.
+</Callout>
+
+La cobertura se juzga solo por el `match`, así que también se informa de una regla que se limita a
+repetir el veredicto de una anterior. El veredicto además se emite por familia de direcciones,
+porque el plano de datos es estricto con la familia: una regla sin `match.src` cubre ambas familias
+y solo está muerta cuando ambas están tomadas — posiblemente por dos reglas anteriores distintas, lo
+que el mensaje dice explícitamente. En el eje de la allowlist solo se informa de reglas `drop` y
+`ratelimit`, ya que una regla `pass` que la allowlist ya había hecho redundante deja pasar los
+mismos paquetes de todos modos. En el eje de la primera coincidencia se informa de cualquier acción,
+porque ahí la forma más peligrosa es precisamente un `pass`: un descarte amplio seguido de la
+exención estrecha que alguien pretendía conceder — y que no se está concediendo.
+
+Se arregla moviendo la regla específica **por encima** de la general, estrechando la regla general o
+la entrada de la allowlist, o borrando la regla si ya era redundante.
+
 ## Limitación de tasa por origen
 
 Una acción `ratelimit` se aplica **por dirección de origen**, no sobre el tráfico de la víctima en

@@ -83,9 +83,10 @@ antwortet, Sperren werden erfasst — und der einzige sichtbare Unterschied ist,
 die Sie verwerfen lassen wollten, nicht verworfen werden. Deshalb ist „ist es angebunden?“ eine
 Metrik und nichts, was man aus einer Logzeile beim Start ableiten muss.
 
-<Callout type="warning" title="Vier Reihen gibt es auch ohne Datenebene">
+<Callout type="warning" title="Fünf Reihen gibt es auch ohne Datenebene">
 `kapkan_dataplane_degraded`, `kapkan_dataplane_pins_rebuilt`,
-`kapkan_dataplane_policy_generation` und `kapkan_dataplane_policy_apply_seconds` tragen keine
+`kapkan_dataplane_shadowed_static_rules`, `kapkan_dataplane_policy_generation` und
+`kapkan_dataplane_policy_apply_seconds` tragen keine
 Labels, werden daher beim Start registriert und von jedem Build exportiert — mit dem Wert `0` auf
 einem Host, der nie ein BPF-Programm geladen hat. Lesen Sie `kapkan_dataplane_degraded == 0`
 nicht als „die Datenebene ist gesund“: auf einem Host, der nur BGP nutzt, bedeutet es, dass es
@@ -101,6 +102,7 @@ nichts zu beeinträchtigen gibt. Machen Sie Alarme zur Datenebene davon abhängi
 | `kapkan_dataplane_attach_errors_total` | `interface` | Fehlgeschlagene Anbindungsversuche, einschließlich der Wiederholungen des Watchers. Steigt der Zähler *zusammen mit* `kapkan_dataplane_degraded`, nimmt die NIC das Programm nicht an; steigt er *ohne* dieses Signal, ist es ein flappender Link, der wieder eingefangen wird. |
 | `kapkan_dataplane_reattach_total` | `interface` | Wie oft das Programm nach einem Verlust der Anbindung erneut an ein Interface angebunden wurde. Das macht eine sporadisch ausfallende NIC sichtbar: jeder einzelne Scrape meldet „gesund“, und dieser Zähler sagt, dass sie es nicht war. |
 | `kapkan_dataplane_pins_rebuilt` | — | `1`, wenn beim Start ein vorhandenes gepinntes Programm gefunden, abgelehnt und neu aufgebaut wurde — zu erwarten nach einem Upgrade, das das BPF-Objekt, sein Map-Layout oder `dataplane.limits` ändert. Der Preis: die dynamischen Regeln des vorherigen Prozesses sind weg; laufende Angriffe werden im nächsten Erkennungsintervall erneut mitigiert. |
+| `kapkan_dataplane_shadowed_static_rules` | — | Statische Regeln aus der Konfiguration, die niemals greifen können, weil die Allowlist oder eine frühere statische Regel bereits jedes Paket nimmt, das sie auswählen. `0` ist der einzige gesunde Wert, und jeder andere ist einen Alarm wert — dieser Defekt hat kein weiteres numerisches Symptom, denn der eigene Zähler der toten Regel steht ebenfalls auf null, und genau so sieht eine korrekte Regel aus, deren Verkehr nicht angekommen ist. Wird bei jeder Policy-Anwendung neu veröffentlicht und fällt daher mit dem Reload, der die Konfiguration korrigiert, wieder auf `0`. Siehe [Regeln, die nie greifen](/docs/dataplane-tuning#regeln-die-nie-greifen). |
 | `kapkan_dataplane_packets_total` | `verdict` | Pakete nach endgültiger XDP-Entscheidung (`pass_default`, `pass_allow_src`, `drop_static`, `drop_rl`, …). Pro Paket wird genau eine endgültige Entscheidung gezählt — lesen Sie [Endgültige Entscheidungen und Beobachtungen](#endgültige-entscheidungen-und-beobachtungen), bevor Sie summieren. |
 | `kapkan_dataplane_bytes_total` | `verdict` | Bytes, nach denselben endgültigen Entscheidungen. Eine Grafik der Pakete pro Sekunde allein kann einen SYN-Flood mit 64 Byte nicht von einer Amplification-Reflection mit 1500 Byte unterscheiden — und beide verlangen unterschiedliche Reaktionen. |
 | `kapkan_dataplane_observations_total` | `kind` | Beobachtungen des Datenpfads, die eine endgültige Entscheidung begleiten, statt sie zu ersetzen: `dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`. Bewusst eine eigene Metrik — siehe unten. |

@@ -124,6 +124,14 @@ par [hostgroup](/docs/hostgroups)) et se termine :
 Cette séparation nette 0/1 s'intègre directement dans une CI ou une vérification de pré-déploiement.
 Voir [Valider la configuration](/docs/configuration#valider-la-configuration).
 
+Une configuration valide peut tout de même afficher un bloc `WARNING` après la ligne `OK` — une
+configuration légale que le démon exécutera, mais presque certainement pas ce que vous vouliez dire.
+Il en existe un aujourd'hui : une [règle statique qui ne peut jamais
+s'appliquer](/docs/dataplane-tuning#règles-qui-ne-peuvent-jamais-sappliquer), avec le nom de la règle
+et ce qui prend ses paquets. Le code de sortie reste `0`, une vérification existante n'est donc pas
+affectée ; si vous voulez que les avertissements fassent aussi échouer le build, cherchez `WARNING`
+dans la sortie en plus du code.
+
 ### Exporter le schéma
 
 ```sh

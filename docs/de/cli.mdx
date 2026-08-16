@@ -124,6 +124,13 @@ Gruppenanzahl und die effektive Mitigation pro [Hostgroup](/docs/hostgroups)) un
 Die saubere 0/1-Aufteilung fügt sich direkt in CI oder eine Pre-Deploy-Prüfung ein. Siehe
 [Konfiguration validieren](/docs/configuration#konfiguration-validieren).
 
+Eine gültige Konfiguration kann nach der `OK`-Zeile dennoch einen `WARNING`-Block ausgeben — gültige
+Konfiguration, die der Daemon ausführen wird, aber fast sicher nicht das, was Sie gemeint haben.
+Heute gibt es genau einen Fall: eine [statische Regel, die nie greifen
+kann](/docs/dataplane-tuning#regeln-die-nie-greifen), samt Regelname und dem, was ihre Pakete nimmt.
+Der Exit-Code bleibt `0`, eine bestehende Prüfung ist also nicht betroffen; sollen Warnungen den
+Build ebenfalls brechen, prüfen Sie die Ausgabe zusätzlich zum Code auf `WARNING`.
+
 ### Das Schema ausgeben
 
 ```sh

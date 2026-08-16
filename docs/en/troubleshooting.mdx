@@ -125,6 +125,37 @@ traffic's fate. Remember that the `OBSERVATIONS` block is bumped *alongside* tho
 instead of them, so it must not be added into the total. Full flag and exit-code reference:
 [CLI](/docs/cli#dataplane-status).
 
+## A static rule's counter never moves
+
+The program is `ENFORCING` on the right interface and not in dry-run, but one static rule's
+counter sits at zero while the traffic it names is plainly arriving. A zero counter is ambiguous
+on its own — it looks exactly like a correct rule on a quiet day — so first ask whether the rule
+can fire at all:
+
+```sh
+kapkan -check-config /etc/kapkan/config.yaml
+```
+
+A rule that can never fire is printed as a `WARNING` after the `OK` line, naming the rule and what
+takes its packets. The exit code stays `0`: this is legal config that the daemon will run, not a
+validation failure. A running daemon reports the same finding as a `WARN` on every policy apply,
+as the `policy_shadowed` condition on `/healthz` and `/api/v1/status`, and as
+`kapkan_dataplane_shadowed_static_rules > 0`.
+
+Two things can take a rule's packets before it is reached:
+
+- **the allowlist**, which is evaluated first and stops evaluation on a hit — a prefix in
+  `dataplane.allowlist` disables every static drop aimed at a source inside it;
+- **an earlier static rule**, because static rules are first match wins — a broad rule written
+  above a narrower one makes the narrower one dead policy.
+
+Move the specific rule above the general one, or narrow the general one or the allowlist entry.
+See [Rules that can never fire](/docs/dataplane-tuning#rules-that-can-never-fire).
+
+If the check is silent, the rule is reachable and the question is whether the traffic matches it:
+`match` fields are ANDed, and a `src_port` or `dst_port` on the wrong side of the flow is the
+usual reason a rule that looks right never matches anything.
+
 ## A ban was rejected (HTTP 409)
 
 A manual `POST /api/v1/ban` returned `409`, or you see rejections on the

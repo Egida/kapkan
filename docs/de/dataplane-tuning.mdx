@@ -68,6 +68,61 @@ gehören, und laufen mit ihr ab.
 Die beiden kollidieren nie: Statische Regeln belegen ihre eigene Map (Schritt 3 oben), dynamische
 Regeln belegen eine andere (Schritte 4–5), und jede wird durch ihr eigenes Limit dimensioniert.
 
+## Regeln, die nie greifen
+
+Bei statischen Regeln gewinnt **der erste Treffer**: Der Datenpfad hält bei der ersten Regel an,
+deren Match das Paket erfüllt. Eine Regel, deren Match-Menge in der einer früheren Regel *enthalten*
+ist, ist damit tote Richtlinie — der Durchlauf stoppt jedes Mal darüber, und sie kann nie ein Paket
+nehmen.
+
+```yaml
+static_rules:
+  - name: drop_https_flood
+    match: { proto: tcp, dst_port: 443 }
+    action: drop
+  - name: pass_partner_https          # never fires: drop_https_flood takes these packets first
+    match: { src: 198.51.100.0/24, proto: tcp, dst_port: 443 }
+    action: pass
+```
+
+Die [Allowlist](#was-der-kernel-auswertet-in-welcher-reihenfolge) tut dasselbe von Präzedenz 1 aus:
+Ein Treffer lässt das Paket durch und beendet die Auswertung, bevor überhaupt eine statische Regel
+angesehen wird — ein Präfix in `dataplane.allowlist` deaktiviert daher jedes statische Verwerfen,
+das auf eine Quelle darin zielt.
+
+Kapkan prüft beide Achsen bei **jeder Policy-Anwendung** — beim Start und bei jedem Reload — und
+benennt die gefundenen Regeln an fünf Stellen:
+
+- einer `WARN`-Logzeile, die sie auflistet;
+- `shadowed_statics` im Reload-Report;
+- der Condition `policy_shadowed` auf `/healthz` und `/api/v1/status`, die bestehen bleibt, bis ein
+  Reload die Konfiguration korrigiert;
+- der [Metrik](/docs/metrics) `kapkan_dataplane_shadowed_static_rules`, deren einziger gesunder Wert
+  `0` ist;
+- einer `WARNING` von `kapkan -check-config` — der einzigen Stelle, an der sich der Defekt fangen
+  lässt, *bevor* der Verkehr eintrifft, den die Regel filtern sollte.
+
+<Callout type="warning" title="Gemeldet, nicht abgelehnt">
+Eine unerreichbare Regel ist eine Warnung, nie ein Startfehler. Eine tote Regel setzt nichts durch;
+die Konfiguration abzulehnen würde also einen Defekt, der heute kein einziges Paket kostet, gegen
+einen Mitigations-Daemon eintauschen, der nicht startet — auf einer Maschine, deren ganze Aufgabe
+es ist, zu filtern, wenn ein Angriff eintrifft. Kapkan führt die Konfiguration aus; es hört nur
+nicht auf, Ihnen davon zu erzählen.
+</Callout>
+
+Beurteilt wird allein das `match`, weshalb auch eine Regel gemeldet wird, die lediglich die
+Entscheidung einer früheren wiederholt. Das Urteil fällt zudem pro Adressfamilie, denn der Datenpfad
+ist familienstreng: Eine Regel ohne `match.src` deckt beide Familien ab und ist erst tot, wenn beide
+genommen sind — möglicherweise von zwei verschiedenen früheren Regeln, was die Meldung ausdrücklich
+sagt. Auf der Allowlist-Achse werden nur `drop`- und `ratelimit`-Regeln gemeldet, denn eine
+`pass`-Regel, die die Allowlist bereits überflüssig gemacht hat, lässt dieselben Pakete ohnehin
+durch. Auf der Erster-Treffer-Achse wird jede Action gemeldet, denn dort ist gerade ein `pass` die
+gefährlichste Form: ein breites Verwerfen, gefolgt von der schmalen Ausnahme, die jemand gewähren
+wollte — und die nicht gewährt wird.
+
+Zu beheben, indem Sie die spezifische Regel **über** die allgemeine ziehen, die allgemeine Regel
+oder den Allowlist-Eintrag enger fassen oder die Regel löschen, wenn sie ohnehin überflüssig war.
+
 ## Ratenbegrenzung pro Quelle
 
 Eine `ratelimit`-Aktion wird **pro Quelladresse** durchgesetzt, nicht über den gesamten Verkehr des

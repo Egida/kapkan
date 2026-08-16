@@ -140,6 +140,38 @@ Schicksal des Traffics tatsächlich entschieden hat. Denken Sie daran, dass der 
 deshalb nicht in die Summe eingerechnet werden. Vollständige Referenz zu Flags und Exit-Codes:
 [CLI](/docs/cli#dataplane-status).
 
+## Der Zähler einer statischen Regel bewegt sich nie
+
+Das Programm ist `ENFORCING` auf der richtigen Schnittstelle und nicht im Dry-Run, aber der Zähler
+einer statischen Regel steht auf null, obwohl der Verkehr, den sie benennt, sichtbar eintrifft. Ein
+Zähler auf null ist für sich genommen mehrdeutig — er sieht genauso aus wie eine korrekte Regel an
+einem ruhigen Tag. Fragen Sie also zuerst, ob die Regel überhaupt greifen kann:
+
+```sh
+kapkan -check-config /etc/kapkan/config.yaml
+```
+
+Eine Regel, die nie greifen kann, wird nach der `OK`-Zeile als `WARNING` ausgegeben — mit dem Namen
+der Regel und dem, was ihre Pakete nimmt. Der Exit-Code bleibt `0`: Das ist gültige Konfiguration,
+die der Daemon ausführen wird, kein Validierungsfehler. Ein laufender Daemon meldet denselben Befund
+als `WARN` bei jeder Policy-Anwendung, als Condition `policy_shadowed` auf `/healthz` und
+`/api/v1/status` sowie als `kapkan_dataplane_shadowed_static_rules > 0`.
+
+Zwei Dinge können die Pakete einer Regel nehmen, bevor sie erreicht wird:
+
+- **die Allowlist**, die zuerst ausgewertet wird und bei einem Treffer die Auswertung beendet — ein
+  Präfix in `dataplane.allowlist` deaktiviert jedes statische Verwerfen, das auf eine Quelle darin
+  zielt;
+- **eine frühere statische Regel**, denn bei statischen Regeln gewinnt der erste Treffer — eine
+  breite Regel über einer engeren macht die engere zu toter Richtlinie.
+
+Ziehen Sie die spezifische Regel über die allgemeine, oder fassen Sie die allgemeine Regel bzw. den
+Allowlist-Eintrag enger. Siehe [Regeln, die nie greifen](/docs/dataplane-tuning#regeln-die-nie-greifen).
+
+Schweigt die Prüfung, ist die Regel erreichbar, und die Frage ist, ob der Verkehr überhaupt auf sie
+passt: Die `match`-Felder werden mit UND verknüpft, und ein `src_port` oder `dst_port` auf der
+falschen Seite des Flows ist der übliche Grund, warum eine richtig aussehende Regel auf nichts passt.
+
 ## Eine Sperre wurde abgelehnt (HTTP 409)
 
 Ein manueller `POST /api/v1/ban` gab `409` zurück, oder Sie sehen Ablehnungen in der Metrik

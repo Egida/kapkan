@@ -135,6 +135,39 @@ décidé du sort du trafic. Rappelez-vous que le bloc `OBSERVATIONS` est incrém
 que ces verdicts, et non à leur place : il ne doit donc pas être ajouté au total. Référence complète
 des options et des codes de sortie : [CLI](/docs/cli#dataplane-status).
 
+## Le compteur d'une règle statique ne bouge jamais
+
+Le programme est `ENFORCING` sur la bonne interface et n'est pas en dry-run, mais le compteur d'une
+règle statique reste à zéro alors que le trafic qu'elle désigne arrive manifestement. Un compteur à
+zéro est ambigu en soi — il ressemble exactement à une règle correcte un jour calme. Demandez donc
+d'abord si la règle peut s'appliquer du tout :
+
+```sh
+kapkan -check-config /etc/kapkan/config.yaml
+```
+
+Une règle qui ne peut jamais s'appliquer est affichée comme `WARNING` après la ligne `OK`, avec le
+nom de la règle et ce qui prend ses paquets. Le code de sortie reste `0` : c'est une configuration
+valide que le démon exécutera, pas un échec de validation. Un démon en cours d'exécution signale la
+même chose par un `WARN` à chaque application de politique, par la condition `policy_shadowed` sur
+`/healthz` et `/api/v1/status`, et par `kapkan_dataplane_shadowed_static_rules > 0`.
+
+Deux choses peuvent prendre les paquets d'une règle avant qu'elle ne soit atteinte :
+
+- **l'allowlist**, évaluée en premier et qui met fin à l'évaluation sur correspondance — un préfixe
+  dans `dataplane.allowlist` désactive tout rejet statique visant une source qui s'y trouve ;
+- **une règle statique antérieure**, car pour les règles statiques la première correspondance
+  l'emporte — une règle large écrite au-dessus d'une plus étroite rend cette dernière morte.
+
+Déplacez la règle spécifique au-dessus de la règle générale, ou resserrez la règle générale ou
+l'entrée d'allowlist. Voir [Règles qui ne peuvent jamais
+s'appliquer](/docs/dataplane-tuning#règles-qui-ne-peuvent-jamais-sappliquer).
+
+Si la vérification reste silencieuse, la règle est atteignable et la question est de savoir si le
+trafic lui correspond : les champs de `match` sont combinés par ET, et un `src_port` ou `dst_port`
+du mauvais côté du flux est la raison habituelle pour laquelle une règle d'apparence correcte ne
+correspond à rien.
+
 ## Un bannissement a été rejeté (HTTP 409)
 
 Un `POST /api/v1/ban` manuel a renvoyé `409`, ou vous voyez des rejets sur la métrique
