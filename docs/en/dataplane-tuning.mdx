@@ -109,10 +109,11 @@ static_rules:
     profile: https_cap
 ```
 
-Nothing reports this for you. The kernel keeps a counter per rule, but no
-operator-facing surface breaks static rules out individually yet, so a shadowed
-rule looks exactly like a rule whose traffic never arrived. Order matters here
-more than it does anywhere else in the config.
+Get the order wrong and Kapkan tells you: the handshake rule is named in a
+`WARN` on every policy apply and in a `WARNING` from `kapkan -check-config`. See
+[Rules that can never fire](#rules-that-can-never-fire) — the analysis
+understands `payload`, so the correct order above is silent, and only the
+inverted one is reported.
 </Callout>
 
 <Callout type="warning" title="What it deliberately does not do">
@@ -184,7 +185,11 @@ it just does not stop telling you.
 </Callout>
 
 Coverage is judged on the `match` alone, so a rule that merely repeats an earlier rule's verdict is
-reported too. The verdict is also taken per address family, because the datapath is family-strict:
+reported too. `payload` counts as part of that match, which is what keeps the recommended handshake
+arrangement quiet: a rule requiring `payload: tls_client_hello` is strictly *narrower* than one
+without it, so it cannot cover the broad port-443 ceiling written below it. Reverse the two and the
+handshake rule is dead — which is exactly the case this reports. The verdict is also taken per
+address family, because the datapath is family-strict:
 a rule with no `match.src` covers both families and is only dead when both are taken — possibly by
 two different earlier rules, which the message says outright. On the allowlist axis only `drop` and
 `ratelimit` rules are reported, since a `pass` rule the allowlist has already made redundant admits
