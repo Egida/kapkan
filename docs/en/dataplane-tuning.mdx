@@ -58,9 +58,83 @@ Every `name` here — on a rule and on a profile — is a label you invent, not 
 keyword; it is what the rule is called in counters, logs and the console. The
 only fixed vocabulary is the enumerated fields: `action` is `pass`, `drop` or
 `ratelimit`; `match.proto` is `tcp`, `udp`, `icmp` or `icmp6` (unset means any,
-and ports are rejected for `icmp`/`icmp6`); `match` also takes `src`, `src_port`
-and `dst_port`. The [configuration reference](/docs/configuration) lists every
-field and its allowed values in one table.
+and ports are rejected for `icmp`/`icmp6`); `match` also takes `src`, `src_port`,
+`dst_port` and `payload`. The [configuration reference](/docs/configuration) lists
+every field and its allowed values in one table.
+
+### Matching TLS handshakes
+
+`match.payload` narrows on what the payload **begins with**. It has one value,
+`tls_client_hello`, which matches a TCP segment opening a TLS ClientHello — the
+shape a **TLS handshake flood** is made of, and the one message an ordinary
+connection sends exactly once:
+
+```yaml
+ratelimit_profiles:
+  - { name: handshake_cap, pps: 20 }   # each source: 20 new handshakes/s
+
+static_rules:
+  - name: cap_tls_handshakes
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+```
+
+This is the rule to reach for when the flood is *completed connections* that
+each start a handshake and go no further — the expensive part for the server,
+and a vector a SYN-flags rule cannot see, because these connections are
+established. It pairs naturally with per-source buckets: a ClientHello can only
+arrive on a completed TCP handshake, so the sources are real addresses rather
+than spoofed ones, and each gets its own budget.
+
+Because the rule matches only the handshake, an established connection's data
+and ACKs are untouched — a client mid-download is not competing for the same
+ceiling.
+
+<Callout type="warning" title="Order it above your broader port-443 rule">
+Static rules are **first match wins**. If you also keep a general ceiling on
+`{proto: tcp, dst_port: 443}`, it matches ClientHellos too — so a handshake rule
+written *below* it never fires, silently, with no error and nothing in the
+counters to say so. Put the narrower rule first:
+
+```yaml
+static_rules:
+  - name: cap_tls_handshakes        # narrower — must come first
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+  - name: cap_https_per_source      # broader ceiling on everything else
+    match: { proto: tcp, dst_port: 443 }
+    action: ratelimit
+    profile: https_cap
+```
+
+Nothing reports this for you. The kernel keeps a counter per rule, but no
+operator-facing surface breaks static rules out individually yet, so a shadowed
+rule looks exactly like a rule whose traffic never arrived. Order matters here
+more than it does anywhere else in the config.
+</Callout>
+
+<Callout type="warning" title="What it deliberately does not do">
+The ClientHello is read from a fixed offset and the data plane **never
+reassembles a stream**. A ClientHello split across TCP segments does not match
+and is forwarded, like anything else the parser cannot decide — the filter
+under-matches rather than over-matching, everywhere.
+
+It is also TCP-only, which is why `proto: tcp` is required rather than
+optional. **HTTP/3 is not covered**: its handshake is inside QUIC on UDP/443 and
+is encrypted before this filter sees a byte of it. For QUIC, a per-source
+ceiling on UDP/443 is the tool you have.
+
+And the encryption boundary is real in both directions: Kapkan matches the
+*shape* of a handshake, never its contents, and nothing in the data plane reads
+HTTP inside an established TLS session.
+</Callout>
+
+There is no detector-side `tls_handshake_flood` vector, and that is deliberate:
+detection runs on sampled flow telemetry, which does not carry payload bytes.
+This is an operator-written rule that is always on, not something a ban turns on
+during an attack.
 
 **Dynamic rules** are generated per attack, from the same classification that drives FlowSpec — the
 protocol, the reflected source port of an amplification vector, TCP SYN flags, fragmentation, and
