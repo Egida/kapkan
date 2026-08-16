@@ -119,6 +119,14 @@ por cada [hostgroup](/docs/hostgroups)) y termina:
 La división limpia 0/1 encaja directamente en CI o en una comprobación previa al despliegue. Consulta
 [Validar la configuración](/docs/configuration#validar-la-configuración).
 
+Una configuración válida todavía puede imprimir un bloque `WARNING` después de la línea `OK`:
+configuración legal que el demonio ejecutará, pero casi con seguridad no lo que querías decir. Hoy
+hay uno: una [regla estática que nunca puede
+actuar](/docs/dataplane-tuning#reglas-que-nunca-pueden-actuar), nombrando la regla y qué se lleva sus
+paquetes. El código de salida sigue siendo `0`, así que una comprobación existente no se ve
+afectada; si quieres que los avisos también rompan la build, busca `WARNING` en la salida además del
+código.
+
 ### Volcar el esquema
 
 ```sh

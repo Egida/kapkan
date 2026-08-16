@@ -127,6 +127,37 @@ destino del tráfico. Recuerda que el bloque `OBSERVATIONS` se incrementa *junto
 lugar de ellos, así que no debe sumarse al total. Referencia completa de flags y códigos de salida:
 [CLI](/docs/cli#dataplane-status).
 
+## El contador de una regla estática nunca se mueve
+
+El programa está `ENFORCING` en la interfaz correcta y no en dry-run, pero el contador de una regla
+estática sigue a cero aunque el tráfico que nombra está llegando claramente. Un contador a cero es
+ambiguo por sí solo — se parece exactamente a una regla correcta en un día tranquilo —, así que
+pregunta primero si la regla puede actuar siquiera:
+
+```sh
+kapkan -check-config /etc/kapkan/config.yaml
+```
+
+Una regla que nunca puede actuar se imprime como `WARNING` después de la línea `OK`, nombrando la
+regla y qué se lleva sus paquetes. El código de salida sigue siendo `0`: es configuración legal que
+el demonio ejecutará, no un fallo de validación. Un demonio en marcha informa de lo mismo con un
+`WARN` en cada aplicación de política, con la condición `policy_shadowed` en `/healthz` y
+`/api/v1/status`, y como `kapkan_dataplane_shadowed_static_rules > 0`.
+
+Dos cosas pueden llevarse los paquetes de una regla antes de que se llegue a ella:
+
+- **la allowlist**, que se evalúa primero y termina la evaluación al coincidir — un prefijo en
+  `dataplane.allowlist` desactiva todo descarte estático dirigido a un origen que esté dentro;
+- **una regla estática anterior**, porque entre las reglas estáticas gana la primera coincidencia:
+  una regla amplia escrita por encima de otra más estrecha deja muerta a la más estrecha.
+
+Mueve la regla específica por encima de la general, o estrecha la regla general o la entrada de la
+allowlist. Consulta [Reglas que nunca pueden actuar](/docs/dataplane-tuning#reglas-que-nunca-pueden-actuar).
+
+Si la comprobación calla, la regla es alcanzable y la pregunta es si el tráfico encaja con ella: los
+campos de `match` se combinan con Y, y un `src_port` o `dst_port` en el lado equivocado del flujo es
+la razón habitual de que una regla con buen aspecto no coincida con nada.
+
 ## Un baneo fue rechazado (HTTP 409)
 
 Un `POST /api/v1/ban` manual devolvió `409`, o ves rechazos en la métrica

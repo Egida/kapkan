@@ -72,6 +72,61 @@ Les deux n'entrent jamais en collision : les règles statiques occupent leur pro
 ci-dessus), les règles dynamiques en occupent une autre (étapes 4–5), et chacune est dimensionnée par
 sa propre limite.
 
+## Règles qui ne peuvent jamais s'appliquer
+
+Pour les règles statiques, **la première correspondance l'emporte** : le chemin de données s'arrête
+à la première règle dont le paquet satisfait le `match`. Une règle dont l'ensemble de correspondance
+est *contenu* dans celui d'une règle antérieure est donc de la politique morte — le parcours s'arrête
+au-dessus d'elle à chaque fois, et elle ne peut jamais prendre un paquet.
+
+```yaml
+static_rules:
+  - name: drop_https_flood
+    match: { proto: tcp, dst_port: 443 }
+    action: drop
+  - name: pass_partner_https          # never fires: drop_https_flood takes these packets first
+    match: { src: 198.51.100.0/24, proto: tcp, dst_port: 443 }
+    action: pass
+```
+
+L'[allowlist](#ce-que-le-noyau-évalue-dans-lordre) fait la même chose depuis la précédence 1 : une
+correspondance laisse passer le paquet et met fin à l'évaluation avant qu'une seule règle statique
+ne soit examinée — ajouter un préfixe à `dataplane.allowlist` désactive donc tout rejet statique
+visant une source qui s'y trouve.
+
+Kapkan vérifie les deux axes à **chaque application de politique** — au démarrage et à chaque
+rechargement — et nomme les règles trouvées à cinq endroits :
+
+- une ligne de journal `WARN` qui les énumère ;
+- `shadowed_statics` dans le rapport de rechargement ;
+- la condition `policy_shadowed` sur `/healthz` et `/api/v1/status`, qui persiste jusqu'à ce qu'un
+  rechargement corrige la configuration ;
+- la [métrique](/docs/metrics) `kapkan_dataplane_shadowed_static_rules`, dont la seule valeur saine
+  est `0` ;
+- un `WARNING` de `kapkan -check-config`, le seul endroit où le défaut peut être détecté *avant*
+  l'arrivée du trafic que la règle devait filtrer.
+
+<Callout type="warning" title="Signalé, pas rejeté">
+Une règle inatteignable est un avertissement, jamais une erreur de démarrage. Une règle morte
+n'applique rien : refuser la configuration échangerait un défaut qui ne coûte aujourd'hui aucun
+paquet contre un démon de mitigation qui ne démarre pas — sur une machine dont le seul travail est
+de filtrer quand une attaque arrive. Kapkan exécute la configuration ; il ne cesse simplement pas de
+vous en parler.
+</Callout>
+
+La couverture se juge sur le seul `match`, si bien qu'une règle qui ne fait que répéter le verdict
+d'une règle antérieure est signalée elle aussi. Le verdict est également rendu par famille
+d'adresses, car le chemin de données est strict sur la famille : une règle sans `match.src` couvre
+les deux familles et n'est morte que lorsque les deux sont prises — éventuellement par deux règles
+antérieures différentes, ce que le message dit explicitement. Sur l'axe de l'allowlist, seules les
+règles `drop` et `ratelimit` sont signalées, puisqu'une règle `pass` que l'allowlist a déjà rendue
+redondante laisse passer les mêmes paquets de toute façon. Sur l'axe de la première correspondance,
+toutes les actions sont signalées, car c'est là qu'un `pass` est la forme la plus dangereuse : un
+rejet large suivi de l'exemption étroite que quelqu'un comptait accorder — et qui ne l'est pas.
+
+Corrigez en déplaçant la règle spécifique **au-dessus** de la règle générale, en resserrant la règle
+générale ou l'entrée d'allowlist, ou en supprimant la règle si elle était déjà redondante.
+
 ## Limitation de débit par source
 
 Une action `ratelimit` est appliquée **par adresse source**, et non sur l'ensemble du trafic de la

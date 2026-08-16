@@ -81,9 +81,10 @@ looks exactly like one that is — the daemon is up, the API answers, bans are r
 only visible difference is that the packets you asked to drop are not being dropped. So
 "is it attached" is a metric rather than something to infer from a log line at boot.
 
-<Callout type="warning" title="Four series exist even with no data plane">
+<Callout type="warning" title="Five series exist even with no data plane">
 `kapkan_dataplane_degraded`, `kapkan_dataplane_pins_rebuilt`,
-`kapkan_dataplane_policy_generation` and `kapkan_dataplane_policy_apply_seconds` carry no
+`kapkan_dataplane_shadowed_static_rules`, `kapkan_dataplane_policy_generation` and
+`kapkan_dataplane_policy_apply_seconds` carry no
 labels, so they are registered at startup and exported by every build — reading `0` on a host
 that has never loaded a BPF program. Do not read `kapkan_dataplane_degraded == 0` as "the data
 plane is healthy": on a BGP-only host it means there is nothing to degrade. Gate data-plane
@@ -98,6 +99,7 @@ cheapest such guard.
 | `kapkan_dataplane_attach_errors_total` | `interface` | Failed attach attempts, including the watcher's retries. Rising *with* `kapkan_dataplane_degraded` is a NIC that will not take the program; rising *without* it is a flapping link that is being recovered. |
 | `kapkan_dataplane_reattach_total` | `interface` | Times the program was re-attached to an interface after losing the attachment. This is what makes an intermittent NIC visible: every individual scrape says healthy, and this counter says it was not. |
 | `kapkan_dataplane_pins_rebuilt` | — | `1` when an existing pinned program was found at startup, rejected and rebuilt — expected after an upgrade that changes the BPF object, its map layout or `dataplane.limits`. The cost is that the previous process's dynamic rules are gone; active attacks are re-mitigated on their next detection interval. |
+| `kapkan_dataplane_shadowed_static_rules` | — | Config static rules that can never fire, because the allowlist or an earlier static rule already takes every packet they select. `0` is the only healthy value, and it is worth an alert at any other — this defect has no other numeric symptom, since the dead rule's own counter also sits at zero, which is exactly what a correct rule looks like when its traffic has not arrived. Republished on every policy apply, so it clears on the reload that fixes the config. See [Rules that can never fire](/docs/dataplane-tuning#rules-that-can-never-fire). |
 | `kapkan_dataplane_packets_total` | `verdict` | Packets by terminal XDP verdict (`pass_default`, `pass_allow_src`, `drop_static`, `drop_rl`, …). Exactly one terminal verdict is counted per packet — see [Terminal verdicts and observations](#terminal-verdicts-and-observations) before summing it. |
 | `kapkan_dataplane_bytes_total` | `verdict` | Bytes, by the same terminal verdicts. A packets-per-second graph alone cannot tell a 64-byte SYN flood from a 1500-byte amplification reflection, and the two call for different responses. |
 | `kapkan_dataplane_observations_total` | `kind` | Datapath observations that accompany a terminal verdict rather than replacing it: `dryrun_would_drop`, `pass_rule_expired`, `pass_frag_noports`, `err_policy_missing`. A separate metric on purpose — see below. |

@@ -109,10 +109,11 @@ static_rules:
     profile: https_cap
 ```
 
-Nothing reports this for you. The kernel keeps a counter per rule, but no
-operator-facing surface breaks static rules out individually yet, so a shadowed
-rule looks exactly like a rule whose traffic never arrived. Order matters here
-more than it does anywhere else in the config.
+Get the order wrong and Kapkan tells you: the handshake rule is named in a
+`WARN` on every policy apply and in a `WARNING` from `kapkan -check-config`. See
+[Rules that can never fire](#rules-that-can-never-fire) — the analysis
+understands `payload`, so the correct order above is silent, and only the
+inverted one is reported.
 </Callout>
 
 <Callout type="warning" title="What it deliberately does not do">
@@ -143,6 +144,61 @@ they appear in `/api/v1/bans` on the ban that owns them, and they expire with it
 
 The two never collide: static rules occupy their own map (step 3 above), dynamic rules occupy
 another (steps 4–5), and each is sized by its own limit.
+
+## Rules that can never fire
+
+Static rules are **first match wins**: the datapath stops at the first rule whose match the packet
+satisfies. So a rule whose match set is *contained* by an earlier rule's is dead policy — the scan
+stops above it every time, and it can never take a packet.
+
+```yaml
+static_rules:
+  - name: drop_https_flood
+    match: { proto: tcp, dst_port: 443 }
+    action: drop
+  - name: pass_partner_https          # never fires: drop_https_flood takes these packets first
+    match: { src: 198.51.100.0/24, proto: tcp, dst_port: 443 }
+    action: pass
+```
+
+The [allowlist](#what-the-kernel-evaluates-in-order) does the same thing from precedence 1: a hit
+passes the packet and stops evaluation before any static rule is looked at, so adding a prefix to
+`dataplane.allowlist` disables every static drop aimed at a source inside it.
+
+Kapkan checks both axes on **every policy apply** — at startup and on every reload — and names the
+rules it finds, in five places:
+
+- a `WARN` log line listing them;
+- `shadowed_statics` in the reload report;
+- the `policy_shadowed` condition on `/healthz` and `/api/v1/status`, which persists until a
+  reload fixes the config;
+- the `kapkan_dataplane_shadowed_static_rules` [metric](/docs/metrics), whose only healthy value
+  is `0`;
+- a `WARNING` from `kapkan -check-config`, which is the one place the defect can be caught
+  *before* the traffic it was meant to filter arrives.
+
+<Callout type="warning" title="Reported, not rejected">
+An unreachable rule is a warning, never a startup error. A dead rule enforces nothing, so refusing
+the config would trade a defect that costs zero packets today for a mitigation daemon that will not
+start — on a box whose whole job is to be filtering when an attack lands. Kapkan runs the config;
+it just does not stop telling you.
+</Callout>
+
+Coverage is judged on the `match` alone, so a rule that merely repeats an earlier rule's verdict is
+reported too. `payload` counts as part of that match, which is what keeps the recommended handshake
+arrangement quiet: a rule requiring `payload: tls_client_hello` is strictly *narrower* than one
+without it, so it cannot cover the broad port-443 ceiling written below it. Reverse the two and the
+handshake rule is dead — which is exactly the case this reports. The verdict is also taken per
+address family, because the datapath is family-strict:
+a rule with no `match.src` covers both families and is only dead when both are taken — possibly by
+two different earlier rules, which the message says outright. On the allowlist axis only `drop` and
+`ratelimit` rules are reported, since a `pass` rule the allowlist has already made redundant admits
+the same packets either way; on the first-match-wins axis every action is reported, because there
+the most dangerous shape is exactly a `pass` — a broad drop followed by the narrow exemption
+somebody meant to grant, which is not being granted.
+
+Fix it by moving the specific rule **above** the general one, by narrowing the general one or the
+allowlist entry, or by deleting the rule if it was already redundant.
 
 ## Per-source rate limiting
 
