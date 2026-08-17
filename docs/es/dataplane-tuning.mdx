@@ -57,7 +57,76 @@ static_rules:
     profile: icmp_cap
 ```
 
-Cada `name` aquí — en una regla y en un perfil — es una etiqueta que tú eliges, no una palabra clave; es como se llama la regla en contadores, registros y la consola. El único vocabulario fijo es el de los campos enumerados: `action` es `pass`, `drop` o `ratelimit`; `match.proto` es `tcp`, `udp`, `icmp` o `icmp6` (sin definir significa cualquiera, y los puertos se rechazan para `icmp`/`icmp6`); `match` también acepta `src`, `src_port` y `dst_port`. La [referencia de configuración](/docs/configuration) enumera cada campo y sus valores permitidos en una sola tabla.
+Cada `name` aquí — en una regla y en un perfil — es una etiqueta que tú eliges, no una palabra clave; es como se llama la regla en contadores, registros y la consola. El único vocabulario fijo es el de los campos enumerados: `action` es `pass`, `drop` o `ratelimit`; `match.proto` es `tcp`, `udp`, `icmp` o `icmp6` (sin definir significa cualquiera, y los puertos se rechazan para `icmp`/`icmp6`); `match` también acepta `src`, `src_port`, `dst_port` y `payload`. La [referencia de configuración](/docs/configuration) enumera cada campo y sus valores permitidos en una sola tabla.
+
+### Coincidir con handshakes TLS
+
+`match.payload` acota según **con qué empieza** la carga útil. Tiene un único valor,
+`tls_client_hello`, que coincide con un segmento TCP que abre un ClientHello de TLS — la forma de la
+que está hecho un **flood de handshakes TLS**, y el único mensaje que una conexión normal envía
+exactamente una vez:
+
+```yaml
+ratelimit_profiles:
+  - { name: handshake_cap, pps: 20 }   # each source: 20 new handshakes/s
+
+static_rules:
+  - name: cap_tls_handshakes
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+```
+
+Esta es la regla a la que recurrir cuando el flood son *conexiones establecidas* que cada una inicia
+un handshake y no va más allá: la parte cara para el servidor, y un vector que una regla sobre
+banderas SYN no puede ver, porque esas conexiones están establecidas. Encaja de forma natural con
+los cubos por origen: un ClientHello solo puede llegar sobre un handshake TCP completado, así que
+los orígenes son direcciones reales y no falsificadas, y cada una recibe su propio presupuesto.
+
+Como la regla coincide solo con el handshake, los datos y los ACK de una conexión establecida quedan
+intactos — un cliente a mitad de una descarga no compite por el mismo techo.
+
+<Callout type="warning" title="Colócala por encima de tu regla más amplia del puerto 443">
+Entre las reglas estáticas **gana la primera coincidencia**. Si además mantienes un techo general
+sobre `{proto: tcp, dst_port: 443}`, este también coincide con los ClientHello — así que una regla
+de handshake escrita *por debajo* nunca actúa: en silencio, sin error y sin nada en los contadores
+que lo diga. Pon primero la regla más estrecha:
+
+```yaml
+static_rules:
+  - name: cap_tls_handshakes        # narrower — must come first
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+  - name: cap_https_per_source      # broader ceiling on everything else
+    match: { proto: tcp, dst_port: 443 }
+    action: ratelimit
+    profile: https_cap
+```
+
+Si el orden es el equivocado, Kapkan te lo dice: la regla de handshake aparece nombrada en un `WARN`
+en cada aplicación de política y en un `WARNING` de `kapkan -check-config`. Consulta [Reglas que
+nunca pueden actuar](#reglas-que-nunca-pueden-actuar) — el análisis entiende `payload`, así que el
+orden correcto de arriba no genera avisos y solo se informa del invertido.
+</Callout>
+
+<Callout type="warning" title="Lo que deliberadamente no hace">
+El ClientHello se lee desde un desplazamiento fijo y el plano de datos **nunca reensambla un
+flujo**. Un ClientHello repartido entre varios segmentos TCP no coincide y se reenvía, como todo
+aquello sobre lo que el analizador no puede decidir: el filtro se queda corto antes que pasarse, en
+todas partes.
+
+También es solo para TCP, por eso `proto: tcp` es obligatorio y no opcional. **HTTP/3 no está
+cubierto**: su handshake va dentro de QUIC sobre UDP/443 y está cifrado antes de que este filtro vea
+un solo byte. Para QUIC, un techo por origen sobre UDP/443 es la herramienta que tienes.
+
+Y la frontera del cifrado es real en ambos sentidos: Kapkan coincide con la *forma* de un handshake,
+nunca con su contenido, y nada en el plano de datos lee HTTP dentro de una sesión TLS establecida.
+</Callout>
+
+No hay un vector `tls_handshake_flood` del lado del detector, y es deliberado: la detección funciona
+sobre telemetría de flujos muestreada, que no lleva bytes de carga útil. Esta es una regla que
+escribe el operador y está siempre activa, no algo que un bloqueo active durante un ataque.
 
 Las **reglas dinámicas** se generan por ataque, a partir de la misma clasificación que alimenta
 FlowSpec — el protocolo, el puerto de origen reflejado de un vector de amplificación, las banderas
@@ -110,7 +179,12 @@ Kapkan ejecuta la configuración; simplemente no deja de contártelo.
 </Callout>
 
 La cobertura se juzga solo por el `match`, así que también se informa de una regla que se limita a
-repetir el veredicto de una anterior. El veredicto además se emite por familia de direcciones,
+repetir el veredicto de una anterior. `payload` cuenta como parte de ese `match`, y eso es lo que
+mantiene en silencio la disposición de handshake recomendada: una regla que exige
+`payload: tls_client_hello` es estrictamente *más estrecha* que una sin él, así que no puede cubrir
+el techo amplio del puerto 443 escrito debajo. Inviértelas y la regla de handshake queda muerta,
+que es exactamente el caso del que esto informa. El veredicto además se emite por familia de
+direcciones,
 porque el plano de datos es estricto con la familia: una regla sin `match.src` cubre ambas familias
 y solo está muerta cuando ambas están tomadas — posiblemente por dos reglas anteriores distintas, lo
 que el mensaje dice explícitamente. En el eje de la allowlist solo se informa de reglas `drop` y
