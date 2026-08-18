@@ -47,6 +47,7 @@ export type StaticRule = {
   proto: string;
   src_port: string;
   dst_port: string;
+  payload: string;
   action: string;
   profile: string;
 };
@@ -538,6 +539,7 @@ export function emitConfig(s: WizardState): string {
         if (r.proto) m.push(`proto: ${r.proto}`);
         if (num(r.src_port)) m.push(`src_port: ${num(r.src_port)}`);
         if (num(r.dst_port)) m.push(`dst_port: ${num(r.dst_port)}`);
+        if (r.payload) m.push(`payload: ${r.payload}`);
         if (m.length) L.push(`      match: {${m.join(", ")}}`);
         if (r.action) L.push(`      action: ${r.action}`);
         if (r.profile.trim()) L.push(`      profile: ${r.profile.trim()}`);
