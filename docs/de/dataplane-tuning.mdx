@@ -57,7 +57,78 @@ static_rules:
     profile: icmp_cap
 ```
 
-Jeder `name` hier — an einer Regel wie an einem Profil — ist eine Bezeichnung, die Sie selbst vergeben, kein Schlüsselwort; so heißt die Regel in Zählern, Logs und der Konsole. Festes Vokabular haben nur die Aufzählungsfelder: `action` ist `pass`, `drop` oder `ratelimit`; `match.proto` ist `tcp`, `udp`, `icmp` oder `icmp6` (nicht gesetzt heißt beliebig, und für `icmp`/`icmp6` werden Ports abgelehnt); `match` nimmt außerdem `src`, `src_port` und `dst_port`. Die [Konfigurationsreferenz](/docs/configuration) listet jedes Feld und seine zulässigen Werte in einer Tabelle.
+Jeder `name` hier — an einer Regel wie an einem Profil — ist eine Bezeichnung, die Sie selbst vergeben, kein Schlüsselwort; so heißt die Regel in Zählern, Logs und der Konsole. Festes Vokabular haben nur die Aufzählungsfelder: `action` ist `pass`, `drop` oder `ratelimit`; `match.proto` ist `tcp`, `udp`, `icmp` oder `icmp6` (nicht gesetzt heißt beliebig, und für `icmp`/`icmp6` werden Ports abgelehnt); `match` nimmt außerdem `src`, `src_port`, `dst_port` und `payload`. Die [Konfigurationsreferenz](/docs/configuration) listet jedes Feld und seine zulässigen Werte in einer Tabelle.
+
+### TLS-Handshakes matchen
+
+`match.payload` grenzt darauf ein, **womit die Nutzlast beginnt**. Es hat einen Wert,
+`tls_client_hello`, der ein TCP-Segment matcht, das einen TLS ClientHello eröffnet — die Form, aus
+der ein **TLS-Handshake-Flood** besteht, und die eine Nachricht, die eine gewöhnliche Verbindung
+genau einmal sendet:
+
+```yaml
+ratelimit_profiles:
+  - { name: handshake_cap, pps: 20 }   # each source: 20 new handshakes/s
+
+static_rules:
+  - name: cap_tls_handshakes
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+```
+
+Zu dieser Regel greifen Sie, wenn der Flood aus *aufgebauten Verbindungen* besteht, die jeweils
+einen Handshake beginnen und nicht weitergehen — der teure Teil für den Server, und ein Vektor, den
+eine Regel auf SYN-Flags nicht sehen kann, weil diese Verbindungen etabliert sind. Sie passt
+natürlich zu Token-Buckets pro Quelle: Ein ClientHello kann nur auf einem abgeschlossenen
+TCP-Handshake ankommen, die Quellen sind also echte Adressen statt gefälschter, und jede bekommt
+ihr eigenes Budget.
+
+Weil die Regel nur den Handshake matcht, bleiben Daten und ACKs einer etablierten Verbindung
+unangetastet — ein Client mitten im Download konkurriert nicht um dieselbe Obergrenze.
+
+<Callout type="warning" title="Ordnen Sie sie über Ihre breitere Port-443-Regel">
+Bei statischen Regeln gewinnt **der erste Treffer**. Wenn Sie zusätzlich eine allgemeine Obergrenze
+auf `{proto: tcp, dst_port: 443}` führen, matcht diese auch ClientHellos — eine Handshake-Regel
+*darunter* greift also nie, lautlos, ohne Fehler und ohne irgendetwas in den Zählern, das es sagen
+würde. Setzen Sie die engere Regel zuerst:
+
+```yaml
+static_rules:
+  - name: cap_tls_handshakes        # narrower — must come first
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+  - name: cap_https_per_source      # broader ceiling on everything else
+    match: { proto: tcp, dst_port: 443 }
+    action: ratelimit
+    profile: https_cap
+```
+
+Stimmt die Reihenfolge nicht, sagt Kapkan es Ihnen: Die Handshake-Regel wird in einer `WARN`-Zeile
+bei jeder Policy-Anwendung und in einer `WARNING` von `kapkan -check-config` benannt. Siehe
+[Regeln, die nie greifen](#regeln-die-nie-greifen) — die Analyse versteht `payload`, die richtige
+Reihenfolge oben bleibt daher still, und nur die umgekehrte wird gemeldet.
+</Callout>
+
+<Callout type="warning" title="Was es bewusst nicht tut">
+Der ClientHello wird an einem festen Offset gelesen, und die Datenebene **setzt niemals einen Strom
+wieder zusammen**. Ein über TCP-Segmente verteilter ClientHello matcht nicht und wird
+weitergeleitet, wie alles andere, worüber der Parser nicht entscheiden kann — der Filter matcht
+eher zu wenig als zu viel, überall.
+
+Es ist außerdem nur für TCP, weshalb `proto: tcp` erforderlich und nicht optional ist. **HTTP/3 ist
+nicht abgedeckt**: Sein Handshake steckt in QUIC über UDP/443 und ist verschlüsselt, bevor dieser
+Filter ein Byte davon sieht. Für QUIC ist eine Obergrenze pro Quelle auf UDP/443 das Werkzeug, das
+Sie haben.
+
+Und die Verschlüsselungsgrenze gilt in beide Richtungen: Kapkan matcht die *Form* eines Handshakes,
+nie dessen Inhalt, und nichts in der Datenebene liest HTTP innerhalb einer etablierten TLS-Sitzung.
+</Callout>
+
+Es gibt keinen detektorseitigen Vektor `tls_handshake_flood`, und das ist Absicht: Die Erkennung
+läuft auf gesampelter Flow-Telemetrie, die keine Nutzlast-Bytes trägt. Dies ist eine vom Operator
+geschriebene, stets aktive Regel und nichts, was eine Sperre während eines Angriffs einschaltet.
 
 **Dynamische Regeln** werden pro Angriff generiert, aus derselben Klassifizierung, die auch FlowSpec
 antreibt — das Protokoll, der reflektierte Quell-Port eines Amplifikationsvektors, TCP-SYN-Flags,
@@ -111,7 +182,11 @@ nicht auf, Ihnen davon zu erzählen.
 </Callout>
 
 Beurteilt wird allein das `match`, weshalb auch eine Regel gemeldet wird, die lediglich die
-Entscheidung einer früheren wiederholt. Das Urteil fällt zudem pro Adressfamilie, denn der Datenpfad
+Entscheidung einer früheren wiederholt. `payload` zählt zu diesem `match`, und genau das hält die
+empfohlene Handshake-Anordnung still: Eine Regel, die `payload: tls_client_hello` verlangt, ist
+strikt *enger* als eine ohne, kann die breite Port-443-Obergrenze darunter also nicht abdecken.
+Drehen Sie beide um, und die Handshake-Regel ist tot — genau der Fall, den dies meldet. Das Urteil
+fällt zudem pro Adressfamilie, denn der Datenpfad
 ist familienstreng: Eine Regel ohne `match.src` deckt beide Familien ab und ist erst tot, wenn beide
 genommen sind — möglicherweise von zwei verschiedenen früheren Regeln, was die Meldung ausdrücklich
 sagt. Auf der Allowlist-Achse werden nur `drop`- und `ratelimit`-Regeln gemeldet, denn eine

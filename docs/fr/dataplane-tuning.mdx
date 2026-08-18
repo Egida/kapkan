@@ -60,7 +60,80 @@ static_rules:
     profile: icmp_cap
 ```
 
-Chaque `name` ici — sur une règle comme sur un profil — est une étiquette que vous choisissez, pas un mot-clé ; c'est ainsi que la règle apparaît dans les compteurs, les journaux et la console. Le seul vocabulaire figé est celui des champs énumérés : `action` vaut `pass`, `drop` ou `ratelimit` ; `match.proto` vaut `tcp`, `udp`, `icmp` ou `icmp6` (non défini = n'importe lequel, et les ports sont rejetés pour `icmp`/`icmp6`) ; `match` accepte aussi `src`, `src_port` et `dst_port`. La [référence de configuration](/docs/configuration) liste chaque champ et ses valeurs autorisées dans un seul tableau.
+Chaque `name` ici — sur une règle comme sur un profil — est une étiquette que vous choisissez, pas un mot-clé ; c'est ainsi que la règle apparaît dans les compteurs, les journaux et la console. Le seul vocabulaire figé est celui des champs énumérés : `action` vaut `pass`, `drop` ou `ratelimit` ; `match.proto` vaut `tcp`, `udp`, `icmp` ou `icmp6` (non défini = n'importe lequel, et les ports sont rejetés pour `icmp`/`icmp6`) ; `match` accepte aussi `src`, `src_port`, `dst_port` et `payload`. La [référence de configuration](/docs/configuration) liste chaque champ et ses valeurs autorisées dans un seul tableau.
+
+### Faire correspondre les handshakes TLS
+
+`match.payload` restreint sur ce par quoi la charge utile **commence**. Il a une seule valeur,
+`tls_client_hello`, qui correspond à un segment TCP ouvrant un ClientHello TLS — la forme dont est
+fait un **flood de handshakes TLS**, et le seul message qu'une connexion ordinaire envoie exactement
+une fois :
+
+```yaml
+ratelimit_profiles:
+  - { name: handshake_cap, pps: 20 }   # each source: 20 new handshakes/s
+
+static_rules:
+  - name: cap_tls_handshakes
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+```
+
+C'est la règle vers laquelle se tourner quand le flood est fait de *connexions établies* qui
+commencent chacune un handshake et ne vont pas plus loin — la partie coûteuse pour le serveur, et un
+vecteur qu'une règle sur les drapeaux SYN ne peut pas voir, puisque ces connexions sont établies.
+Elle se marie naturellement avec les seaux par source : un ClientHello ne peut arriver que sur un
+handshake TCP achevé, les sources sont donc de vraies adresses plutôt que des adresses usurpées, et
+chacune reçoit son propre budget.
+
+Comme la règle ne correspond qu'au handshake, les données et les ACK d'une connexion établie ne sont
+pas touchés — un client en plein téléchargement n'entre pas en concurrence pour le même plafond.
+
+<Callout type="warning" title="Placez-la au-dessus de votre règle plus large sur le port 443">
+Pour les règles statiques, **la première correspondance l'emporte**. Si vous gardez aussi un plafond
+général sur `{proto: tcp, dst_port: 443}`, il correspond également aux ClientHello — une règle de
+handshake écrite *en dessous* ne s'applique donc jamais, silencieusement, sans erreur et sans rien
+dans les compteurs pour le dire. Mettez la règle la plus étroite en premier :
+
+```yaml
+static_rules:
+  - name: cap_tls_handshakes        # narrower — must come first
+    match: { proto: tcp, dst_port: 443, payload: tls_client_hello }
+    action: ratelimit
+    profile: handshake_cap
+  - name: cap_https_per_source      # broader ceiling on everything else
+    match: { proto: tcp, dst_port: 443 }
+    action: ratelimit
+    profile: https_cap
+```
+
+Si l'ordre est mauvais, Kapkan vous le dit : la règle de handshake est nommée dans un `WARN` à
+chaque application de politique et dans un `WARNING` de `kapkan -check-config`. Voir [Règles qui ne
+peuvent jamais s'appliquer](#règles-qui-ne-peuvent-jamais-sappliquer) — l'analyse comprend
+`payload`, donc l'ordre correct ci-dessus reste silencieux et seul l'ordre inversé est signalé.
+</Callout>
+
+<Callout type="warning" title="Ce qu'il ne fait délibérément pas">
+Le ClientHello est lu à un décalage fixe et le plan de données **ne réassemble jamais un flux**. Un
+ClientHello réparti sur plusieurs segments TCP ne correspond pas et est transmis, comme tout ce sur
+quoi l'analyseur ne peut pas trancher — le filtre sous-correspond plutôt que de sur-correspondre,
+partout.
+
+Il est aussi réservé à TCP, ce pourquoi `proto: tcp` est exigé plutôt qu'optionnel. **HTTP/3 n'est
+pas couvert** : son handshake est à l'intérieur de QUIC sur UDP/443 et est chiffré avant que ce
+filtre n'en voie le moindre octet. Pour QUIC, un plafond par source sur UDP/443 est l'outil dont
+vous disposez.
+
+Et la frontière du chiffrement vaut dans les deux sens : Kapkan fait correspondre la *forme* d'un
+handshake, jamais son contenu, et rien dans le plan de données ne lit du HTTP à l'intérieur d'une
+session TLS établie.
+</Callout>
+
+Il n'existe pas de vecteur `tls_handshake_flood` côté détection, et c'est délibéré : la détection
+s'appuie sur une télémétrie de flux échantillonnée, qui ne transporte pas les octets de la charge
+utile. C'est une règle écrite par l'opérateur et toujours active, pas quelque chose qu'un
+bannissement active pendant une attaque.
 
 Les **règles dynamiques** sont générées par attaque, à partir de la même classification qui alimente
 FlowSpec — le protocole, le port source reflété d'un vecteur d'amplification, les drapeaux TCP SYN,
@@ -115,7 +188,12 @@ vous en parler.
 </Callout>
 
 La couverture se juge sur le seul `match`, si bien qu'une règle qui ne fait que répéter le verdict
-d'une règle antérieure est signalée elle aussi. Le verdict est également rendu par famille
+d'une règle antérieure est signalée elle aussi. `payload` fait partie de ce `match`, et c'est ce qui
+garde silencieuse la disposition de handshake recommandée : une règle exigeant
+`payload: tls_client_hello` est strictement *plus étroite* qu'une règle sans, elle ne peut donc pas
+couvrir le plafond large sur le port 443 écrit en dessous. Inversez les deux et la règle de
+handshake est morte — précisément le cas que ceci signale. Le verdict est également rendu par
+famille
 d'adresses, car le chemin de données est strict sur la famille : une règle sans `match.src` couvre
 les deux familles et n'est morte que lorsque les deux sont prises — éventuellement par deux règles
 antérieures différentes, ce que le message dit explicitement. Sur l'axe de l'allowlist, seules les

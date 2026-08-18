@@ -813,6 +813,10 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             const err = validateString("dataplane.static_rules.match.proto", r.proto, vmsg);
             if (err) return err;
           }
+          if (r.payload) {
+            const err = validateString("dataplane.static_rules.match.payload", r.payload, vmsg);
+            if (err) return err;
+          }
           for (const [path, v] of [
             ["dataplane.static_rules.match.src_port", r.src_port],
             ["dataplane.static_rules.match.dst_port", r.dst_port],
@@ -1624,6 +1628,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
                 {rowSelect({ value: r.proto, path: "dataplane.static_rules.match.proto", width: "w-24", onChange: (v) => updRow(i, { proto: v }) })}
                 {rowInput({ value: r.src_port, placeholder: "src_port", numeric: true, width: "w-24", onChange: (v) => updRow(i, { src_port: v }) })}
                 {rowInput({ value: r.dst_port, placeholder: "dst_port", numeric: true, width: "w-24", onChange: (v) => updRow(i, { dst_port: v }) })}
+                {rowSelect({ value: r.payload, path: "dataplane.static_rules.match.payload", width: "w-36", onChange: (v) => updRow(i, { payload: v }) })}
                 {rowSelect({ value: r.action, path: "dataplane.static_rules.action", width: "w-28", onChange: (v) => updRow(i, { action: v }) })}
                 {rowInput({ value: r.profile, placeholder: "profile", width: "w-28", onChange: (v) => updRow(i, { profile: v }) })}
               </>,
@@ -1638,7 +1643,7 @@ export function ConfigBuilder({ lang }: { lang: Locale }) {
             onClick={() =>
               set("dp_rules", [
                 ...s.dp_rules,
-                { name: "", src: "", proto: "", src_port: "", dst_port: "", action: "", profile: "" },
+                { name: "", src: "", proto: "", src_port: "", dst_port: "", payload: "", action: "", profile: "" },
               ])
             }
           >

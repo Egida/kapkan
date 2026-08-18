@@ -192,6 +192,7 @@ export function docToState(doc: unknown): WizardState {
         proto: str(get(r, "match.proto")),
         src_port: str(get(r, "match.src_port")),
         dst_port: str(get(r, "match.dst_port")),
+        payload: str(get(r, "match.payload")),
         action: str(r.action),
         profile: str(r.profile),
       }));

@@ -33,7 +33,7 @@ const ROW_TEMPLATES: Partial<Record<keyof WizardState, Record<string, unknown>>>
   },
   scrub_nodes: { name: "", next_hop: "", next_hop6: "", capacity_mbps: "", hostgroups: "" },
   dp_profiles: { name: "", pps: "", mbps: "" },
-  dp_rules: { name: "", src: "", proto: "", src_port: "", dst_port: "", action: "", profile: "" },
+  dp_rules: { name: "", src: "", proto: "", src_port: "", dst_port: "", payload: "", action: "", profile: "" },
   api_tokens: { name: "", token_env: "", role: "", tenant: "" },
 };
 
