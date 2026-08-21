@@ -97,6 +97,56 @@ La sévérité s'ordonne `none < dataplane < flowspec < divert < blackhole`. Sur
 supprimez d'abord localement, et n'escaladez vers les méthodes basées sur le routeur que si cela n'a
 pas suffi.
 
+## Blocages de sources depuis votre propre pile
+
+Tout ce qui précède, c'est Kapkan qui décide. Il existe une autre façon dont des règles entrent dans
+le noyau : quelque chose que *vous* exploitez décide, et Kapkan applique. Un nginx devant la victime,
+un exportateur de journaux ou un opérateur à 3 h du matin peut confier une **source** à rejeter,
+rattachée à une victime, avec un TTL obligatoire :
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+C'est de la conscience HTTP sans analyser d'HTTP. Kapkan ne voit jamais les requêtes ; l'appel est
+fait par ce qui les termine déjà, et le rejet se produit à la couche la moins chère capable de
+l'exprimer. La détection n'intervient pas — aucun seuil n'a besoin de se déclencher, et rien n'est
+classifié.
+
+La paire vit dans le noyau avec **sa propre expiration**, elle cesse donc de s'appliquer à l'heure
+prévue même si Kapkan meurt. `POST /api/v1/dataplane/sources/unblock` est l'annulation immédiate.
+Forme complète de la requête, réponse et tous les refus :
+[le canal de blocage de sources](/docs/api#le-canal-de-blocage-de-sources).
+
+**À propos des limites, car elles sont partagées.** Chaque source bloquée occupe un emplacement de
+politique noyau dans le même pool que celui où puisent les bannissements, et y détient au plus
+**8 victimes**. Les sources distinctes sont plafonnées à ce qui reste après que chaque bannissement
+possible — hôte et carpet — aurait pu réclamer son propre emplacement, de sorte qu'une rafale de
+blocages ne peut jamais affamer un bannissement jusqu'à son repli blackhole. Au-delà, les blocages
+sont refusés avec `409` tandis que les bannissements continuent de fonctionner. Augmentez
+`dataplane.limits.max_dynamic_rules` si vous comptez vous appuyer sur ce canal ; surveillez
+`kapkan_mitigate_source_blocks` par rapport à cette limite.
+
+<Callout type="warning" title="La limite de 8 victimes est par source, tous tenants confondus">
+Les paires d'une source partagent un seul bloc de politique noyau, et ce bloc est indexé sur la seule
+source — il n'a aucune notion du tenant auquel appartient chaque victime. Donc si le même attaquant
+frappe des victimes dans plusieurs [tenants](/docs/multi-tenancy), ces victimes se disputent les
+mêmes 8 emplacements, et la neuvième est refusée quel qu'en soit le propriétaire. Cela découle de
+l'agencement « un bloc de politique par source », ce n'est pas une limite que l'on peut relever. Là
+où cela compte, réservez les blocages de sources au tenant qui a signalé le trafic, ou repliez-vous
+sur une règle statique.
+</Callout>
+
+Deux refus surprennent, et tous deux existent parce que l'alternative est le silence : une `source`
+dans `dataplane.allowlist` et une `victim` dans `protected_whitelist` sont des **erreurs**, pas des
+no-op acceptés. Le chemin de données laisse passer les deux avant qu'une seule règle ne soit
+évaluée — un tel blocage s'installerait puis ne correspondrait jamais à un paquet. Une source à
+l'intérieur de vos propres `networks` est également refusée : un hôte interne relève du
+bannissement, pas du blocage de source.
+
 ## Où aller ensuite
 
 Vous débutez ? Lisez [Installer le plan de données](/docs/dataplane-install) et mettez-le en service

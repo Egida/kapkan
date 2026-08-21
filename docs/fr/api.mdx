@@ -59,6 +59,8 @@ sinon. Voir [Multi-tenant](/docs/multi-tenancy).
 | POST | `/api/v1/ban` | Bannir manuellement une adresse. |
 | POST | `/api/v1/unban` | Retirer manuellement un bannissement. |
 | POST | `/api/v1/config/reload` | Relire le fichier de configuration (équivalent à `SIGHUP`). |
+| POST | `/api/v1/dataplane/sources` | Rejeter une source dans le [plan de données](/docs/dataplane), rattachée à une victime, avec un TTL obligatoire. |
+| POST | `/api/v1/dataplane/sources/unblock` | Retirer immédiatement un blocage de source. |
 | GET | `/api/v1/dataplane/rules` | Le flux de règles du [nœud de scrubbing](/docs/scrubbing#nœuds-de-nettoyage-gérés) (`agent`/`operator` non rattaché) ; long-poll par ETag, retenu jusqu'à 30 s. |
 | POST | `/api/v1/dataplane/nodes/{name}/report` | Le rapport consultatif d'un nœud de scrubbing sur lui-même (`agent`/`operator` non rattaché). |
 | GET | `/api/v1/dataplane/nodes` | Inventaire des nœuds gérés : vivacité, configuration, nombre de bans par nœud (`viewer` non rattaché ou plus). |
@@ -345,10 +347,11 @@ bannissements façonnent ce cycle de vie.
 ### GET /api/v1/audit
 
 Renvoie la piste d'audit attribuée aux opérateurs — qui a émis chaque `ban`, `unban` ou
-`config_reload`, quand, et le résultat (y compris les actions **refusées**). Les enregistrements
-sont triés du plus récent au plus ancien et le point de terminaison est rattaché au tenant côté
-serveur. Il accepte des paramètres de requête optionnels `from`/`to` (RFC 3339), `action`
-(`ban`/`unban`/`config_reload`) et `target` (une IP), et porte par défaut sur la dernière heure :
+`config_reload`, `source_block` ou `source_unblock`, quand, et le résultat (y compris les actions
+**refusées**). Les enregistrements sont triés du plus récent au plus ancien et le point de
+terminaison est rattaché au tenant côté serveur. Il accepte des paramètres de requête optionnels
+`from`/`to` (RFC 3339), `action` (`ban`/`unban`/`config_reload`/`source_block`/`source_unblock`) et
+`target` (une IP), et porte par défaut sur la dernière heure :
 
 ```json
 {
@@ -452,6 +455,83 @@ avec un `403` et `config reload is restricted to unscoped (admin) tokens`.
 Si la nouvelle configuration échoue à l'analyse ou à la validation, la configuration en cours
 d'exécution reste intacte et le point de terminaison renvoie un statut HTTP `400` avec l'erreur.
 Voir [Configuration](/docs/configuration).
+
+### Le canal de blocage de sources
+
+Deux points de terminaison permettent à ce qui termine déjà le trafic d'une victime — un nginx devant
+elle, un exportateur de journaux, un opérateur à 3 h du matin — de confier à Kapkan une **source** à
+rejeter dans le [plan de données XDP](/docs/dataplane), rattachée à cette victime et avec un TTL
+obligatoire. La décision est prise là où les requêtes sont visibles ; l'application se fait dans le
+noyau. Les deux exigent un token `operator` ; le rôle `agent` est refusé.
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+| Champ | Requis | Signification |
+| --- | --- | --- |
+| `victim` | oui | La destination protégée à laquelle le blocage est rattaché. C'est ce qui est vérifié pour un token de tenant, et ce qui empêche les preuves d'un seul appelant de devenir un rejet global. |
+| `source` | oui | L'adresse à rejeter. Doit être de la même famille d'adresses que `victim`. |
+| `ttl_seconds` | oui pour un blocage | Durée de vie du blocage, de `1` à `86400` (24 h). Il n'existe pas d'entrées permanentes. Bloquer à nouveau la même paire conserve le `created_at` d'origine et applique le nouveau TTL — le rafraîchissement dont un exportateur a besoin pour maintenir un contrevenant persistant sans va-et-vient de déblocage/reblocage. |
+| `reason` | non | Une note libre reprise dans la [piste d'audit](/docs/audit). |
+
+La réponse est le `SourceBlock` résultant :
+
+```json
+{
+  "source": "198.51.100.7",
+  "victim": "203.0.113.10",
+  "created_at": "2026-08-17T21:04:11Z",
+  "expires_at": "2026-08-17T21:14:11Z",
+  "dry_run": false,
+  "reason": "login flood"
+}
+```
+
+`POST /api/v1/dataplane/sources/unblock` prend les mêmes `victim` et `source` (tout `ttl_seconds` est
+ignoré) et retire immédiatement cette seule paire, pour que personne n'attende un TTL qu'il a lui-même
+saisi. Il renvoie le `SourceBlock` retiré, ou `404` si aucune paire de ce type n'est vivante.
+
+#### Refus
+
+Une erreur de saisie donne `400` ; une requête bien formée refusée par la politique donne `409`.
+Chaque appel — refus compris — écrit un événement d'audit attribué, car un blocage refusé est
+lui-même une action d'opérateur.
+
+| Statut | Cause |
+| --- | --- |
+| `400` | JSON ou adresse non analysable, `victim` et `source` de familles d'adresses différentes, ou `ttl_seconds` hors de `[1, 86400]`. |
+| `403` | `victim` est hors de votre tenant. Le même refus uniforme que celui des points de terminaison de bannissement, afin que ce point ne devienne pas un oracle d'existence pour les hôtes des autres tenants. |
+| `404` | Déblocage uniquement : aucun blocage vivant pour cette paire. |
+| `409` | Le plan de données est absent ou désactivé ; `victim` est dans `protected_whitelist` ; `source` est dans `dataplane.allowlist` ; `source` est à l'intérieur des `networks` protégés ; cette source détient déjà 8 victimes ; ou il ne reste aucun emplacement de politique. |
+
+Les deux refus liés aux listes d'autorisation sont les plus intéressants, et ils sont des refus
+précisément parce que l'alternative est le silence : le chemin de données laisse passer une source
+autorisée à la précédence 1 et le trafic vers une destination protégée à la précédence 2, les deux
+**avant** qu'une seule règle ne soit évaluée — un tel blocage s'installerait puis ne correspondrait
+jamais à un paquet. Une `source` à l'intérieur de vos propres `networks` est également refusée : un
+hôte interne relève du [bannissement](/docs/mitigation), pas du blocage de source.
+
+<Callout type="warning" title="Un échec d'installation retire toutes les paires de cette source">
+Les paires d'une source partagent un unique bloc de politique noyau, et le rollback de l'installateur
+est tout-ou-rien sur ce bloc. Si une installation échoue, toutes les paires de cette source sont
+retirées au lieu de rester enregistrées-mais-non-appliquées, et l'erreur le dit — rajoutez celles
+dont vous avez encore besoin. La table ne prétend jamais appliquer quelque chose que le noyau
+n'applique pas.
+</Callout>
+
+<Callout type="info" title="Les mêmes garanties qu'un bannissement">
+Les TTL sont obligatoires et bornés, chaque paire porte sa propre expiration dans le noyau (elle
+cesse donc de s'appliquer à l'heure prévue même si Kapkan meurt), les installations sont comptées
+contre `dataplane.limits.max_dynamic_rules`, les blocages survivent à un redémarrage via le fichier
+d'état, et `dry_run` est respecté — la paire est enregistrée, renvoyée avec `dry_run: true`, et rien
+n'atteint une map du noyau. Voir
+[Blocages de sources](/docs/dataplane#blocages-de-sources-depuis-votre-propre-pile) pour les limites
+et le [Modèle de sécurité](/docs/safety).
+</Callout>
 
 ### Le canal des nœuds de scrubbing
 

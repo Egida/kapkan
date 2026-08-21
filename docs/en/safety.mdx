@@ -136,6 +136,26 @@ and hysteresis rules: it auto-expires like any other announcement. The only rule
 bypass is the *detection threshold* itself — that is the entire point of a manual ban — but never
 the safety guards around the announcement.
 
+## Source blocks inherit them too
+
+The [source-block channel](/docs/api#the-source-block-channel) lets your own stack ask Kapkan to
+drop a source in the data plane. It is a mutation from outside, so it is held to the same rules:
+
+| Source-block request | Result |
+| --- | --- |
+| `victim` is in `protected_whitelist` | `409` — the datapath passes its traffic before any rule, so the block could never match |
+| `source` is in `dataplane.allowlist` | `409` — same reason, one precedence level earlier |
+| `source` is inside the configured `networks` | `409` — an internal host is a ban, not a source block |
+| No data plane configured or enabled | `409` — nothing could enforce it |
+| `ttl_seconds` outside `1`–`86400` | `400` — no permanent entries, and no zero-length ones |
+| Would exceed the shared policy slots | `409` — bans keep their own slots; blocks are refused first |
+
+The TTL is **mandatory** here rather than defaulted: there is no configured fallback for a block,
+so a caller cannot create one that outlives its reason. Each pair carries its expiry into the
+kernel, so it lapses on schedule even if the daemon dies — the same fail-safe as
+[rule expiry](/docs/dataplane-tuning). `dry_run` is honoured exactly as for a ban: the pair is
+recorded, returned with `dry_run: true`, and nothing reaches a kernel map.
+
 ## Related
 
 - [Mitigation & RTBH](/docs/mitigation) — how announcements, TTLs, hysteresis and the cap work end to end.

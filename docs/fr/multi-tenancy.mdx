@@ -104,12 +104,29 @@ qu'un token cadré ne peut jamais retomber sur les données d'un autre tenant.
   tenant est refusé — pas d'oracle d'existence inter-tenant.
 - **Mutations** — un operator cadré ne peut `ban`/`unban` que dans ses propres préfixes. Une cible
   hors du tenant renvoie un `403` uniforme, qu'un bannissement existe ou non, de sorte qu'un
-  tenant ne peut pas sonder l'état de bannissement d'un autre. `POST /api/v1/config/reload` est
+  tenant ne peut pas sonder l'état de bannissement d'un autre. Le
+  [canal de blocage de sources](/docs/api#le-canal-de-blocage-de-sources) se rattache au même axe via
+  son champ `victim` : un token cadré ne peut bloquer une source que *pour ses propres* victimes, et
+  une victime hors du tenant reçoit le même `403` uniforme au blocage comme au déblocage.
+  `POST /api/v1/config/reload` est
   **réservé aux admins** — un reload réécrit la politique de chaque tenant ainsi que l'ensemble
   des tokens lui-même.
 - **L'ambiguïté échoue de façon sûre** — si un même secret bearer correspond à des tokens de rôle
   ou de tenant différents (un secret réutilisé), la requête est refusée plutôt que résolue vers la
   portée la plus large.
+
+<Callout type="warning" title="Une ressource est partagée entre tenants : les 8 emplacements de victimes d'une source">
+Le contrôle d'accès est par tenant, mais une structure du noyau ne l'est pas. Un blocage de source
+ancre un unique bloc de politique noyau sur la **source**, et ce bloc contient au plus 8 victimes,
+quel qu'en soit le propriétaire. Si le même attaquant frappe des victimes dans deux tenants, ces
+victimes se disputent les mêmes 8 emplacements, et le neuvième blocage est refusé quel que soit le
+tenant qui le demande. Les sources bloquées distinctes puisent en outre dans le pool de politique de
+tout le déploiement. Aucune de ces deux limites ne peut être partitionnée par tenant — cela découle
+de l'agencement « un bloc de politique par source » — donc sur un déploiement partagé, traitez le
+canal de blocage de sources comme une ressource partagée et réservez son usage au tenant qui a
+observé le trafic. Voir
+[Blocages de sources](/docs/dataplane#blocages-de-sources-depuis-votre-propre-pile).
+</Callout>
 
 ### Vérifier l'isolation
 

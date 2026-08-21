@@ -158,6 +158,28 @@ Sie läuft automatisch ab wie jede andere Ankündigung. Die einzige Regel, die m
 umgehen, ist der *Erkennungsschwellenwert* selbst — das ist der ganze Sinn einer manuellen Sperre
 —, aber niemals die Sicherheitsmechanismen rund um die Ankündigung.
 
+## Source-Blocks erben sie ebenfalls
+
+Der [Source-Block-Kanal](/docs/api#der-source-block-kanal) lässt Ihren eigenen Stack Kapkan bitten,
+eine Quelle in der Datenebene zu verwerfen. Es ist eine Mutation von außen und wird deshalb an
+denselben Regeln gemessen:
+
+| Source-Block-Anfrage | Ergebnis |
+| --- | --- |
+| `victim` steht in `protected_whitelist` | `409` — der Datenpfad lässt dessen Verkehr vor jeder Regel durch, der Block könnte also nie treffen |
+| `source` steht in `dataplane.allowlist` | `409` — dieselbe Begründung, eine Präzedenzstufe früher |
+| `source` liegt innerhalb der konfigurierten `networks` | `409` — ein interner Host ist eine Sperre, kein Source-Block |
+| Keine Datenebene konfiguriert oder aktiviert | `409` — es gäbe nichts, was das durchsetzt |
+| `ttl_seconds` außerhalb von `1`–`86400` | `400` — keine permanenten Einträge und keine mit Länge null |
+| Würde die geteilten Policy-Slots überschreiten | `409` — Sperren behalten ihre eigenen Slots, Blocks werden zuerst abgelehnt |
+
+Die TTL ist hier **verpflichtend** statt vorbelegt: Für einen Block gibt es keinen konfigurierten
+Rückfallwert, ein Aufrufer kann also keinen erzeugen, der seinen Anlass überlebt. Jedes Paar trägt
+seinen Ablauf in den Kernel, es endet also planmäßig, selbst wenn der Daemon stirbt — dieselbe
+Ausfallsicherung wie beim [Regelablauf](/docs/dataplane-tuning). `dry_run` wird genau wie bei einer
+Sperre beachtet: Das Paar wird aufgezeichnet, mit `dry_run: true` zurückgegeben, und nichts erreicht
+eine Kernel-Map.
+
 ## Verwandte Themen
 
 - [RTBH-Mitigation](/docs/mitigation) — wie Ankündigungen, TTLs, Hysterese und die Obergrenze von Anfang bis Ende zusammenwirken.

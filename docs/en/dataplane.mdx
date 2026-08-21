@@ -87,6 +87,49 @@ Severity runs `none < dataplane < flowspec < divert < blackhole`. On an
 [escalation ladder](/docs/escalation) a `dataplane` rung is the gentlest real action — drop locally
 first, and escalate to the router-based methods only if that was not enough.
 
+## Source blocks: from your own stack
+
+Everything above is Kapkan deciding. There is one more way rules get into the kernel: something
+*you* run decides, and Kapkan enforces. An nginx in front of the victim, a log exporter, or an
+operator at 3am can hand over a **source** to drop, scoped to one victim, with a mandatory TTL:
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+This is HTTP awareness without parsing HTTP. Kapkan never sees the requests; the thing that
+already terminates them makes the call, and the drop happens at the cheapest layer that can
+express it. Detection is not involved — no threshold has to trip, and nothing is classified.
+
+The pair lives in the kernel with **its own expiry**, so it lapses on schedule even if Kapkan
+dies. `POST /api/v1/dataplane/sources/unblock` is the immediate undo. Full request shape,
+response and every refusal: [the source-block channel](/docs/api#the-source-block-channel).
+
+**The limits, because they are shared.** Each blocked source claims one kernel policy slot from
+the same pool bans draw on, and holds at most **8 victims** in it. Distinct sources are capped at
+what is left after every possible ban — host and carpet — could claim its own slot, so a burst of
+blocks can never starve a ban into its blackhole fallback. Past that, blocks are refused with
+`409` while bans keep working. Raise `dataplane.limits.max_dynamic_rules` if you intend to lean on
+this channel; watch `kapkan_mitigate_source_blocks` against that limit.
+
+<Callout type="warning" title="The 8-victim cap is per source, across all tenants">
+One source's pairs share one kernel policy block, and that block is keyed by the source alone —
+it has no notion of which tenant each victim belongs to. So if the same attacker hits victims in
+several [tenants](/docs/multi-tenancy), those victims compete for the same 8 slots, and the ninth
+is refused no matter whose it is. This is structural to the one-policy-per-source layout, not a
+limit that can be raised. Where that matters, keep source blocks to the tenant that reported the
+traffic, or fall back to a static rule.
+</Callout>
+
+Two refusals surprise people, and both exist because the alternative is silence: a `source` in
+`dataplane.allowlist` and a `victim` in `protected_whitelist` are **errors**, not accepted no-ops.
+The datapath passes both before any rule is evaluated, so such a block would install and then
+never match a packet. A source inside your own `networks` is refused too — an internal host is a
+ban, not a source block.
+
 ## Where to go next
 
 New to it? Read [Installing the data plane](/docs/dataplane-install) and bring it up in dry-run,

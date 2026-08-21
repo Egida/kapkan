@@ -30,17 +30,19 @@ im Prozess-Log.
 
 ## Was aufgezeichnet wird
 
-Drei Aktionen werden auditiert. `ban` und `config_reload` werden sowohl bei Erfolg als auch bei
-Fehlschlag aufgezeichnet; `unban` wird nur bei Erfolg aufgezeichnet — ein fehlgeschlagener oder
-wirkungsloser Unban gibt einen Fehler zurück und wird nicht in die Spur geschrieben, obwohl er
-dennoch protokolliert wird (ein fehlgeschlagener Unban ist ein `404 "no active ban"`, keine
-Richtlinienentscheidung, es gibt also nichts zu attribuieren):
+Fünf Aktionen werden auditiert. `ban`, `config_reload` und `source_block` werden sowohl bei Erfolg
+als auch bei Fehlschlag aufgezeichnet; `unban` und `source_unblock` werden nur bei Erfolg
+aufgezeichnet — eine fehlgeschlagene oder wirkungslose Entfernung gibt einen Fehler zurück und wird
+nicht in die Spur geschrieben, obwohl sie dennoch protokolliert wird (ein fehlgeschlagener Unban ist
+ein `404 "no active ban"`, keine Richtlinienentscheidung, es gibt also nichts zu attribuieren):
 
 | Aktion | Wann | Aufgezeichnete Ergebnisse (`result`) |
 | --- | --- | --- |
 | `ban` | `POST /api/v1/ban` | `active` bei Erfolg; `rejected`, wenn eine Sicherheitsabsicherung ihn verweigert. Ein Dry-Run-Ban zeichnet weiterhin `active` auf — die Simulation wird über das separate Feld `dry_run` signalisiert. |
 | `unban` | `POST /api/v1/unban` | `withdrawn` bei Erfolg. |
 | `config_reload` | `POST /api/v1/config/reload` | `ok` bei Erfolg; `error`, wenn die neue Konfiguration nicht geparst oder validiert werden kann. |
+| `source_block` | `POST /api/v1/dataplane/sources` | `blocked` bei Erfolg; `rejected`, wenn die Policy ihn verweigert. Ein verweigerter Source-Block ist selbst eine Operator-Aktion und wird wie ein verweigerter Ban attribuiert. |
+| `source_unblock` | `POST /api/v1/dataplane/sources/unblock` | `removed` bei Erfolg. |
 
 Eine **abgelehnte** Aktion wird bewusst auditiert: ein Ban, der von der Whitelist, den
 konfigurierten `networks` oder einer [Blast-Radius-Absicherung](/docs/safety) zurückgewiesen wird,
@@ -78,7 +80,7 @@ Lesezugriffe.
 | --- | --- | --- |
 | `from` | now − 1h | RFC 3339 Beginn des Fensters. |
 | `to` | now | RFC 3339 Ende des Fensters. Muss nach `from` liegen; das Fenster darf **31 days** nicht überschreiten. |
-| `action` | (alle) | Filter auf eines von `ban`, `unban`, `config_reload`. |
+| `action` | (alle) | Filter auf eines von `ban`, `unban`, `config_reload`, `source_block`, `source_unblock`. |
 | `target` | (alle) | Filter auf eine IP. Muss für den Mandanten des Aufrufers sichtbar sein, sonst ist die Anfrage `403`. |
 
 Der Endpoint gibt höchstens ~1000 Einträge pro Abfrage zurück, neueste zuerst. Wenn Sie dieses
@@ -118,16 +120,16 @@ Jeder Eintrag trägt diese Felder:
 | Feld | Hinweise |
 | --- | --- |
 | `event_time` | UTC, `YYYY-MM-DD HH:MM:SS`. |
-| `action` | `ban`, `unban` oder `config_reload`. |
-| `result` | `active`, `rejected`, `withdrawn`, `ok` oder `error`. |
+| `action` | `ban`, `unban`, `config_reload`, `source_block` oder `source_unblock`. |
+| `result` | `active`, `rejected`, `withdrawn`, `ok`, `error`, `blocked` oder `removed`. |
 | `operator` | Der Name des passenden API-Tokens; leer im offenen (token-losen) Modus. |
 | `role` | Die Rolle des Aufrufers (`viewer` / `operator`). |
 | `tenant` | Der Mandanten-Scope des Aufrufers; leer für einen ungebundenen (Admin-)Aufrufer. |
-| `target` | Die IP bei `ban`/`unban`; leer bei `config_reload`. |
-| `target_type` | `host` bei `ban`/`unban`; `global` bei `config_reload`. |
+| `target` | Die IP bei `ban`/`unban`; `source->victim` bei `source_block`/`source_unblock`; leer bei `config_reload`. |
+| `target_type` | `host` bei `ban`/`unban`; `source` bei `source_block`/`source_unblock`; `global` bei `config_reload`. |
 | `reason` | Ablehnungs- oder Fehlerdetail; leer bei Erfolg. |
 | `source` | `api` (Operator-Aktion). Engine-interne automatische Aktionen sind für eine zukünftige `auto`-Quelle reserviert. |
-| `ban_state` | Der finale Ban-Zustand bei `ban`/`unban`; leer bei `config_reload`. |
+| `ban_state` | Der finale Ban-Zustand bei `ban`/`unban`; leer bei `config_reload` und den Source-Block-Aktionen. |
 | `dry_run` | `1`, wenn das Deployment im [dry-run](/docs/safety) ist. |
 
 Eine Abfrage gegen ein Fenster außerhalb des zulässigen Bereichs gibt `400` zurück; ein

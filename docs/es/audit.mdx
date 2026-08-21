@@ -30,15 +30,18 @@ proceso.
 
 ## Qué se registra
 
-Se auditan tres acciones. `ban` y `config_reload` se registran tanto en caso de éxito como de
-fallo; `unban` se registra solo en caso de éxito — un unban fallido o sin efecto devuelve un error
-y no se escribe en el rastro, aunque sí queda registrado en el log:
+Se auditan cinco acciones. `ban`, `config_reload` y `source_block` se registran tanto en caso de
+éxito como de fallo; `unban` y `source_unblock` se registran solo en caso de éxito — una eliminación
+fallida o sin efecto devuelve un error y no se escribe en el rastro, aunque sí queda registrada en el
+log:
 
 | Acción | Cuándo | Resultados registrados (`result`) |
 | --- | --- | --- |
 | `ban` | `POST /api/v1/ban` | `active` en caso de éxito; `rejected` cuando una protección de seguridad lo deniega. Un baneo en dry-run sigue registrando `active` — la simulación se señala mediante el campo `dry_run` aparte. |
 | `unban` | `POST /api/v1/unban` | `withdrawn` en caso de éxito. |
 | `config_reload` | `POST /api/v1/config/reload` | `ok` en caso de éxito; `error` cuando la nueva configuración no se puede parsear o validar. |
+| `source_block` | `POST /api/v1/dataplane/sources` | `blocked` en caso de éxito; `rejected` cuando la política lo deniega. Un bloqueo denegado es en sí una acción de operador, así que se atribuye igual que un baneo denegado. |
+| `source_unblock` | `POST /api/v1/dataplane/sources/unblock` | `removed` en caso de éxito. |
 
 `config_reload` está restringido a tokens sin alcance (admin). Un operator acotado a un tenant es
 denegado con `403` *antes* de que la recarga se ejecute, y **no se escribe ningún registro de
@@ -76,7 +79,7 @@ como las demás lecturas.
 | --- | --- | --- |
 | `from` | ahora − 1h | Inicio RFC 3339 de la ventana. |
 | `to` | ahora | Fin RFC 3339 de la ventana. Debe ser posterior a `from`; la ventana no puede exceder **31 días**. |
-| `action` | (todas) | Filtra a una de `ban`, `unban`, `config_reload`. |
+| `action` | (todas) | Filtra a una de `ban`, `unban`, `config_reload`, `source_block`, `source_unblock`. |
 | `target` | (todos) | Filtra a una IP. Debe ser visible para el tenant de quien llama, o la solicitud es `403`. |
 
 El endpoint devuelve como máximo ~1000 registros por consulta, del más reciente al más antiguo. Si
@@ -115,16 +118,16 @@ Cada registro lleva estos campos:
 | Campo | Notas |
 | --- | --- |
 | `event_time` | UTC, `YYYY-MM-DD HH:MM:SS`. |
-| `action` | `ban`, `unban` o `config_reload`. |
-| `result` | `active`, `rejected`, `withdrawn`, `ok` o `error`. |
+| `action` | `ban`, `unban`, `config_reload`, `source_block` o `source_unblock`. |
+| `result` | `active`, `rejected`, `withdrawn`, `ok`, `error`, `blocked` o `removed`. |
 | `operator` | El nombre del token de API que coincidió; vacío en modo abierto (sin token). |
 | `role` | El rol de quien llama (`viewer` / `operator`). |
 | `tenant` | El alcance de tenant de quien llama; vacío para una llamada sin alcance (admin). |
-| `target` | La IP para `ban`/`unban`; vacío para `config_reload`. |
-| `target_type` | `host` para `ban`/`unban`; `global` para `config_reload`. |
+| `target` | La IP para `ban`/`unban`; `source->victim` para `source_block`/`source_unblock`; vacío para `config_reload`. |
+| `target_type` | `host` para `ban`/`unban`; `source` para `source_block`/`source_unblock`; `global` para `config_reload`. |
 | `reason` | Detalle de la denegación o el error; vacío en caso de éxito. |
 | `source` | `api` (acción de operator). Las acciones automáticas internas del motor se reservan para una futura fuente `auto`. |
-| `ban_state` | El estado de baneo final para `ban`/`unban`; vacío para `config_reload`. |
+| `ban_state` | El estado de baneo final para `ban`/`unban`; vacío para `config_reload` y las acciones de bloqueo de origen. |
 | `dry_run` | `1` cuando el despliegue está en [dry-run](/docs/safety). |
 
 Una consulta contra una ventana fuera de rango devuelve `400`; un valor de `action` desconocido
