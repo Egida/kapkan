@@ -21,9 +21,11 @@ Kapkan ist ein kostenloser Ersatz für die Funktionen, für die kommerzielle Flo
 <Callout type="info" title="Neu bei BGP, RTBH oder NetFlow?">
 Kein Problem — der [Schnellstart](/docs/quickstart) führt Sie Schritt für Schritt durch, das
 [Glossar](/docs/glossary) erklärt jeden Begriff, und Kapkan rührt keine einzige Route an, bevor
-Sie es nicht erlauben. Kapkan behandelt *volumetrische* Angriffe (Floods, die versuchen, Ihre
-Leitung oder Ihren Host mit roher Paket- und Bitmenge zu sättigen), keine Angriffe auf
-Anwendungsebene.
+Sie es nicht erlauben. Kapkan *erkennt* **volumetrische** Angriffe (Floods, die versuchen, Ihre
+Leitung oder Ihren Host mit roher Paket- und Bitmenge zu sättigen), keine auf Anwendungsebene. Eine
+Entscheidung auf Anwendungsebene, die jemand anderes getroffen hat, kann es dennoch *durchsetzen*:
+Was den Verkehr ohnehin terminiert, kann ihm über den
+[Source-Block-Kanal](/docs/api#der-source-block-kanal) eine Quelle zum Verwerfen übergeben.
 </Callout>
 
 <Callout type="warning" title="Standardmäßig im Dry-run">

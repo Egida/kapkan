@@ -87,6 +87,53 @@ La severidad va `none < dataplane < flowspec < divert < blackhole`. En una
 [escalera de escalado](/docs/escalation) un peldaño `dataplane` es la acción real más suave —
 descarta localmente primero, y escala a los métodos basados en router solo si eso no fue suficiente.
 
+## Bloqueos de origen desde tu propio stack
+
+Todo lo anterior es Kapkan decidiendo. Hay una forma más en que las reglas llegan al kernel: algo que
+ejecutas *tú* decide, y Kapkan lo aplica. Un nginx delante de la víctima, un exportador de logs o un
+operador a las 3 de la mañana pueden entregar un **origen** para descartar, acotado a una víctima y
+con un TTL obligatorio:
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+Esto es conciencia de HTTP sin analizar HTTP. Kapkan nunca ve las peticiones; la llamada la hace lo
+que ya las termina, y el descarte ocurre en la capa más barata capaz de expresarlo. La detección no
+participa: ningún umbral tiene que dispararse y no se clasifica nada.
+
+El par vive en el kernel con **su propia caducidad**, así que deja de aplicarse a su hora incluso si
+Kapkan muere. `POST /api/v1/dataplane/sources/unblock` es la deshacer inmediato. Forma completa de la
+petición, respuesta y todos los rechazos:
+[el canal de bloqueo de orígenes](/docs/api#el-canal-de-bloqueo-de-orígenes).
+
+**Sobre los límites, porque son compartidos.** Cada origen bloqueado ocupa un hueco de política del
+kernel del mismo pool del que tiran los baneos, y en él mantiene como máximo **8 víctimas**. Los
+orígenes distintos están limitados a lo que queda después de que cada baneo posible — por host y
+carpet — pudiera reclamar su propio hueco, de modo que una ráfaga de bloqueos nunca puede dejar a un
+baneo sin recursos y forzarlo a su respaldo de blackhole. Pasado ese punto, los bloqueos se rechazan
+con `409` mientras los baneos siguen funcionando. Sube
+`dataplane.limits.max_dynamic_rules` si piensas apoyarte en este canal; vigila
+`kapkan_mitigate_source_blocks` frente a ese límite.
+
+<Callout type="warning" title="El límite de 8 víctimas es por origen y común a todos los tenants">
+Los pares de un origen comparten un bloque de política del kernel, y ese bloque se indexa solo por el
+origen: no tiene noción de a qué tenant pertenece cada víctima. Así que si el mismo atacante golpea
+víctimas en varios [tenants](/docs/multi-tenancy), esas víctimas compiten por los mismos 8 huecos, y
+el noveno se rechaza sea de quien sea. Es consecuencia de la disposición «un bloque de política por
+origen», no un límite que se pueda subir. Donde eso importe, limita los bloqueos de origen al tenant
+que reportó el tráfico, o recurre a una regla estática.
+</Callout>
+
+Dos rechazos sorprenden, y ambos existen porque la alternativa es el silencio: un `source` en
+`dataplane.allowlist` y una `victim` en `protected_whitelist` son **errores**, no operaciones vacías
+aceptadas. El plano de datos deja pasar ambos antes de evaluar una sola regla, así que ese bloqueo se
+instalaría y luego no coincidiría con ningún paquete. Un origen dentro de tus propias `networks`
+también se rechaza: un host interno es un baneo, no un bloqueo de origen.
+
 ## Adónde ir después
 
 ¿Nuevo en esto? Lee [Instalar el plano de datos](/docs/dataplane-install) y ponlo en marcha en dry-run,

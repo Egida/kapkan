@@ -109,11 +109,26 @@ sodass ein gebundenes Token niemals auf die Daten eines anderen Mandanten durchf
 - **Mutationen** — ein gebundener Operator darf nur innerhalb seiner eigenen Präfixe
   `ban`/`unban`. Ein Ziel außerhalb des Mandanten gibt ein einheitliches `403` zurück,
   unabhängig davon, ob ein Ban existiert, sodass ein Mandant den Ban-Zustand eines anderen nicht
-  ausspähen kann. `POST /api/v1/config/reload` ist **nur für Admins** — ein Reload schreibt die
+  ausspähen kann. Der [Source-Block-Kanal](/docs/api#der-source-block-kanal) hängt über sein
+  `victim` an derselben Achse: Ein gebundenes Token darf eine Quelle nur *für seine eigenen* Opfer
+  blocken, und ein Opfer außerhalb des Mandanten erhält beim Blocken wie beim Entblocken dasselbe
+  einheitliche `403`. `POST /api/v1/config/reload` ist **nur für Admins** — ein Reload schreibt die
   Policy jedes Mandanten und das Token-Set selbst neu.
 - **Mehrdeutigkeit schlägt geschlossen fehl** — wenn ein einzelnes Bearer-Secret zu Tokens
   unterschiedlicher Rolle oder unterschiedlichen Mandanten passt (ein wiederverwendetes Secret),
   wird die Anfrage abgelehnt, statt auf den weiteren Scope aufgelöst zu werden.
+
+<Callout type="warning" title="Eine Ressource ist mandantenübergreifend geteilt: die 8 Opfer-Slots einer Quelle">
+Die Zugriffskontrolle läuft pro Mandant, eine Kernel-Struktur aber nicht. Ein Source-Block verankert
+genau einen Kernel-Policy-Block an der **Quelle**, und dieser Block hält höchstens 8 Opfer,
+unabhängig davon, wem sie gehören. Trifft derselbe Angreifer Opfer in zwei Mandanten, konkurrieren
+diese Opfer um dieselben 8 Slots, und der neunte Block wird abgelehnt, welcher Mandant auch fragt.
+Verschiedene geblockte Quellen ziehen zudem aus dem deployment-weiten Policy-Pool. Keine der beiden
+Grenzen lässt sich pro Mandant aufteilen — das folgt aus dem Layout „ein Policy-Block pro Quelle“ —,
+behandeln Sie den Source-Block-Kanal auf einem geteilten Deployment also als geteilte Ressource und
+beschränken Sie seine Nutzung auf den Mandanten, der den Verkehr beobachtet hat. Siehe
+[Source-Blocks](/docs/dataplane#source-blocks-aus-ihrem-eigenen-stack).
+</Callout>
 
 ### Isolation überprüfen
 

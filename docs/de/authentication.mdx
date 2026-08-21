@@ -66,7 +66,7 @@ ein harter Validierungsfehler, kein stiller Default.
 | Rolle | Darf |
 | --- | --- |
 | `viewer` | Nur lesen: Status, Angriffe, Hosts, Sperren, Metriken. |
-| `operator` | Alles, was ein viewer darf, plus manuelles Sperren/Entsperren und Neuladen der Konfiguration (das Neuladen ist nur für Admins — siehe unten). |
+| `operator` | Alles, was ein viewer darf, plus manuelles Sperren/Entsperren, [Source-Blocks](/docs/api#der-source-block-kanal) und Neuladen der Konfiguration (das Neuladen ist nur für Admins — siehe unten). |
 | `agent` | Das Credential eines [Scrub-Knotens](/docs/scrubbing#verwaltete-scrubbing-knoten): der Data-Plane-Regel-Feed und sein eigener Report, und **sonst nichts**. |
 
 Es gibt keine separate `admin`-Rolle zum Zuweisen — ein *Admin* ist schlicht ein Operator-Token
@@ -77,7 +77,8 @@ die unten behandelt wird.
 <Callout type="info" title="Die agent-Rolle ist kein abgeschwächter viewer">
 `agent` steht **außerhalb** der Berechtigungsleiter, unterhalb von `viewer`: Es gewährt genau zwei
 Routen (`GET /api/v1/dataplane/rules` und `POST /api/v1/dataplane/nodes/{name}/report`) und wird
-für jeden anderen Endpunkt verweigert — ein kompromittiertes agent-Token, das auf einer entfernten
+für jeden anderen Endpunkt verweigert, einschließlich des Source-Block-Kanals, der Kernel-Regeln
+installiert und deshalb operator-only bleibt — ein kompromittiertes agent-Token, das auf einer entfernten
 Scrub-Box lebt, darf nicht zu einem Alles-lesen-Schlüssel werden. Es kann außerdem nicht
 tenant-bezogen sein: Der Regel-Feed gilt deploymentweit, sodass ein `tenant` auf einem agent-Token
 ein harter Validierungsfehler ist. Geben Sie einem Scrub-Knoten sein eigenes agent-Token, niemals

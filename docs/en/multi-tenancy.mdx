@@ -100,10 +100,24 @@ another tenant's data.
   `target` filter naming an out-of-tenant address is refused — no cross-tenant existence oracle.
 - **Mutations** — a scoped operator may `ban`/`unban` only within its own prefixes. A target
   outside the tenant returns a uniform `403` whether or not a ban exists, so a tenant cannot
-  probe another's ban state. `POST /api/v1/config/reload` is **admin-only** — a reload rewrites
-  every tenant's policy and the token set itself.
+  probe another's ban state. The [source-block channel](/docs/api#the-source-block-channel) binds
+  to the same axis through its `victim`: a scoped token may block a source only *for its own*
+  victims, and an out-of-tenant victim gets the same uniform `403` on both block and unblock.
+  `POST /api/v1/config/reload` is **admin-only** — a reload rewrites every tenant's policy and
+  the token set itself.
 - **Ambiguity fails closed** — if one bearer secret matches tokens of different role or tenant
   (a reused secret), the request is refused rather than resolved to the wider scope.
+
+<Callout type="warning" title="One resource is shared across tenants: a source's 8 victim slots">
+Access control is per tenant, but one kernel structure is not. A source block anchors a single
+kernel policy block at the **source**, and that block holds at most 8 victims regardless of who
+owns them. If the same attacker hits victims in two tenants, those victims compete for the same
+8 slots and the ninth block is refused whichever tenant asks. Distinct blocked sources also draw
+on the deployment-wide policy pool. Neither cap can be partitioned per tenant — it is structural
+to the one-policy-per-source layout — so on a shared deployment, treat the source-block channel
+as a shared resource and keep its use to the tenant that observed the traffic. See
+[Source blocks](/docs/dataplane#source-blocks-from-your-own-stack).
+</Callout>
 
 ### Verify isolation
 

@@ -105,12 +105,28 @@ token con alcance nunca puede caer hacia los datos de otro tenant.
   oráculo de existencia entre tenants.
 - **Mutaciones** — un operator con alcance puede hacer `ban`/`unban` solo dentro de sus propios
   prefijos. Un objetivo fuera del tenant devuelve un `403` uniforme exista o no un baneo, de
-  modo que un tenant no puede sondear el estado de baneo de otro. `POST /api/v1/config/reload`
+  modo que un tenant no puede sondear el estado de baneo de otro. El
+  [canal de bloqueo de orígenes](/docs/api#el-canal-de-bloqueo-de-orígenes) se ancla al mismo eje a
+  través de su campo `victim`: un token con alcance puede bloquear un origen solo *para sus propias*
+  víctimas, y una víctima fuera del tenant recibe el mismo `403` uniforme tanto al bloquear como al
+  desbloquear. `POST /api/v1/config/reload`
   es **solo para administradores** — un reload reescribe la política de cada tenant y el propio
   conjunto de tokens.
 - **La ambigüedad falla cerrada** — si un secreto bearer coincide con tokens de distinto rol o
   tenant (un secreto reutilizado), la solicitud se rechaza en lugar de resolverse al alcance más
   amplio.
+
+<Callout type="warning" title="Un recurso se comparte entre tenants: los 8 huecos de víctimas de un origen">
+El control de acceso es por tenant, pero una estructura del kernel no lo es. Un bloqueo de origen
+ancla un único bloque de política del kernel en el **origen**, y ese bloque contiene como máximo 8
+víctimas, sean de quien sean. Si el mismo atacante golpea víctimas en dos tenants, esas víctimas
+compiten por los mismos 8 huecos, y el noveno bloqueo se rechaza sin importar qué tenant lo pida. Los
+orígenes bloqueados distintos consumen además el pool de política de todo el despliegue. Ninguno de
+los dos límites se puede repartir por tenant — es consecuencia de la disposición «un bloque de
+política por origen» —, así que en un despliegue compartido trata el canal de bloqueo de orígenes
+como un recurso compartido y limita su uso al tenant que observó el tráfico. Consulta
+[Bloqueos de origen](/docs/dataplane#bloqueos-de-origen-desde-tu-propio-stack).
+</Callout>
 
 ### Verificar el aislamiento
 

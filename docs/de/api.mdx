@@ -58,6 +58,8 @@ beschränkt und liefert andernfalls `403`. Siehe
 | POST | `/api/v1/ban` | Eine Adresse manuell sperren. |
 | POST | `/api/v1/unban` | Eine Sperre manuell zurückziehen. |
 | POST | `/api/v1/config/reload` | Konfigurationsdatei neu einlesen (entspricht `SIGHUP`). |
+| POST | `/api/v1/dataplane/sources` | Eine Quelle in der [Datenebene](/docs/dataplane) verwerfen, gebunden an ein Opfer, mit verpflichtender TTL. |
+| POST | `/api/v1/dataplane/sources/unblock` | Einen Source-Block sofort entfernen. |
 | GET | `/api/v1/dataplane/rules` | Der Regel-Feed für [Scrub-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten) (`agent`/ungebundenes `operator`); ETag-Long-Poll, bis zu 30 s gehalten. |
 | POST | `/api/v1/dataplane/nodes/{name}/report` | Der beratende Selbstreport eines Scrub-Knotens (`agent`/ungebundenes `operator`). |
 | GET | `/api/v1/dataplane/nodes` | Inventar der verwalteten Knoten: Lebendigkeit, Konfiguration, Ban-Zähler pro Knoten (ungebundenes `viewer`+). |
@@ -343,11 +345,11 @@ Lebenszyklus prägen.
 
 ### GET /api/v1/audit
 
-Gibt den operator-zugeordneten Audit-Trail zurück — wer jeweils `ban`, `unban` oder
-`config_reload` ausgelöst hat, wann und mit welchem Ergebnis (einschließlich **abgelehnter**
-Aktionen). Datensätze sind neueste zuerst und der Endpunkt ist serverseitig tenant-bezogen. Er
-nimmt optionale Query-Parameter `from`/`to` (RFC 3339), `action` (`ban`/`unban`/`config_reload`)
-und `target` (eine IP) entgegen und liefert standardmäßig die letzte Stunde:
+Gibt den operator-zugeordneten Audit-Trail zurück — wer jeweils `ban`, `unban`,
+`config_reload`, `source_block` oder `source_unblock` ausgelöst hat, wann und mit welchem Ergebnis
+(einschließlich **abgelehnter** Aktionen). Datensätze sind neueste zuerst und der Endpunkt ist
+serverseitig tenant-bezogen. Er nimmt optionale Query-Parameter `from`/`to` (RFC 3339), `action`
+(`ban`/`unban`/`config_reload`/`source_block`/`source_unblock`) und `target` (eine IP) entgegen und liefert standardmäßig die letzte Stunde:
 
 ```json
 {
@@ -450,6 +452,84 @@ restricted to unscoped (admin) tokens` abgewiesen wird.
 Falls die neue Konfiguration nicht geparst oder validiert werden kann, bleibt die laufende
 Konfiguration unverändert und der Endpunkt liefert HTTP `400` mit dem Fehler zurück. Siehe
 [Konfiguration](/docs/configuration).
+
+### Der Source-Block-Kanal
+
+Zwei Endpunkte erlauben es dem, was den Verkehr eines Opfers ohnehin terminiert — ein nginx davor,
+ein Log-Exporter, ein Operator um 3 Uhr morgens —, Kapkan eine **Quelle** zum Verwerfen in der
+[XDP-Datenebene](/docs/dataplane) zu übergeben, gebunden an dieses Opfer und mit verpflichtender
+TTL. Die Entscheidung fällt dort, wo die Requests sichtbar sind; die Durchsetzung passiert im
+Kernel. Beide verlangen ein `operator`-Token; die Rolle `agent` wird verweigert.
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+| Feld | Erforderlich | Bedeutung |
+| --- | --- | --- |
+| `victim` | ja | Das geschützte Ziel, an das der Block gebunden ist. Daran wird ein Mandanten-Token geprüft, und es verhindert, dass die Evidenz eines Aufrufers zu einem globalen Verwerfen wird. |
+| `source` | ja | Die zu verwerfende Adresse. Muss dieselbe Adressfamilie wie `victim` haben. |
+| `ttl_seconds` | ja für einen Block | Wie lange der Block lebt, von `1` bis `86400` (24 h). Permanente Einträge gibt es nicht. Dasselbe Paar erneut zu blocken behält das ursprüngliche `created_at` und übernimmt die neue TTL — das Refresh, das ein Exporter braucht, um einen beharrlichen Störer ohne Unblock/Re-Block-Geklapper zu halten. |
+| `reason` | nein | Eine freie Notiz, die in den [Audit-Trail](/docs/audit) übernommen wird. |
+
+Die Antwort ist der resultierende `SourceBlock`:
+
+```json
+{
+  "source": "198.51.100.7",
+  "victim": "203.0.113.10",
+  "created_at": "2026-08-17T21:04:11Z",
+  "expires_at": "2026-08-17T21:14:11Z",
+  "dry_run": false,
+  "reason": "login flood"
+}
+```
+
+`POST /api/v1/dataplane/sources/unblock` nimmt dasselbe `victim` und `source` (ein `ttl_seconds`
+wird ignoriert) und entfernt genau dieses Paar sofort, damit niemand eine TTL abwarten muss, die er
+selbst getippt hat. Es liefert den entfernten `SourceBlock` zurück oder `404`, wenn kein solches
+Paar lebt.
+
+#### Ablehnungen
+
+Ein Eingabefehler ist `400`; eine wohlgeformte, von der Policy abgelehnte Anfrage ist `409`. Jeder
+Aufruf — auch eine Ablehnung — schreibt ein zugeordnetes Audit-Event, denn ein abgelehnter Block ist
+selbst eine Operator-Aktion.
+
+| Status | Ursache |
+| --- | --- |
+| `400` | Nicht parsbares JSON oder Adresse, `victim` und `source` aus verschiedenen Adressfamilien oder `ttl_seconds` außerhalb von `[1, 86400]`. |
+| `403` | `victim` liegt außerhalb Ihres Mandanten. Dieselbe einheitliche Ablehnung wie bei den Ban-Endpunkten, damit der Endpunkt kein Existenz-Orakel für die Hosts anderer Mandanten ist. |
+| `404` | Nur beim Unblock: kein lebender Block für dieses Paar. |
+| `409` | Die Datenebene fehlt oder ist deaktiviert; `victim` steht in `protected_whitelist`; `source` steht in `dataplane.allowlist`; `source` liegt innerhalb der geschützten `networks`; diese Quelle hält bereits 8 Opfer; oder es sind keine Policy-Slots mehr frei. |
+
+Die beiden Allowlist-Ablehnungen sind die interessanten, und sie sind Ablehnungen genau deshalb,
+weil die Alternative Stille ist: Der Datenpfad lässt eine Quelle aus der Allowlist auf Präzedenz 1
+und Verkehr zu einem geschützten Ziel auf Präzedenz 2 durch, beides **bevor** irgendeine Regel
+ausgewertet wird — so ein Block würde sich installieren und dann nie ein Paket treffen. Eine
+`source` innerhalb Ihrer eigenen `networks` wird ebenfalls abgelehnt: ein interner Host ist eine
+[Sperre](/docs/mitigation), kein Source-Block.
+
+<Callout type="warning" title="Ein Installationsfehler entfernt jedes Paar dieser Quelle">
+Die Paare einer Quelle teilen einen einzigen Kernel-Policy-Block, und das Rollback des Installers
+ist über diesen Block alles-oder-nichts. Schlägt eine Installation fehl, wird jedes Paar dieser
+Quelle entfernt, statt aufgezeichnet-aber-nicht-durchgesetzt zu bleiben, und der Fehler sagt das
+auch — fügen Sie die wieder hinzu, die Sie noch brauchen. Die Tabelle behauptet nie, etwas
+durchzusetzen, was der Kernel nicht tut.
+</Callout>
+
+<Callout type="info" title="Dieselben Garantien wie bei einer Sperre">
+TTLs sind verpflichtend und begrenzt, jedes Paar trägt seinen eigenen Ablauf in den Kernel (es endet
+also planmäßig, selbst wenn Kapkan stirbt), Installationen werden gegen
+`dataplane.limits.max_dynamic_rules` verbucht, Blocks überleben einen Neustart über die
+State-Datei, und `dry_run` wird beachtet — das Paar wird aufgezeichnet, mit `dry_run: true`
+zurückgegeben, und nichts erreicht eine Kernel-Map. Siehe
+[Source-Blocks](/docs/dataplane#source-blocks-aus-ihrem-eigenen-stack) für die Grenzen und
+[Sicherheitsmodell](/docs/safety).
+</Callout>
 
 ### Der Scrub-Knoten-Kanal
 

@@ -150,6 +150,28 @@ las reglas de TTL y de histéresis: caduca automáticamente como cualquier otro 
 regla que los bloqueos manuales eluden es el propio *umbral de detección* —ese es el sentido
 completo de un bloqueo manual—, pero nunca las salvaguardas de seguridad que rodean al anuncio.
 
+## Los bloqueos de origen también las heredan
+
+El [canal de bloqueo de orígenes](/docs/api#el-canal-de-bloqueo-de-orígenes) permite que tu propio
+stack pida a Kapkan descartar un origen en el plano de datos. Es una mutación que viene de fuera, así
+que se le exigen las mismas reglas:
+
+| Solicitud de bloqueo de origen | Resultado |
+| --- | --- |
+| `victim` está en `protected_whitelist` | `409` — el plano de datos deja pasar su tráfico antes de cualquier regla, así que el bloqueo nunca podría coincidir |
+| `source` está en `dataplane.allowlist` | `409` — la misma razón, un nivel de precedencia antes |
+| `source` está dentro de las `networks` configuradas | `409` — un host interno es un baneo, no un bloqueo de origen |
+| No hay plano de datos configurado o habilitado | `409` — no habría nada que lo aplicara |
+| `ttl_seconds` fuera de `1`–`86400` | `400` — ni entradas permanentes ni de duración cero |
+| Superaría los huecos de política compartidos | `409` — los baneos conservan los suyos; los bloqueos se rechazan primero |
+
+Aquí el TTL es **obligatorio** en lugar de tener valor por defecto: no existe un respaldo configurado
+para un bloqueo, así que quien llama no puede crear uno que sobreviva a su motivo. Cada par lleva su
+caducidad al kernel, así que deja de aplicarse a su hora incluso si el demonio muere — la misma
+seguridad pasiva que la [expiración de reglas](/docs/dataplane-tuning). `dry_run` se respeta
+exactamente igual que para un baneo: el par se registra, se devuelve con `dry_run: true`, y nada
+llega a un mapa del kernel.
+
 ## Relacionado
 
 - [Mitigación y RTBH](/docs/mitigation) — cómo funcionan de principio a fin los anuncios, los TTL, la histéresis y el tope.

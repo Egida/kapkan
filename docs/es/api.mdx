@@ -54,6 +54,8 @@ devuelve `403` en caso contrario. Consulta [Multi-tenencia](/docs/multi-tenancy)
 | POST | `/api/v1/ban` | Banear una dirección manualmente. |
 | POST | `/api/v1/unban` | Retirar un baneo manualmente. |
 | POST | `/api/v1/config/reload` | Releer el archivo de configuración (igual que `SIGHUP`). |
+| POST | `/api/v1/dataplane/sources` | Descartar un origen en el [plano de datos](/docs/dataplane), acotado a una víctima, con un TTL obligatorio. |
+| POST | `/api/v1/dataplane/sources/unblock` | Retirar de inmediato un bloqueo de origen. |
 | GET | `/api/v1/dataplane/rules` | El feed de reglas del [nodo de scrubbing](/docs/scrubbing#nodos-de-scrubbing-gestionados) (`agent`/`operator` sin acotar); long-poll con ETag, retenido hasta 30 s. |
 | POST | `/api/v1/dataplane/nodes/{name}/report` | El autoinforme orientativo de un nodo de scrubbing (`agent`/`operator` sin acotar). |
 | GET | `/api/v1/dataplane/nodes` | Inventario de nodos gestionados: vitalidad, configuración, recuentos de baneos por nodo (`viewer` sin acotar o superior). |
@@ -340,7 +342,8 @@ ciclo de vida.
 Devuelve el registro de auditoría atribuido al operador: quién emitió cada `ban`, `unban` o
 `config_reload`, cuándo, y el resultado (incluidas las acciones **rechazadas**). Los registros van
 de más reciente a más antiguo y el endpoint está acotado al tenant en el servidor. Acepta los parámetros de
-consulta opcionales `from`/`to` (RFC 3339), `action` (`ban`/`unban`/`config_reload`) y `target` (una IP), y
+consulta opcionales `from`/`to` (RFC 3339), `action`
+(`ban`/`unban`/`config_reload`/`source_block`/`source_unblock`) y `target` (una IP), y
 por defecto devuelve la última hora:
 
 ```json
@@ -442,6 +445,82 @@ token acotado a un tenant se rechaza con `403` y `config reload is restricted to
 
 Si la nueva configuración no se analiza o no se valida, la configuración en ejecución se mantiene intacta y el
 endpoint devuelve HTTP `400` con el error. Consulta [Configuración](/docs/configuration).
+
+### El canal de bloqueo de orígenes
+
+Dos endpoints permiten que quien ya termina el tráfico de una víctima — un nginx delante, un
+exportador de logs, un operador a las 3 de la mañana — entregue a Kapkan un **origen** para descartar
+en el [plano de datos XDP](/docs/dataplane), acotado a esa víctima y con un TTL obligatorio. La
+decisión se toma donde las peticiones son visibles; la aplicación ocurre en el kernel. Ambos exigen un
+token `operator`; al rol `agent` se le deniega.
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+| Campo | Obligatorio | Significado |
+| --- | --- | --- |
+| `victim` | sí | El destino protegido al que se acota el bloqueo. Es contra lo que se comprueba un token de tenant, y lo que evita que la evidencia de quien llama se convierta en un descarte global. |
+| `source` | sí | La dirección a descartar. Debe ser de la misma familia de direcciones que `victim`. |
+| `ttl_seconds` | sí para un bloqueo | Cuánto vive el bloqueo, de `1` a `86400` (24 h). No hay entradas permanentes. Bloquear de nuevo el mismo par conserva el `created_at` original y aplica el nuevo TTL: el refresco que necesita un exportador para mantener a un infractor persistente sin el vaivén de desbloquear y volver a bloquear. |
+| `reason` | no | Una nota libre que se lleva al [rastro de auditoría](/docs/audit). |
+
+La respuesta es el `SourceBlock` resultante:
+
+```json
+{
+  "source": "198.51.100.7",
+  "victim": "203.0.113.10",
+  "created_at": "2026-08-17T21:04:11Z",
+  "expires_at": "2026-08-17T21:14:11Z",
+  "dry_run": false,
+  "reason": "login flood"
+}
+```
+
+`POST /api/v1/dataplane/sources/unblock` toma los mismos `victim` y `source` (cualquier `ttl_seconds`
+se ignora) y retira de inmediato ese único par, para que nadie tenga que esperar un TTL que él mismo
+escribió. Devuelve el `SourceBlock` retirado, o `404` si no hay un par así vivo.
+
+#### Rechazos
+
+Un error de entrada es `400`; una solicitud bien formada rechazada por política es `409`. Cada
+llamada — incluido un rechazo — escribe un evento de auditoría atribuido, porque un bloqueo rechazado
+es en sí una acción de operador.
+
+| Estado | Causa |
+| --- | --- |
+| `400` | JSON o dirección no parseable, `victim` y `source` de familias de direcciones distintas, o `ttl_seconds` fuera de `[1, 86400]`. |
+| `403` | `victim` está fuera de tu tenant. El mismo rechazo uniforme que dan los endpoints de baneo, para que este endpoint no sea un oráculo de existencia de los hosts de otros tenants. |
+| `404` | Solo al desbloquear: no hay un bloqueo vivo para ese par. |
+| `409` | El plano de datos está ausente o deshabilitado; `victim` está en `protected_whitelist`; `source` está en `dataplane.allowlist`; `source` está dentro de las `networks` protegidas; este origen ya tiene 8 víctimas; o no quedan huecos de política. |
+
+Los dos rechazos por listas de permitidos son los interesantes, y son rechazos precisamente porque la
+alternativa es el silencio: el plano de datos deja pasar un origen permitido en la precedencia 1 y el
+tráfico a un destino protegido en la precedencia 2, ambos **antes** de evaluar una sola regla, así que
+ese bloqueo se instalaría y luego nunca coincidiría con un paquete. Un `source` dentro de tus propias
+`networks` también se rechaza: un host interno es un [baneo](/docs/mitigation), no un bloqueo de
+origen.
+
+<Callout type="warning" title="Un fallo de instalación retira todos los pares de ese origen">
+Los pares de un origen comparten un único bloque de política del kernel, y el rollback del instalador
+es todo-o-nada sobre ese bloque. Si una instalación falla, todos los pares de ese origen se retiran en
+lugar de quedar registrados-pero-sin-aplicar, y el error lo dice: vuelve a añadir los que aún
+necesites. La tabla nunca afirma estar aplicando algo que el kernel no aplica.
+</Callout>
+
+<Callout type="info" title="Las mismas garantías que un baneo">
+Los TTL son obligatorios y acotados, cada par lleva su propia caducidad al kernel (así que deja de
+aplicarse a su hora incluso si Kapkan muere), las instalaciones se contabilizan contra
+`dataplane.limits.max_dynamic_rules`, los bloqueos sobreviven a un reinicio mediante el archivo de
+estado, y se respeta `dry_run`: el par se registra, se devuelve con `dry_run: true`, y nada llega a un
+mapa del kernel. Consulta
+[Bloqueos de origen](/docs/dataplane#bloqueos-de-origen-desde-tu-propio-stack) para los límites y el
+[Modelo de seguridad](/docs/safety).
+</Callout>
 
 ### El canal de nodos de scrubbing
 
