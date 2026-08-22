@@ -298,6 +298,33 @@ meldet `ENFORCING` und die installierte Regelanzahl — und die [Nodes-Ansicht](
 Gehirns zeigt ihn als lebendig. Den umgeleiteten Verkehr zum Knoten zu bekommen, ist Aufgabe des
 [Leitfadens zur Netzwerkintegration](/docs/network-integration).
 
+### `nginx-exporter`
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter -log /var/log/nginx/kapkan.json.log -api http://127.0.0.1:8080
+```
+
+Liest ein nginx-JSON-Access-Log fortlaufend mit, misst Request-Raten pro Quelle und Fenster und
+übergibt Urteile an den [Source-Block-Kanal](/docs/api#der-source-block-kanal) des Gehirns. Das
+erforderliche `log_format`, die Schwellenwerte und die betrieblichen Grenzen stehen bei der
+Funktion selbst: [der
+Referenz-Exporter](/docs/dataplane#der-referenz-exporter-kapkan-nginx-exporter). Die globalen
+Flags des Daemons werden nicht gelesen; er hat durchweg eigene:
+
+| Flag | Standard | Beschreibung |
+| --- | --- | --- |
+| `-log <path>` | — (erforderlich) | Das nginx-Access-Log im dokumentierten JSON-`log_format`. |
+| `-api <url>` | `http://127.0.0.1:8080` | Die API-Basis-URL des Gehirns. |
+| `-token-env <name>` | `KAPKAN_API_TOKEN` | Umgebungsvariable mit einem **operator**-Token. |
+| `-victim <ip>` | — | Festes Opfer; übersteuert das `dst`-Feld des Logs. |
+| `-window <dur>` | `10s` | Messfenster. |
+| `-rps <n>` | `50` | Requests/Sekunde pro Quelle, ab denen ein Block scharfgestellt wird. |
+| `-min-requests <n>` | `100` | Untergrenze pro Fenster, bevor die Raten-Arithmetik greift. |
+| `-error-ratio <r>` | `0` | Verlangt zusätzlich diesen 4xx/5xx-Anteil (`0` deaktiviert die Achse). |
+| `-ttl <dur>` | `5m` | Block-TTL; eine noch heiße Quelle wird aufgefrischt, bevor sie verfällt. Muss mindestens `2×-window` betragen. |
+| `-observe` | aus | Urteile loggen, ohne sie zu übergeben. |
+| `-log-format` / `-log-level` | `json` / `info` | Das eigene Logging des Exporters. |
+
 ## Nächste Schritte
 
 - [Schnellstart](/docs/quickstart) — Kapkan herunterladen und im Dry-Run betreiben.

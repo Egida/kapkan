@@ -287,6 +287,33 @@ Confirma que un nodo está en marcha con `kapkan dataplane status` en el propio 
 `ENFORCING` y el recuento de reglas instaladas — y la [vista de Nodos](/docs/dashboard) del cerebro
 lo muestra vivo. Llevar el tráfico desviado hasta el nodo es la [guía de integración de red](/docs/network-integration).
 
+### `nginx-exporter`
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter -log /var/log/nginx/kapkan.json.log -api http://127.0.0.1:8080
+```
+
+Sigue un access log JSON de nginx, mide las tasas de peticiones por origen en cada ventana y
+publica los veredictos en el
+[canal de bloqueo de orígenes](/docs/api#el-canal-de-bloqueo-de-orígenes) del cerebro. El
+`log_format` requerido, los umbrales y los límites operativos viven con la funcionalidad:
+[el exportador de referencia](/docs/dataplane#el-exportador-de-referencia-kapkan-nginx-exporter).
+Los flags globales del demonio no se leen; todos los suyos son propios:
+
+| Flag | Por defecto | Descripción |
+| --- | --- | --- |
+| `-log <path>` | — (obligatorio) | El access log de nginx, en el `log_format` JSON documentado. |
+| `-api <url>` | `http://127.0.0.1:8080` | La URL base de la API del cerebro. |
+| `-token-env <name>` | `KAPKAN_API_TOKEN` | Variable de entorno que contiene un token de **operator**. |
+| `-victim <ip>` | — | Víctima fija; prevalece sobre el campo `dst` del log. |
+| `-window <dur>` | `10s` | Ventana de medición. |
+| `-rps <n>` | `50` | Peticiones/segundo por origen que arman un bloqueo. |
+| `-min-requests <n>` | `100` | Suelo por ventana antes de que se aplique la aritmética de tasas. |
+| `-error-ratio <r>` | `0` | Exige además esta proporción de 4xx/5xx (`0` desactiva ese eje). |
+| `-ttl <dur>` | `5m` | TTL del bloqueo; un origen aún caliente se refresca antes de caducar. Debe ser al menos `2×-window`. |
+| `-observe` | desactivado | Registra los veredictos sin publicarlos. |
+| `-log-format` / `-log-level` | `json` / `info` | El logging propio del exportador. |
+
 ## Próximos pasos
 
 - [Inicio rápido](/docs/quickstart): descarga Kapkan y ejecútalo en modo dry-run.

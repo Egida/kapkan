@@ -147,6 +147,67 @@ no-op acceptés. Le chemin de données laisse passer les deux avant qu'une seule
 l'intérieur de vos propres `networks` est également refusée : un hôte interne relève du
 bannissement, pas du blocage de source.
 
+### L'exportateur de référence : `kapkan nginx-exporter`
+
+Vous n'avez pas à écrire l'appelant vous-même. Le binaire en embarque un — un composant supporté,
+pas un exemple — qui suit un journal d'accès nginx, mesure le débit de requêtes de chaque source
+(et sa part de 4xx/5xx) envers une victime par fenêtre, et poste les verdicts sur le canal
+ci-dessus :
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter \
+  -log /var/log/nginx/kapkan.json.log \
+  -api http://127.0.0.1:8080 \
+  -rps 50 -min-requests 100 -window 10s -ttl 5m
+```
+
+Il n'attend qu'une chose de nginx — un journal d'accès JSON portant la source, la destination et
+le statut :
+
+```nginx
+log_format kapkan escape=json
+    '{"src":"$remote_addr","dst":"$server_addr","status":"$status"}';
+access_log /var/log/nginx/kapkan.json.log kapkan;
+```
+
+Les champs supplémentaires ne gênent pas (il les ignore), `dst` est la victime à laquelle chaque
+blocage est rattaché (`-victim` la remplace quand `$server_addr` n'est pas l'adresse protégée), et
+`-error-ratio 0.9` restreint les verdicts aux sources dont le trafic est majoritairement rejeté —
+laissez-le à `0` pour attraper aussi les floods bien formés. `-observe` exécute toute la boucle
+mais ne poste rien, en journalisant ce qu'il *bloquerait* : le mode d'essai pour un cerveau déjà
+en production (le `dry_run` du cerveau couvre, lui, le cas de tout le déploiement).
+
+Quelques repères sur ce que c'est : un seuil fixe écrit par un opérateur, appliqué là où les
+requêtes sont visibles — pas un détecteur (aucune baseline), pas un WAF (il ne lit jamais le
+contenu des requêtes — source, destination, statut, rien d'autre). Chaque garantie reste côté
+cerveau et chaque verdict y est audité comme celui de n'importe quel opérateur ; l'exportateur
+est un appelant d'API ordinaire et ne peut rien contourner. Il ne lit jamais l'historique du
+journal au démarrage, suit `logrotate` (les rotations en create-new sont vidangées jusqu'à la
+dernière ligne que contenait l'ancien fichier au moment du basculement ; ce qui peut encore
+échapper est ce que nginx écrit dans le fichier tourné *après* le basculement, jusqu'à sa propre
+réouverture — typiquement quelques millisecondes ; `copytruncate` comporte en plus une fenêtre de
+détection inhérente d'un cycle d'interrogation de 200 ms, préférez donc create-new), et une
+source durablement chaude est rafraîchie avant l'expiration de son TTL — c'est pourquoi `-ttl`
+doit valoir au moins deux fois `-window`, imposé au démarrage.
+
+<Callout type="warning" title="src doit être l'adresse du socket — et le socket doit être celui du client">
+Le blocage vise ce que dit le champ `src` du journal : `src` doit donc rester `$remote_addr` —
+l'adresse de la connexion TCP que nginx a acceptée. Ne substituez jamais une adresse tirée d'un
+en-tête (`X-Forwarded-For`, une valeur `realip` prise dans un en-tête non fiable) : les en-têtes
+sont écrits par l'attaquant, et un attaquant qui contrôle `src` choisit ce qui est bloqué. Et si
+ce nginx est derrière un répartiteur de charge ou un CDN, `$remote_addr` **est** ce répartiteur —
+un « blocage » couperait la porte d'entrée pour tout le monde. N'exécutez l'exportateur que sur
+la machine où les connexions des vrais clients se terminent.
+</Callout>
+
+Le token dont il a besoin est un token **operator** — un identifiant d'opérateur complet pour son
+tenant, pas un token taillé pour l'exportateur : qui le détient peut aussi bannir et débannir
+dans ce tenant. Limitez-le donc au tenant dont cette machine sert les victimes (voir
+[authentification](/docs/authentication)), gardez-le dans un fichier d'environnement appartenant
+à root, et considérez que la machine détient ce pouvoir. Pour un cerveau qui n'est pas sur la
+même machine, placez l'API derrière TLS — sinon le token traverse le réseau en clair, et
+l'exportateur le dit haut et fort au démarrage.
+
 ## Où aller ensuite
 
 Vous débutez ? Lisez [Installer le plan de données](/docs/dataplane-install) et mettez-le en service
