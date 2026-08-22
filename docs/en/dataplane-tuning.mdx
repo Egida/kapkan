@@ -62,12 +62,13 @@ and ports are rejected for `icmp`/`icmp6`); `match` also takes `src`, `src_port`
 `dst_port` and `payload`. The [configuration reference](/docs/configuration) lists
 every field and its allowed values in one table.
 
-### Matching TLS handshakes
+### Matching TLS and QUIC handshakes
 
-`match.payload` narrows on what the payload **begins with**. It has one value,
-`tls_client_hello`, which matches a TCP segment opening a TLS ClientHello — the
-shape a **TLS handshake flood** is made of, and the one message an ordinary
-connection sends exactly once:
+`match.payload` narrows on what the payload **begins with**. It has two values,
+one per transport: `tls_client_hello` matches a TCP segment opening a TLS
+ClientHello, and `quic_initial` matches a UDP datagram opening a QUIC v1
+Initial. Each is the shape a **handshake flood** is made of on its transport,
+and the one message an ordinary connection sends exactly once:
 
 ```yaml
 ratelimit_profiles:
@@ -123,13 +124,59 @@ and is forwarded, like anything else the parser cannot decide — the filter
 under-matches rather than over-matching, everywhere.
 
 It is also TCP-only, which is why `proto: tcp` is required rather than
-optional. **HTTP/3 is not covered**: its handshake is inside QUIC on UDP/443 and
-is encrypted before this filter sees a byte of it. For QUIC, a per-source
-ceiling on UDP/443 is the tool you have.
+optional. **HTTP/3's handshake is not this filter's**: it is inside QUIC on
+UDP/443 and is encrypted before this filter sees a byte of it — that transport
+is `quic_initial`'s job, below.
 
 And the encryption boundary is real in both directions: Kapkan matches the
 *shape* of a handshake, never its contents, and nothing in the data plane reads
 HTTP inside an established TLS session.
+</Callout>
+
+### Matching QUIC handshakes
+
+`quic_initial` is the UDP twin: it matches a datagram opening a **QUIC v1
+Initial** — the packet that starts every QUIC/HTTP-3 handshake, which the
+server must parse and answer with handshake crypto of its own. A flood of them
+is the QUIC counterpart of the ClientHello flood, and the same per-source
+ceiling is the tool:
+
+```yaml
+ratelimit_profiles:
+  - { name: quic_handshake_cap, pps: 20 }
+
+static_rules:
+  - name: cap_quic_handshakes
+    match: { proto: udp, dst_port: 443, payload: quic_initial }
+    action: ratelimit
+    profile: quic_handshake_cap
+```
+
+Only the handshake is metered: every packet of an established QUIC connection
+uses the short header form and does not match, so a client mid-download is not
+competing with new handshakes for the ceiling. `proto: udp` is required for
+the same say-what-you-mean reason `tls_client_hello` requires `tcp`.
+
+<Callout type="warning" title="What it deliberately does not do">
+The Initial is recognized from five bytes at a fixed offset: the long-header
+form with the Initial packet type, and version 1. **Version negotiation and
+QUIC v2 do not match** (v2 renumbers the packet types under a different
+version constant; its deployment is currently negligible), and a payload too
+short to decide is forwarded — under-match and forward, like everything else
+in the data plane.
+
+There is deliberately **no minimum-size test**, even though the RFC requires a
+client Initial to arrive in a ≥1200-byte datagram: a rule on this predicate
+must meter everything the server's QUIC stack has to parse, and runt
+"Initials" are exactly what an attacker would craft to slip under a size gate.
+
+One QUIC-specific caveat worth knowing: unlike TCP, where a spoofed source
+cannot complete the handshake that a ClientHello rides on, a QUIC Initial is
+the *first* packet — sources can be spoofed. A per-source `ratelimit` still
+caps each spoofed address, but an attacker rotating sources moves the load to
+the per-source LRU rather than the crypto stack. Size
+`limits.max_ratelimit_sources` accordingly, or pair the rule with a plain
+`drop` during an attack.
 </Callout>
 
 There is no detector-side `tls_handshake_flood` vector, and that is deliberate:
