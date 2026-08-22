@@ -62,12 +62,13 @@ static_rules:
 
 Chaque `name` ici — sur une règle comme sur un profil — est une étiquette que vous choisissez, pas un mot-clé ; c'est ainsi que la règle apparaît dans les compteurs, les journaux et la console. Le seul vocabulaire figé est celui des champs énumérés : `action` vaut `pass`, `drop` ou `ratelimit` ; `match.proto` vaut `tcp`, `udp`, `icmp` ou `icmp6` (non défini = n'importe lequel, et les ports sont rejetés pour `icmp`/`icmp6`) ; `match` accepte aussi `src`, `src_port`, `dst_port` et `payload`. La [référence de configuration](/docs/configuration) liste chaque champ et ses valeurs autorisées dans un seul tableau.
 
-### Faire correspondre les handshakes TLS
+### Faire correspondre les handshakes TLS et QUIC
 
-`match.payload` restreint sur ce par quoi la charge utile **commence**. Il a une seule valeur,
-`tls_client_hello`, qui correspond à un segment TCP ouvrant un ClientHello TLS — la forme dont est
-fait un **flood de handshakes TLS**, et le seul message qu'une connexion ordinaire envoie exactement
-une fois :
+`match.payload` restreint sur ce par quoi la charge utile **commence**. Il a deux valeurs, une par
+transport : `tls_client_hello` correspond à un segment TCP ouvrant un ClientHello TLS, et
+`quic_initial` à un datagramme UDP ouvrant un Initial QUIC v1. Chacune est la forme dont un **flood
+de handshakes** est fait sur son transport, et le seul message qu'une connexion ordinaire envoie
+exactement une fois :
 
 ```yaml
 ratelimit_profiles:
@@ -120,14 +121,57 @@ ClientHello réparti sur plusieurs segments TCP ne correspond pas et est transmi
 quoi l'analyseur ne peut pas trancher — le filtre sous-correspond plutôt que de sur-correspondre,
 partout.
 
-Il est aussi réservé à TCP, ce pourquoi `proto: tcp` est exigé plutôt qu'optionnel. **HTTP/3 n'est
-pas couvert** : son handshake est à l'intérieur de QUIC sur UDP/443 et est chiffré avant que ce
-filtre n'en voie le moindre octet. Pour QUIC, un plafond par source sur UDP/443 est l'outil dont
-vous disposez.
+Il est aussi réservé à TCP, ce pourquoi `proto: tcp` est exigé plutôt qu'optionnel. **Le handshake
+de HTTP/3 n'est pas l'affaire de ce filtre** : il est à l'intérieur de QUIC sur UDP/443 et est
+chiffré avant que ce filtre n'en voie le moindre octet — ce transport est le travail de
+`quic_initial`, ci-dessous.
 
 Et la frontière du chiffrement vaut dans les deux sens : Kapkan fait correspondre la *forme* d'un
 handshake, jamais son contenu, et rien dans le plan de données ne lit du HTTP à l'intérieur d'une
 session TLS établie.
+</Callout>
+
+### Faire correspondre les handshakes QUIC
+
+`quic_initial` est le jumeau UDP : il correspond à un datagramme ouvrant un **Initial QUIC v1** —
+le paquet qui démarre chaque handshake QUIC/HTTP-3, que le serveur doit analyser et auquel il doit
+répondre par sa propre cryptographie de handshake. Un flood de ces paquets est le pendant QUIC du
+flood de ClientHello, et le même plafond par source est l'outil :
+
+```yaml
+ratelimit_profiles:
+  - { name: quic_handshake_cap, pps: 20 }
+
+static_rules:
+  - name: cap_quic_handshakes
+    match: { proto: udp, dst_port: 443, payload: quic_initial }
+    action: ratelimit
+    profile: quic_handshake_cap
+```
+
+Seul le handshake est mesuré : chaque paquet d'une connexion QUIC établie utilise la forme d'en-tête
+courte et ne correspond pas — un client en plein téléchargement n'entre donc pas en concurrence avec
+les nouveaux handshakes pour le plafond. `proto: udp` est exigé pour la même raison que
+`tls_client_hello` exige `tcp` : dire explicitement ce que l'on vise.
+
+<Callout type="warning" title="Ce qu'il ne fait délibérément pas">
+L'Initial est reconnu à partir de cinq octets à un décalage fixe : la forme d'en-tête longue avec le
+type de paquet Initial, et la version 1. **La négociation de version et QUIC v2 ne correspondent
+pas** (v2 renumérote les types de paquet sous une autre constante de version ; son déploiement est
+aujourd'hui négligeable), et une charge utile trop courte pour trancher est transmise —
+sous-correspondre et transmettre, comme tout le reste dans le plan de données.
+
+Il n'y a délibérément **aucun test de taille minimale**, bien que la RFC exige qu'un Initial client
+arrive dans un datagramme de ≥ 1200 octets : une règle sur ce prédicat doit mesurer tout ce que la
+pile QUIC du serveur doit analyser, et des « Initials » tronqués sont exactement ce qu'un attaquant
+fabriquerait pour passer sous une barrière de taille.
+
+Une particularité de QUIC à connaître : contrairement à TCP, où une source usurpée ne peut pas
+achever le handshake sur lequel arrive un ClientHello, un Initial QUIC est le *premier* paquet — les
+sources peuvent être usurpées. Un `ratelimit` par source plafonne toujours chaque adresse usurpée,
+mais un attaquant qui fait tourner ses sources déplace la charge vers la LRU par source plutôt que
+vers la pile cryptographique. Dimensionnez `limits.max_ratelimit_sources` en conséquence, ou
+associez la règle à un simple `drop` pendant une attaque.
 </Callout>
 
 Il n'existe pas de vecteur `tls_handshake_flood` côté détection, et c'est délibéré : la détection
