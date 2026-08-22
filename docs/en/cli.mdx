@@ -299,7 +299,7 @@ daemon's global flags are not read; everything is its own:
 | `-rps <n>` | `50` | Per-source requests/second that arms a block. |
 | `-min-requests <n>` | `100` | Floor per window before rate arithmetic applies. |
 | `-error-ratio <r>` | `0` | Additionally require this 4xx/5xx share (`0` disables the axis). |
-| `-ttl <dur>` | `5m` | Block TTL; a still-hot source is refreshed before it lapses. |
+| `-ttl <dur>` | `5m` | Block TTL; a still-hot source is refreshed before it lapses. Must be at least `2×-window`. |
 | `-observe` | off | Log verdicts without posting them. |
 | `-log-format` / `-log-level` | `json` / `info` | The exporter's own logging. |
 

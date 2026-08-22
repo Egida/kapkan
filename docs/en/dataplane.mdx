@@ -163,13 +163,29 @@ Some grounding for what it is: a fixed threshold an operator wrote, applied wher
 visible — not a detector (no baselines), not a WAF (it never reads request content — source,
 destination, status, nothing else). Every guarantee stays brain-side and every verdict is
 audited there like any operator's; the exporter is an ordinary API caller and can bypass
-nothing. It follows rotations (prefer logrotate's default create-new mode; `copytruncate` has
-an inherent detection window that costs at most the lines written inside one 200ms poll), never
-reads log history on start, and a persistently hot source is refreshed before its TTL lapses
-rather than re-posted every window.
+nothing. It never reads log history on start, follows `logrotate` (create-new rotations are
+drained to the last line the old file held at the switch; what can still be missed is what
+nginx writes to the rotated file *after* the switch, until nginx's own reopen — typically
+milliseconds; `copytruncate` additionally has an inherent detection window of one 200ms poll,
+so prefer create-new), and a persistently hot source is refreshed before its TTL lapses —
+which is why `-ttl` must be at least twice `-window`, enforced at startup.
 
-The token it needs is an **operator** token — scope it to the tenant whose victims it serves
-(see [authentication](/docs/authentication)), and it can aim at nothing else.
+<Callout type="warning" title="src must be the socket's address — and the socket must be the client's">
+The block aims at whatever the log's `src` says, so `src` must stay `$remote_addr` — the
+address of the TCP connection nginx accepted. Never substitute a header-derived address
+(`X-Forwarded-For`, a `realip` value taken from an untrusted header): headers are
+attacker-written, and an attacker who controls `src` chooses what gets blocked. And if this
+nginx sits behind a load balancer or CDN, `$remote_addr` **is** that balancer — a "block"
+would cut the front door off for everyone. Run the exporter only on the box where real client
+connections terminate.
+</Callout>
+
+The token it needs is an **operator** token — a full operator credential for its tenant, not
+an exporter-shaped one: whoever holds it can also ban and unban inside that tenant, so scope
+it to the tenant whose victims this box serves (see [authentication](/docs/authentication)),
+keep it in a root-owned env file, and treat the box as holding that power. For a brain that is
+not on the same machine, put the API behind TLS — the token otherwise crosses the network in
+cleartext, and the exporter says so loudly at startup.
 
 ## Where to go next
 

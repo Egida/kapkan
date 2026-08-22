@@ -134,6 +134,48 @@ aceptadas. El plano de datos deja pasar ambos antes de evaluar una sola regla, a
 instalaría y luego no coincidiría con ningún paquete. Un origen dentro de tus propias `networks`
 también se rechaza: un host interno es un baneo, no un bloqueo de origen.
 
+### El exportador de referencia: `kapkan nginx-exporter`
+
+No tienes que escribir tú el programa que llama. El binario trae uno — un componente soportado, no
+un ejemplo — que sigue un access log de nginx, mide la tasa de peticiones de cada origen (y su
+proporción de 4xx/5xx) contra una víctima por ventana, y publica los veredictos en el canal de
+arriba:
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter \
+  -log /var/log/nginx/kapkan.json.log \
+  -api http://127.0.0.1:8080 \
+  -rps 50 -min-requests 100 -window 10s -ttl 5m
+```
+
+Necesita una sola cosa de nginx — un access log JSON con el origen, el destino y el estado:
+
+```nginx
+log_format kapkan escape=json
+    '{"src":"$remote_addr","dst":"$server_addr","status":"$status"}';
+access_log /var/log/nginx/kapkan.json.log kapkan;
+```
+
+Los campos extra no molestan (los ignora), `dst` es la víctima a la que se acota cada bloqueo
+(`-victim` prevalece cuando `$server_addr` no es la dirección protegida), y `-error-ratio 0.9`
+estrecha los veredictos a los orígenes cuyo tráfico es mayormente rechazos — déjalo en `0` para
+atrapar también los floods bien formados. `-observe` ejecuta el bucle completo pero no publica
+nada, registrando lo que *bloquearía*: el modo de prueba para un cerebro que ya está vivo (el
+`dry_run` propio del cerebro cubre el caso de todo el despliegue).
+
+Para dejar claro qué es: un umbral fijo que escribió un operador, aplicado donde las peticiones
+son visibles — no es un detector (sin baselines), ni un WAF (nunca lee el contenido de las
+peticiones — origen, destino, estado, nada más). Cada garantía se queda en el lado del cerebro y
+cada veredicto se audita allí como el de cualquier operador; el exportador es un cliente corriente
+de la API y no puede saltarse nada. Sigue las rotaciones (prefiere el modo create-new
+predeterminado de logrotate; `copytruncate` tiene una ventana de detección inherente que cuesta
+como mucho las líneas escritas dentro de un sondeo de 200 ms), nunca lee el historial del log al
+arrancar, y un origen persistentemente caliente se refresca antes de que su TTL caduque en lugar
+de volver a publicarse cada ventana.
+
+El token que necesita es un token de **operator** — acótalo al tenant cuyas víctimas sirve
+(ver [autenticación](/docs/authentication)), y no podrá apuntar a nada más.
+
 ## Adónde ir después
 
 ¿Nuevo en esto? Lee [Instalar el plano de datos](/docs/dataplane-install) y ponlo en marcha en dry-run,

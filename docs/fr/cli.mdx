@@ -298,6 +298,33 @@ Confirmez qu'un nœud tourne avec `kapkan dataplane status` sur le nœud lui-mê
 l'affiche vivant. Acheminer le trafic dévié jusqu'au nœud est le
 [guide d'intégration réseau](/docs/network-integration).
 
+### `nginx-exporter`
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter -log /var/log/nginx/kapkan.json.log -api http://127.0.0.1:8080
+```
+
+Suit un journal d'accès JSON de nginx, mesure les débits de requêtes par source et par fenêtre,
+et poste les verdicts sur le
+[canal de blocage de sources](/docs/api#le-canal-de-blocage-de-sources) du cerveau. Le
+`log_format` requis, les seuils et les bornes opérationnelles vivent avec la fonctionnalité :
+[l'exportateur de référence](/docs/dataplane#lexportateur-de-référence--kapkan-nginx-exporter).
+Les options globales du démon ne sont pas lues ; tout lui est propre :
+
+| Option | Défaut | Description |
+| --- | --- | --- |
+| `-log <path>` | — (requis) | Le journal d'accès nginx, dans le `log_format` JSON documenté. |
+| `-api <url>` | `http://127.0.0.1:8080` | L'URL de base de l'API du cerveau. |
+| `-token-env <name>` | `KAPKAN_API_TOKEN` | Variable d'environnement contenant un token **operator**. |
+| `-victim <ip>` | — | Victime fixe ; remplace le champ `dst` du journal. |
+| `-window <dur>` | `10s` | Fenêtre de mesure. |
+| `-rps <n>` | `50` | Requêtes/seconde par source qui arment un blocage. |
+| `-min-requests <n>` | `100` | Plancher par fenêtre avant que l'arithmétique de débit ne s'applique. |
+| `-error-ratio <r>` | `0` | Exige en plus cette part de 4xx/5xx (`0` désactive cet axe). |
+| `-ttl <dur>` | `5m` | TTL du blocage ; une source encore chaude est rafraîchie avant qu'il n'expire. |
+| `-observe` | désactivé | Journalise les verdicts sans les poster. |
+| `-log-format` / `-log-level` | `json` / `info` | La journalisation propre à l'exportateur. |
+
 ## Étapes suivantes
 
 - [Démarrage rapide](/docs/quickstart) — téléchargez Kapkan et exécutez-le en dry-run.

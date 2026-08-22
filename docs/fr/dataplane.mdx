@@ -147,6 +147,49 @@ no-op acceptés. Le chemin de données laisse passer les deux avant qu'une seule
 l'intérieur de vos propres `networks` est également refusée : un hôte interne relève du
 bannissement, pas du blocage de source.
 
+### L'exportateur de référence : `kapkan nginx-exporter`
+
+Vous n'avez pas à écrire l'appelant vous-même. Le binaire en embarque un — un composant supporté,
+pas un exemple — qui suit un journal d'accès nginx, mesure le débit de requêtes de chaque source
+(et sa part de 4xx/5xx) envers une victime par fenêtre, et poste les verdicts sur le canal
+ci-dessus :
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter \
+  -log /var/log/nginx/kapkan.json.log \
+  -api http://127.0.0.1:8080 \
+  -rps 50 -min-requests 100 -window 10s -ttl 5m
+```
+
+Il n'attend qu'une chose de nginx — un journal d'accès JSON portant la source, la destination et
+le statut :
+
+```nginx
+log_format kapkan escape=json
+    '{"src":"$remote_addr","dst":"$server_addr","status":"$status"}';
+access_log /var/log/nginx/kapkan.json.log kapkan;
+```
+
+Les champs supplémentaires ne gênent pas (il les ignore), `dst` est la victime à laquelle chaque
+blocage est rattaché (`-victim` la remplace quand `$server_addr` n'est pas l'adresse protégée), et
+`-error-ratio 0.9` restreint les verdicts aux sources dont le trafic est majoritairement rejeté —
+laissez-le à `0` pour attraper aussi les floods bien formés. `-observe` exécute toute la boucle
+mais ne poste rien, en journalisant ce qu'il *bloquerait* : le mode d'essai pour un cerveau déjà
+en production (le `dry_run` du cerveau couvre, lui, le cas de tout le déploiement).
+
+Quelques repères sur ce que c'est : un seuil fixe écrit par un opérateur, appliqué là où les
+requêtes sont visibles — pas un détecteur (aucune baseline), pas un WAF (il ne lit jamais le
+contenu des requêtes — source, destination, statut, rien d'autre). Chaque garantie reste côté
+cerveau et chaque verdict y est audité comme celui de n'importe quel opérateur ; l'exportateur
+est un appelant d'API ordinaire et ne peut rien contourner. Il suit les rotations (préférez le
+mode create-new par défaut de logrotate ; `copytruncate` comporte une fenêtre de détection
+inhérente qui coûte au plus les lignes écrites pendant un cycle d'interrogation de 200 ms), ne
+lit jamais l'historique du journal au démarrage, et une source durablement chaude est rafraîchie
+avant l'expiration de son TTL plutôt que repostée à chaque fenêtre.
+
+Le token dont il a besoin est un token **operator** — limitez-le au tenant dont il sert les
+victimes (voir [authentification](/docs/authentication)), et il ne pourra rien viser d'autre.
+
 ## Où aller ensuite
 
 Vous débutez ? Lisez [Installer le plan de données](/docs/dataplane-install) et mettez-le en service

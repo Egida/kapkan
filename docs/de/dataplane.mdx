@@ -139,6 +139,50 @@ akzeptierten No-ops. Der Datenpfad lässt beide durch, bevor irgendeine Regel au
 ein Block würde sich installieren und dann nie ein Paket treffen. Eine Quelle innerhalb Ihrer
 eigenen `networks` wird ebenfalls abgelehnt: ein interner Host ist eine Sperre, kein Source-Block.
 
+### Der Referenz-Exporter: `kapkan nginx-exporter`
+
+Sie müssen den Aufrufer nicht selbst schreiben. Das Binary liefert einen mit — eine unterstützte
+Komponente, kein Beispiel —, der ein nginx-Access-Log fortlaufend mitliest, die Request-Rate jeder
+Quelle (und ihren 4xx/5xx-Anteil) gegen ein Opfer pro Fenster misst und die Urteile an den Kanal
+oben übergibt:
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter \
+  -log /var/log/nginx/kapkan.json.log \
+  -api http://127.0.0.1:8080 \
+  -rps 50 -min-requests 100 -window 10s -ttl 5m
+```
+
+Von nginx braucht er genau eines — ein JSON-Access-Log mit Quelle, Ziel und Status:
+
+```nginx
+log_format kapkan escape=json
+    '{"src":"$remote_addr","dst":"$server_addr","status":"$status"}';
+access_log /var/log/nginx/kapkan.json.log kapkan;
+```
+
+Zusätzliche Felder sind unproblematisch (er ignoriert sie), `dst` ist das Opfer, an das jeder
+Block gebunden wird (`-victim` übersteuert es, wenn `$server_addr` nicht die geschützte Adresse
+ist), und `-error-ratio 0.9` engt die Urteile auf Quellen ein, deren Verkehr überwiegend aus
+Zurückweisungen besteht — lassen Sie es auf `0`, um auch wohlgeformte Fluten zu erfassen.
+`-observe` durchläuft die ganze Schleife, übergibt aber nichts und loggt, was er blocken *würde*:
+der Probemodus für ein Gehirn, das bereits live ist (das eigene `dry_run` des Gehirns deckt den
+deployment-weiten Fall ab).
+
+Zur Einordnung, was das ist: ein fester Schwellenwert, den ein Operator geschrieben hat,
+angewendet dort, wo die Requests sichtbar sind — kein Detektor (keine Baselines), keine WAF (er
+liest niemals Request-Inhalte — Quelle, Ziel, Status, sonst nichts). Jede Garantie bleibt auf
+Seiten des Gehirns, und jedes Urteil wird dort auditiert wie das eines jeden Operators; der
+Exporter ist ein gewöhnlicher API-Aufrufer und kann nichts umgehen. Er folgt Rotationen
+(bevorzugen Sie logrotates Standardmodus create-new; `copytruncate` hat ein inhärentes
+Erkennungsfenster, das höchstens die Zeilen kostet, die innerhalb eines 200-ms-Polls geschrieben
+werden), liest beim Start niemals Log-Historie, und eine beharrlich heiße Quelle wird
+aufgefrischt, bevor ihre TTL verfällt, statt in jedem Fenster erneut übergeben zu werden.
+
+Das Token, das er braucht, ist ein **operator**-Token — binden Sie es an den Mandanten, dessen
+Opfer er bedient (siehe [Authentifizierung](/docs/authentication)), und er kann auf nichts
+anderes zielen.
+
 ## Wohin als Nächstes
 
 Neu dabei? Lesen Sie [Datenebene installieren](/docs/dataplane-install) und fahren Sie sie im dry-run
