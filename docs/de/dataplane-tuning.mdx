@@ -59,12 +59,13 @@ static_rules:
 
 Jeder `name` hier — an einer Regel wie an einem Profil — ist eine Bezeichnung, die Sie selbst vergeben, kein Schlüsselwort; so heißt die Regel in Zählern, Logs und der Konsole. Festes Vokabular haben nur die Aufzählungsfelder: `action` ist `pass`, `drop` oder `ratelimit`; `match.proto` ist `tcp`, `udp`, `icmp` oder `icmp6` (nicht gesetzt heißt beliebig, und für `icmp`/`icmp6` werden Ports abgelehnt); `match` nimmt außerdem `src`, `src_port`, `dst_port` und `payload`. Die [Konfigurationsreferenz](/docs/configuration) listet jedes Feld und seine zulässigen Werte in einer Tabelle.
 
-### TLS-Handshakes matchen
+### TLS- und QUIC-Handshakes matchen
 
-`match.payload` grenzt darauf ein, **womit die Nutzlast beginnt**. Es hat einen Wert,
-`tls_client_hello`, der ein TCP-Segment matcht, das einen TLS ClientHello eröffnet — die Form, aus
-der ein **TLS-Handshake-Flood** besteht, und die eine Nachricht, die eine gewöhnliche Verbindung
-genau einmal sendet:
+`match.payload` grenzt darauf ein, **womit die Nutzlast beginnt**. Es hat zwei Werte, einen pro
+Transport: `tls_client_hello` matcht ein TCP-Segment, das einen TLS ClientHello eröffnet, und
+`quic_initial` matcht ein UDP-Datagramm, das ein QUIC-v1-Initial eröffnet. Jeder ist auf seinem
+Transport die Form, aus der ein **Handshake-Flood** besteht, und die eine Nachricht, die eine
+gewöhnliche Verbindung genau einmal sendet:
 
 ```yaml
 ratelimit_profiles:
@@ -117,13 +118,68 @@ wieder zusammen**. Ein über TCP-Segmente verteilter ClientHello matcht nicht un
 weitergeleitet, wie alles andere, worüber der Parser nicht entscheiden kann — der Filter matcht
 eher zu wenig als zu viel, überall.
 
-Es ist außerdem nur für TCP, weshalb `proto: tcp` erforderlich und nicht optional ist. **HTTP/3 ist
-nicht abgedeckt**: Sein Handshake steckt in QUIC über UDP/443 und ist verschlüsselt, bevor dieser
-Filter ein Byte davon sieht. Für QUIC ist eine Obergrenze pro Quelle auf UDP/443 das Werkzeug, das
-Sie haben.
+Es ist außerdem nur für TCP, weshalb `proto: tcp` erforderlich und nicht optional ist. **Der
+HTTP/3-Handshake ist nicht Sache dieses Filters**: Er steckt in QUIC über UDP/443 und ist
+verschlüsselt, bevor dieser Filter ein Byte davon sieht — dieser Transport ist die Aufgabe von
+`quic_initial`, weiter unten.
 
 Und die Verschlüsselungsgrenze gilt in beide Richtungen: Kapkan matcht die *Form* eines Handshakes,
 nie dessen Inhalt, und nichts in der Datenebene liest HTTP innerhalb einer etablierten TLS-Sitzung.
+</Callout>
+
+### QUIC-Handshakes matchen
+
+`quic_initial` ist der UDP-Zwilling: Es matcht ein Datagramm, das ein **QUIC-v1-Initial**
+eröffnet — das Paket, mit dem jeder QUIC/HTTP-3-Handshake beginnt und das der Server parsen
+und mit eigener Handshake-Kryptografie beantworten muss. Ein Flood daraus ist das
+QUIC-Gegenstück zum ClientHello-Flood, und dieselbe Obergrenze pro Quelle ist das Werkzeug:
+
+```yaml
+ratelimit_profiles:
+  - { name: quic_handshake_cap, pps: 20 }
+
+static_rules:
+  - name: cap_quic_handshakes
+    match: { proto: udp, dst_port: 443, payload: quic_initial }
+    action: ratelimit
+    profile: quic_handshake_cap
+```
+
+Gemessen wird nur der Handshake: Jedes Paket einer etablierten QUIC-Verbindung verwendet die
+Short-Header-Form und matcht nicht — ein Client mitten im Download konkurriert also nicht mit
+neuen Handshakes um die Obergrenze. `proto: udp` ist aus demselben
+Sagen-was-man-meint-Grund erforderlich, aus dem `tls_client_hello` `tcp` verlangt.
+
+<Callout type="warning" title="Ordnen Sie sie über Ihre breitere UDP/443-Regel">
+Dieselbe Falle wie beim TLS-Zwilling — der erste Treffer gewinnt —, und hier führen Sie die
+breitere Regel wahrscheinlich schon: Frühere Versionen dieser Seite empfahlen eine schlichte
+Obergrenze pro Quelle auf `{proto: udp, dst_port: 443}` als das QUIC-Werkzeug. Diese Regel matcht
+auch Initials, eine `quic_initial`-Regel *darunter* greift also nie. Setzen Sie die engere
+Handshake-Regel zuerst; stimmt die Reihenfolge nicht, benennt Kapkan die tote Regel in einer
+`WARN`-Zeile bei jeder Policy-Anwendung und in `kapkan -check-config` — siehe
+[Regeln, die nie greifen](#regeln-die-nie-greifen).
+</Callout>
+
+<Callout type="warning" title="Was es bewusst nicht tut">
+Das Initial wird an fünf Bytes an einem festen Offset erkannt: die Long-Header-Form mit dem
+Initial-Pakettyp und Version 1. **Version Negotiation und QUIC v2 matchen nicht** (v2
+nummeriert die Pakettypen unter einer anderen Versionskonstante neu; seine Verbreitung ist
+derzeit vernachlässigbar), und eine Nutzlast, die zu kurz für eine Entscheidung ist, wird
+weitergeleitet — eher zu wenig matchen und weiterleiten, wie überall in der Datenebene.
+
+Es gibt bewusst **keinen Mindestgrößen-Test**, obwohl die RFC verlangt, dass ein
+Client-Initial in einem Datagramm von ≥ 1200 Bytes ankommt: Eine Regel auf diesem Prädikat
+muss alles messen, was der QUIC-Stack des Servers parsen muss, und verkürzte „Initials“
+sind genau das, was ein Angreifer bauen würde, um unter einer Größenschranke
+durchzuschlüpfen.
+
+Ein QUIC-spezifischer Vorbehalt, den man kennen sollte: Anders als bei TCP, wo eine
+gefälschte Quelle den Handshake, auf dem ein ClientHello aufsetzt, nicht abschließen kann,
+ist ein QUIC-Initial das *erste* Paket — Quellen können gefälscht sein. Ein `ratelimit` pro
+Quelle deckelt weiterhin jede gefälschte Adresse, aber ein Angreifer, der die Quellen
+rotiert, verlagert die Last auf die LRU-Tabelle pro Quelle statt auf den Krypto-Stack.
+Dimensionieren Sie `limits.max_ratelimit_sources` entsprechend, oder kombinieren Sie die
+Regel während eines Angriffs mit einem schlichten `drop`.
 </Callout>
 
 Es gibt keinen detektorseitigen Vektor `tls_handshake_flood`, und das ist Absicht: Die Erkennung
@@ -204,6 +260,13 @@ Eine `ratelimit`-Aktion wird **pro Quelladresse** durchgesetzt, nicht über den 
 Opfers hinweg. Jede Quelle erhält ihren eigenen Token-Bucket, sodass ein Limit von *N* Paketen pro
 Sekunde jede einzelne Quelle auf *N* begrenzt — eine verteilte Flut wird pro Teilnehmer gedrosselt,
 anstatt tausend Quellen eine aggregierte Obergrenze teilen (und erschöpfen) zu lassen.
+
+Das **Profil ist Teil des Bucket-Schlüssels** (`{victim, source, profile}`), und das wirkt in beide
+Richtungen: Zwei Regeln, die *dasselbe* Profil nennen, zehren pro Quelle von **einem gemeinsamen
+Budget** — ihre gematchten Pakete konkurrieren miteinander —, während Regeln mit getrennten Profilen
+unabhängig messen. Vergeben Sie ein Profil pro unabhängig zu messender Sache; genau deshalb
+verwenden die TLS- und QUIC-Handshake-Beispiele auf dieser Seite zwei Profile, statt eines zu
+teilen.
 
 ```yaml
 ratelimit_profiles:
