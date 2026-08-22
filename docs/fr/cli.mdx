@@ -321,7 +321,7 @@ Les options globales du démon ne sont pas lues ; tout lui est propre :
 | `-rps <n>` | `50` | Requêtes/seconde par source qui arment un blocage. |
 | `-min-requests <n>` | `100` | Plancher par fenêtre avant que l'arithmétique de débit ne s'applique. |
 | `-error-ratio <r>` | `0` | Exige en plus cette part de 4xx/5xx (`0` désactive cet axe). |
-| `-ttl <dur>` | `5m` | TTL du blocage ; une source encore chaude est rafraîchie avant qu'il n'expire. |
+| `-ttl <dur>` | `5m` | TTL du blocage ; une source encore chaude est rafraîchie avant qu'il n'expire. Doit valoir au moins `2×-window`. |
 | `-observe` | désactivé | Journalise les verdicts sans les poster. |
 | `-log-format` / `-log-level` | `json` / `info` | La journalisation propre à l'exportateur. |
 

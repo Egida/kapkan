@@ -173,15 +173,32 @@ Zur Einordnung, was das ist: ein fester Schwellenwert, den ein Operator geschrie
 angewendet dort, wo die Requests sichtbar sind — kein Detektor (keine Baselines), keine WAF (er
 liest niemals Request-Inhalte — Quelle, Ziel, Status, sonst nichts). Jede Garantie bleibt auf
 Seiten des Gehirns, und jedes Urteil wird dort auditiert wie das eines jeden Operators; der
-Exporter ist ein gewöhnlicher API-Aufrufer und kann nichts umgehen. Er folgt Rotationen
-(bevorzugen Sie logrotates Standardmodus create-new; `copytruncate` hat ein inhärentes
-Erkennungsfenster, das höchstens die Zeilen kostet, die innerhalb eines 200-ms-Polls geschrieben
-werden), liest beim Start niemals Log-Historie, und eine beharrlich heiße Quelle wird
-aufgefrischt, bevor ihre TTL verfällt, statt in jedem Fenster erneut übergeben zu werden.
+Exporter ist ein gewöhnlicher API-Aufrufer und kann nichts umgehen. Er liest beim Start niemals
+Log-Historie, folgt `logrotate` (Create-new-Rotationen werden beim Wechsel bis zur letzten Zeile
+ausgelesen, die die alte Datei hielt; verpasst werden kann nur noch, was nginx *nach* dem Wechsel
+in die rotierte Datei schreibt, bis zu nginx' eigenem Reopen — typischerweise Millisekunden;
+`copytruncate` hat zusätzlich ein inhärentes Erkennungsfenster von einem 200-ms-Poll, bevorzugen
+Sie also create-new), und eine beharrlich heiße Quelle wird aufgefrischt, bevor ihre TTL
+verfällt — weshalb `-ttl` mindestens das Doppelte von `-window` betragen muss, was beim Start
+erzwungen wird.
 
-Das Token, das er braucht, ist ein **operator**-Token — binden Sie es an den Mandanten, dessen
-Opfer er bedient (siehe [Authentifizierung](/docs/authentication)), und er kann auf nichts
-anderes zielen.
+<Callout type="warning" title="src muss die Adresse des Sockets sein — und der Socket muss der des Clients sein">
+Der Block zielt auf das, was das `src` des Logs sagt, also muss `src` `$remote_addr` bleiben —
+die Adresse der TCP-Verbindung, die nginx angenommen hat. Setzen Sie niemals eine aus Headern
+abgeleitete Adresse ein (`X-Forwarded-For`, ein `realip`-Wert aus einem nicht vertrauenswürdigen
+Header): Header schreibt der Angreifer, und ein Angreifer, der `src` kontrolliert, wählt aus, was
+geblockt wird. Und sitzt dieses nginx hinter einem Load Balancer oder CDN, **ist** `$remote_addr`
+dieser Balancer — ein „Block“ würde die Eingangstür für alle kappen. Betreiben Sie den Exporter
+nur auf der Maschine, an der echte Client-Verbindungen terminieren.
+</Callout>
+
+Das Token, das er braucht, ist ein **operator**-Token — eine vollwertige Operator-Berechtigung
+für seinen Mandanten, kein auf den Exporter zugeschnittenes: Wer es hält, kann in diesem
+Mandanten auch bannen und entbannen. Binden Sie es also an den Mandanten, dessen Opfer diese
+Maschine bedient (siehe [Authentifizierung](/docs/authentication)), legen Sie es in eine
+root-eigene Env-Datei und behandeln Sie die Maschine als Trägerin dieser Macht. Für ein Gehirn,
+das nicht auf derselben Maschine läuft, stellen Sie die API hinter TLS — andernfalls quert das
+Token das Netz im Klartext, und der Exporter sagt das beim Start unüberhörbar.
 
 ## Wohin als Nächstes
 

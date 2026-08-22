@@ -321,7 +321,7 @@ Flags des Daemons werden nicht gelesen; er hat durchweg eigene:
 | `-rps <n>` | `50` | Requests/Sekunde pro Quelle, ab denen ein Block scharfgestellt wird. |
 | `-min-requests <n>` | `100` | Untergrenze pro Fenster, bevor die Raten-Arithmetik greift. |
 | `-error-ratio <r>` | `0` | Verlangt zusätzlich diesen 4xx/5xx-Anteil (`0` deaktiviert die Achse). |
-| `-ttl <dur>` | `5m` | Block-TTL; eine noch heiße Quelle wird aufgefrischt, bevor sie verfällt. |
+| `-ttl <dur>` | `5m` | Block-TTL; eine noch heiße Quelle wird aufgefrischt, bevor sie verfällt. Muss mindestens `2×-window` betragen. |
 | `-observe` | aus | Urteile loggen, ohne sie zu übergeben. |
 | `-log-format` / `-log-level` | `json` / `info` | Das eigene Logging des Exporters. |
 
