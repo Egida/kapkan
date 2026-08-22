@@ -130,6 +130,47 @@ The datapath passes both before any rule is evaluated, so such a block would ins
 never match a packet. A source inside your own `networks` is refused too — an internal host is a
 ban, not a source block.
 
+### The reference exporter: `kapkan nginx-exporter`
+
+You do not have to write the caller yourself. The binary ships one — a supported component, not
+an example — that tails an nginx access log, measures each source's request rate (and 4xx/5xx
+share) against a victim per window, and posts the verdicts to the channel above:
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter \
+  -log /var/log/nginx/kapkan.json.log \
+  -api http://127.0.0.1:8080 \
+  -rps 50 -min-requests 100 -window 10s -ttl 5m
+```
+
+It needs one thing from nginx — a JSON access log with the source, the destination and the
+status:
+
+```nginx
+log_format kapkan escape=json
+    '{"src":"$remote_addr","dst":"$server_addr","status":"$status"}';
+access_log /var/log/nginx/kapkan.json.log kapkan;
+```
+
+Extra fields are fine (it ignores them), `dst` is the victim each block is scoped to
+(`-victim` overrides it when `$server_addr` is not the protected address), and `-error-ratio
+0.9` narrows verdicts to sources whose traffic is mostly rejects — leave it at `0` to catch
+well-formed floods too. `-observe` runs the whole loop but posts nothing, logging what it
+*would* block: the trial mode for a brain that is already live (the brain's own `dry_run`
+covers the deployment-wide case).
+
+Some grounding for what it is: a fixed threshold an operator wrote, applied where requests are
+visible — not a detector (no baselines), not a WAF (it never reads request content — source,
+destination, status, nothing else). Every guarantee stays brain-side and every verdict is
+audited there like any operator's; the exporter is an ordinary API caller and can bypass
+nothing. It follows rotations (prefer logrotate's default create-new mode; `copytruncate` has
+an inherent detection window that costs at most the lines written inside one 200ms poll), never
+reads log history on start, and a persistently hot source is refreshed before its TTL lapses
+rather than re-posted every window.
+
+The token it needs is an **operator** token — scope it to the tenant whose victims it serves
+(see [authentication](/docs/authentication)), and it can aim at nothing else.
+
 ## Where to go next
 
 New to it? Read [Installing the data plane](/docs/dataplane-install) and bring it up in dry-run,

@@ -277,6 +277,32 @@ Confirm a running node with `kapkan dataplane status` on the node itself — it 
 and the installed rule count — and the brain's [Nodes view](/docs/dashboard) shows it alive.
 Getting the diverted traffic to the node is the [network integration guide](/docs/network-integration).
 
+### `nginx-exporter`
+
+```sh
+KAPKAN_API_TOKEN=... kapkan nginx-exporter -log /var/log/nginx/kapkan.json.log -api http://127.0.0.1:8080
+```
+
+Tails an nginx JSON access log, measures per-source request rates per window, and posts verdicts
+to the brain's [source-block channel](/docs/api#the-source-block-channel). The required
+`log_format`, the thresholds and the operational bounds live with the feature:
+[the reference exporter](/docs/dataplane#the-reference-exporter-kapkan-nginx-exporter). The
+daemon's global flags are not read; everything is its own:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-log <path>` | — (required) | The nginx access log, in the documented JSON `log_format`. |
+| `-api <url>` | `http://127.0.0.1:8080` | The brain's API base URL. |
+| `-token-env <name>` | `KAPKAN_API_TOKEN` | Env var holding an **operator** token. |
+| `-victim <ip>` | — | Fixed victim; overrides the log's `dst` field. |
+| `-window <dur>` | `10s` | Measurement window. |
+| `-rps <n>` | `50` | Per-source requests/second that arms a block. |
+| `-min-requests <n>` | `100` | Floor per window before rate arithmetic applies. |
+| `-error-ratio <r>` | `0` | Additionally require this 4xx/5xx share (`0` disables the axis). |
+| `-ttl <dur>` | `5m` | Block TTL; a still-hot source is refreshed before it lapses. |
+| `-observe` | off | Log verdicts without posting them. |
+| `-log-format` / `-log-level` | `json` / `info` | The exporter's own logging. |
+
 ## Next steps
 
 - [Quickstart](/docs/quickstart) — download Kapkan and run it in dry-run.
