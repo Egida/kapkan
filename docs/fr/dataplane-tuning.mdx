@@ -154,6 +154,16 @@ courte et ne correspond pas — un client en plein téléchargement n'entre donc
 les nouveaux handshakes pour le plafond. `proto: udp` est exigé pour la même raison que
 `tls_client_hello` exige `tcp` : dire explicitement ce que l'on vise.
 
+<Callout type="warning" title="Placez-la au-dessus de votre règle UDP/443 plus large">
+Le même piège de première correspondance que pour son jumeau TLS — et ici il est probable que vous
+ayez déjà la règle plus large : les versions précédentes de cette page recommandaient un simple
+plafond par source sur `{proto: udp, dst_port: 443}` comme outil QUIC. Cette règle correspond aussi
+aux Initials, si bien qu'une règle `quic_initial` écrite *en dessous* ne s'applique jamais. Mettez
+la règle de handshake, plus étroite, en premier ; si l'ordre est mauvais, Kapkan nomme la règle
+morte dans un `WARN` à chaque application de politique et dans `kapkan -check-config` — voir
+[Règles qui ne peuvent jamais s'appliquer](#règles-qui-ne-peuvent-jamais-sappliquer).
+</Callout>
+
 <Callout type="warning" title="Ce qu'il ne fait délibérément pas">
 L'Initial est reconnu à partir de cinq octets à un décalage fixe : la forme d'en-tête longue avec le
 type de paquet Initial, et la version 1. **La négociation de version et QUIC v2 ne correspondent
@@ -255,6 +265,12 @@ Une action `ratelimit` est appliquée **par adresse source**, et non sur l'ensem
 victime. Chaque source obtient son propre seau à jetons, de sorte qu'une limite de *N* paquets par
 seconde maintient chaque source individuelle à *N* — un flood distribué est étranglé par participant,
 plutôt que de laisser un millier de sources se partager (et épuiser) un seul plafond agrégé.
+
+Le **profil fait partie de la clé du seau** (`{victim, source, profile}`), ce qui joue dans les deux
+sens : deux règles nommant le *même* profil puisent dans **un seul budget partagé** par source —
+leurs paquets correspondants se font concurrence — tandis que des règles aux profils distincts
+mesurent indépendamment. Nommez un profil par chose mesurée indépendamment ; c'est pourquoi les
+exemples de handshake TLS et QUIC de cette page utilisent deux profils au lieu d'en partager un.
 
 ```yaml
 ratelimit_profiles:

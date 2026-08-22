@@ -148,6 +148,16 @@ corta y no coincide, así que un cliente a mitad de una descarga no compite con 
 por el techo. `proto: udp` es obligatorio por la misma razón — decir lo que se quiere decir — por la
 que `tls_client_hello` exige `tcp`.
 
+<Callout type="warning" title="Colócala por encima de tu regla más amplia de UDP/443">
+La misma trampa de «gana la primera coincidencia» que su gemela TLS — y aquí es probable que la
+regla amplia ya exista: versiones anteriores de esta página recomendaban un techo por origen simple
+sobre `{proto: udp, dst_port: 443}` como la herramienta para QUIC. Esa regla también coincide con
+los Initials, así que una regla `quic_initial` escrita *por debajo* de ella nunca actúa. Pon primero
+la regla de handshake más estrecha; si el orden es el equivocado, Kapkan nombra la regla muerta en
+un `WARN` en cada aplicación de política y en `kapkan -check-config` — consulta [Reglas que nunca
+pueden actuar](#reglas-que-nunca-pueden-actuar).
+</Callout>
+
 <Callout type="warning" title="Lo que deliberadamente no hace">
 El Initial se reconoce por cinco bytes en un desplazamiento fijo: la forma de cabecera larga con el
 tipo de paquete Initial, y la versión 1. **La negociación de versión y QUIC v2 no coinciden** (v2
@@ -246,6 +256,12 @@ Una acción `ratelimit` se aplica **por dirección de origen**, no sobre el trá
 conjunto. Cada origen recibe su propio cubo de tokens, así que un límite de *N* paquetes por segundo
 mantiene a cada origen individual en *N* — una inundación distribuida se estrangula por participante,
 en vez de dejar que mil orígenes compartan (y agoten) un único techo agregado.
+
+El **perfil forma parte de la clave del cubo** (`{victim, source, profile}`), y eso corta en ambos
+sentidos: dos reglas que nombran el *mismo* perfil consumen **un único presupuesto compartido** por
+origen — sus paquetes coincidentes compiten entre sí — mientras que reglas con perfiles separados
+miden de forma independiente. Nombra un perfil por cada cosa que deba medirse por separado; por eso
+los ejemplos de handshake TLS y QUIC de esta página usan dos perfiles en lugar de compartir uno.
 
 ```yaml
 ratelimit_profiles:

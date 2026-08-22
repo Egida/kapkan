@@ -150,6 +150,16 @@ Short-Header-Form und matcht nicht — ein Client mitten im Download konkurriert
 neuen Handshakes um die Obergrenze. `proto: udp` ist aus demselben
 Sagen-was-man-meint-Grund erforderlich, aus dem `tls_client_hello` `tcp` verlangt.
 
+<Callout type="warning" title="Ordnen Sie sie über Ihre breitere UDP/443-Regel">
+Dieselbe Falle wie beim TLS-Zwilling — der erste Treffer gewinnt —, und hier führen Sie die
+breitere Regel wahrscheinlich schon: Frühere Versionen dieser Seite empfahlen eine schlichte
+Obergrenze pro Quelle auf `{proto: udp, dst_port: 443}` als das QUIC-Werkzeug. Diese Regel matcht
+auch Initials, eine `quic_initial`-Regel *darunter* greift also nie. Setzen Sie die engere
+Handshake-Regel zuerst; stimmt die Reihenfolge nicht, benennt Kapkan die tote Regel in einer
+`WARN`-Zeile bei jeder Policy-Anwendung und in `kapkan -check-config` — siehe
+[Regeln, die nie greifen](#regeln-die-nie-greifen).
+</Callout>
+
 <Callout type="warning" title="Was es bewusst nicht tut">
 Das Initial wird an fünf Bytes an einem festen Offset erkannt: die Long-Header-Form mit dem
 Initial-Pakettyp und Version 1. **Version Negotiation und QUIC v2 matchen nicht** (v2
@@ -250,6 +260,13 @@ Eine `ratelimit`-Aktion wird **pro Quelladresse** durchgesetzt, nicht über den 
 Opfers hinweg. Jede Quelle erhält ihren eigenen Token-Bucket, sodass ein Limit von *N* Paketen pro
 Sekunde jede einzelne Quelle auf *N* begrenzt — eine verteilte Flut wird pro Teilnehmer gedrosselt,
 anstatt tausend Quellen eine aggregierte Obergrenze teilen (und erschöpfen) zu lassen.
+
+Das **Profil ist Teil des Bucket-Schlüssels** (`{victim, source, profile}`), und das wirkt in beide
+Richtungen: Zwei Regeln, die *dasselbe* Profil nennen, zehren pro Quelle von **einem gemeinsamen
+Budget** — ihre gematchten Pakete konkurrieren miteinander —, während Regeln mit getrennten Profilen
+unabhängig messen. Vergeben Sie ein Profil pro unabhängig zu messender Sache; genau deshalb
+verwenden die TLS- und QUIC-Handshake-Beispiele auf dieser Seite zwei Profile, statt eines zu
+teilen.
 
 ```yaml
 ratelimit_profiles:
