@@ -157,6 +157,16 @@ uses the short header form and does not match, so a client mid-download is not
 competing with new handshakes for the ceiling. `proto: udp` is required for
 the same say-what-you-mean reason `tls_client_hello` requires `tcp`.
 
+<Callout type="warning" title="Order it above your broader UDP/443 rule">
+The same first-match-wins trap as its TLS twin — and here it is likely you
+already have the broader rule: earlier releases of this page recommended a
+plain per-source ceiling on `{proto: udp, dst_port: 443}` as the QUIC tool.
+That rule matches Initials too, so a `quic_initial` rule written *below* it
+never fires. Put the narrower handshake rule first; get it wrong and Kapkan
+names the dead rule in a `WARN` on every apply and in `kapkan -check-config` —
+see [Rules that can never fire](#rules-that-can-never-fire).
+</Callout>
+
 <Callout type="warning" title="What it deliberately does not do">
 The Initial is recognized from five bytes at a fixed offset: the long-header
 form with the Initial packet type, and version 1. **Version negotiation and
@@ -253,6 +263,12 @@ A `ratelimit` action is enforced **per source address**, not across the victim's
 whole. Each source gets its own token bucket, so a limit of *N* packets per second holds every
 individual source to *N* — a distributed flood is throttled per participant, rather than letting a
 thousand sources share (and exhaust) one aggregate ceiling.
+
+The **profile is part of the bucket key** (`{victim, source, profile}`), which cuts both ways:
+two rules naming the *same* profile draw down **one shared budget** per source — their matched
+packets compete — while rules with separate profiles meter independently. Name one profile per
+independently-metered thing; it is why the TLS and QUIC handshake examples on this page use two
+profiles rather than sharing one.
 
 ```yaml
 ratelimit_profiles:
