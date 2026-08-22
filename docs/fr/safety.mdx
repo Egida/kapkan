@@ -154,6 +154,28 @@ toute autre annonce. La seule règle que les bannissements manuels contournent e
 détection* lui-même — c'est tout l'intérêt d'un bannissement manuel — mais jamais les garde-fous de
 sécurité entourant l'annonce.
 
+## Les blocages de sources en héritent aussi
+
+Le [canal de blocage de sources](/docs/api#le-canal-de-blocage-de-sources) permet à votre propre pile
+de demander à Kapkan de rejeter une source dans le plan de données. C'est une mutation venue de
+l'extérieur, elle est donc tenue aux mêmes règles :
+
+| Requête de blocage de source | Résultat |
+| --- | --- |
+| `victim` est dans `protected_whitelist` | `409` — le chemin de données laisse passer son trafic avant toute règle, le blocage ne pourrait donc jamais correspondre |
+| `source` est dans `dataplane.allowlist` | `409` — même raison, un niveau de précédence plus tôt |
+| `source` est à l'intérieur des `networks` configurés | `409` — un hôte interne relève du bannissement, pas du blocage de source |
+| Aucun plan de données configuré ou activé | `409` — rien ne pourrait l'appliquer |
+| `ttl_seconds` hors de `1`–`86400` | `400` — ni entrées permanentes, ni entrées de durée nulle |
+| Dépasserait les emplacements de politique partagés | `409` — les bannissements gardent les leurs ; les blocages sont refusés d'abord |
+
+Le TTL est ici **obligatoire** plutôt que doté d'une valeur par défaut : il n'existe aucun repli
+configuré pour un blocage, un appelant ne peut donc pas en créer un qui survive à sa raison d'être.
+Chaque paire porte son expiration dans le noyau, elle cesse donc de s'appliquer à l'heure prévue même
+si le démon meurt — la même sécurité passive que l'[expiration des
+règles](/docs/dataplane-tuning). `dry_run` est respecté exactement comme pour un bannissement : la
+paire est enregistrée, renvoyée avec `dry_run: true`, et rien n'atteint une map du noyau.
+
 ## Liens connexes
 
 - [Atténuation RTBH](/docs/mitigation) — comment les annonces, les TTL, l'hystérésis et le plafond fonctionnent de bout en bout.

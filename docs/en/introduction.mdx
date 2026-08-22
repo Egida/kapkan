@@ -21,8 +21,11 @@ Kapkan is a free replacement for the features commercial flow-DDoS products char
 <Callout type="info" title="New to BGP, RTBH or NetFlow?">
 That's fine — the [Quickstart](/docs/quickstart) walks you through it, the
 [Glossary](/docs/glossary) explains every term, and Kapkan won't touch a single route until
-you say so. Kapkan handles *volumetric* attacks (floods that try to saturate your link or
-host with raw packet and bit volume), not application-layer attacks.
+you say so. Kapkan *detects* **volumetric** attacks (floods that try to saturate your link or
+host with raw packet and bit volume), not application-layer ones. It can still *enforce* an
+application-layer decision somebody else made: whatever already terminates the traffic can
+hand it a source to drop through the
+[source-block channel](/docs/api#the-source-block-channel).
 </Callout>
 
 <Callout type="warning" title="Dry-run by default">

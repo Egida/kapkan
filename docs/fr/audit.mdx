@@ -29,16 +29,19 @@ d'audit dans le journal du processus.
 
 ## Ce qui est enregistré
 
-Trois actions sont auditées. `ban` et `config_reload` sont enregistrées en cas de succès comme
-d'échec ; `unban` n'est enregistrée qu'en cas de succès — un unban en échec ou sans effet renvoie une
-erreur et n'est pas écrit dans la piste, bien qu'il soit tout de même journalisé (un unban en échec est
-un `404 "no active ban"`, et non une décision de politique, il n'y a donc rien à attribuer) :
+Cinq actions sont auditées. `ban`, `config_reload` et `source_block` sont enregistrées en cas de
+succès comme d'échec ; `unban` et `source_unblock` ne le sont qu'en cas de succès — une suppression en
+échec ou sans effet renvoie une erreur et n'est pas écrite dans la piste, bien qu'elle soit tout de
+même journalisée (un unban en échec est un `404 "no active ban"`, et non une décision de politique,
+il n'y a donc rien à attribuer) :
 
 | Action | Quand | Résultats enregistrés (`result`) |
 | --- | --- | --- |
 | `ban` | `POST /api/v1/ban` | `active` en cas de succès ; `rejected` lorsqu'un garde-fou de sécurité le refuse. Un bannissement en dry-run enregistre tout de même `active` — la simulation est signalée par le champ `dry_run` distinct. |
 | `unban` | `POST /api/v1/unban` | `withdrawn` en cas de succès. |
 | `config_reload` | `POST /api/v1/config/reload` | `ok` en cas de succès ; `error` lorsque la nouvelle configuration ne peut être analysée ou validée. |
+| `source_block` | `POST /api/v1/dataplane/sources` | `blocked` en cas de succès ; `rejected` lorsque la politique le refuse. Un blocage refusé est lui-même une action d'opérateur, il est donc attribué comme un bannissement refusé. |
+| `source_unblock` | `POST /api/v1/dataplane/sources/unblock` | `removed` en cas de succès. |
 
 `config_reload` est restreint aux tokens non limités (admin). Un opérateur limité à un tenant est refusé
 avec `403` *avant* l'exécution du rechargement, et **aucun enregistrement d'audit n'est écrit** — ce refus
@@ -76,7 +79,7 @@ Renvoie les enregistrements d'audit, du plus récent au plus ancien. Cela néces
 | --- | --- | --- |
 | `from` | now − 1h | Début RFC 3339 de la fenêtre. |
 | `to` | now | Fin RFC 3339 de la fenêtre. Doit être postérieure à `from` ; la fenêtre ne peut pas dépasser **31 days**. |
-| `action` | (toutes) | Filtre sur l'une des valeurs `ban`, `unban`, `config_reload`. |
+| `action` | (toutes) | Filtre sur l'une des valeurs `ban`, `unban`, `config_reload`, `source_block`, `source_unblock`. |
 | `target` | (toutes) | Filtre sur une seule IP. Doit être visible par le tenant de l'appelant, sinon la requête renvoie `403`. |
 
 L'endpoint renvoie au maximum ~1000 enregistrements par requête, du plus récent au plus ancien. Si vous
@@ -115,16 +118,16 @@ Chaque enregistrement comporte ces champs :
 | Champ | Notes |
 | --- | --- |
 | `event_time` | UTC, `YYYY-MM-DD HH:MM:SS`. |
-| `action` | `ban`, `unban` ou `config_reload`. |
-| `result` | `active`, `rejected`, `withdrawn`, `ok` ou `error`. |
+| `action` | `ban`, `unban`, `config_reload`, `source_block` ou `source_unblock`. |
+| `result` | `active`, `rejected`, `withdrawn`, `ok`, `error`, `blocked` ou `removed`. |
 | `operator` | Le nom du token d'API correspondant ; vide en mode ouvert (sans token). |
 | `role` | Le rôle de l'appelant (`viewer` / `operator`). |
 | `tenant` | La portée tenant de l'appelant ; vide pour un appelant non limité (admin). |
-| `target` | L'IP pour `ban`/`unban` ; vide pour `config_reload`. |
-| `target_type` | `host` pour `ban`/`unban` ; `global` pour `config_reload`. |
+| `target` | L'IP pour `ban`/`unban` ; `source->victim` pour `source_block`/`source_unblock` ; vide pour `config_reload`. |
+| `target_type` | `host` pour `ban`/`unban` ; `source` pour `source_block`/`source_unblock` ; `global` pour `config_reload`. |
 | `reason` | Détail du refus ou de l'erreur ; vide en cas de succès. |
 | `source` | `api` (action d'opérateur). Les actions automatiques internes au moteur sont réservées à une future source `auto`. |
-| `ban_state` | L'état final du bannissement pour `ban`/`unban` ; vide pour `config_reload`. |
+| `ban_state` | L'état final du bannissement pour `ban`/`unban` ; vide pour `config_reload` et les actions de blocage de sources. |
 | `dry_run` | `1` lorsque le déploiement est en [dry-run](/docs/safety). |
 
 Une requête portant sur une fenêtre hors limites renvoie `400` ; une valeur d'`action` inconnue

@@ -54,6 +54,8 @@ returns `403` otherwise. See [Multi-tenancy](/docs/multi-tenancy).
 | POST | `/api/v1/ban` | Manually ban an address. |
 | POST | `/api/v1/unban` | Manually withdraw a ban. |
 | POST | `/api/v1/config/reload` | Re-read the config file (same as `SIGHUP`). |
+| POST | `/api/v1/dataplane/sources` | Drop a source in the [data plane](/docs/dataplane), scoped to one victim, with a mandatory TTL. |
+| POST | `/api/v1/dataplane/sources/unblock` | Remove one source block immediately. |
 | GET | `/api/v1/dataplane/rules` | The [scrub-node](/docs/scrubbing#managed-scrubbing-nodes) rule feed (`agent`/unscoped `operator`); ETag long-poll, held up to 30 s. |
 | POST | `/api/v1/dataplane/nodes/{name}/report` | A scrub node's advisory self-report (`agent`/unscoped `operator`). |
 | GET | `/api/v1/dataplane/nodes` | Managed-node inventory: liveness, config, per-node ban counts (unscoped `viewer`+). |
@@ -336,11 +338,12 @@ lifecycle.
 
 ### GET /api/v1/audit
 
-Returns the operator-attributed audit trail — who issued each `ban`, `unban` or
-`config_reload`, when, and the outcome (including **refused** actions). Records are
-newest-first and the endpoint is tenant-scoped server-side. It takes optional `from`/`to`
-(RFC 3339), `action` (`ban`/`unban`/`config_reload`) and `target` (an IP) query params, and
-defaults to the last hour:
+Returns the operator-attributed audit trail — who issued each `ban`, `unban`,
+`config_reload`, `source_block` or `source_unblock`, when, and the outcome (including
+**refused** actions). Records are newest-first and the endpoint is tenant-scoped server-side.
+It takes optional `from`/`to` (RFC 3339), `action`
+(`ban`/`unban`/`config_reload`/`source_block`/`source_unblock`) and `target` (an IP) query
+params, and defaults to the last hour:
 
 ```json
 {
@@ -441,6 +444,81 @@ tenant-scoped token is refused with `403` and `config reload is restricted to un
 
 If the new config fails to parse or validate, the running config is left untouched and the
 endpoint returns HTTP `400` with the error. See [Configuration](/docs/configuration).
+
+### The source-block channel
+
+Two endpoints let whoever already terminates a victim's traffic — an nginx in front of it, a
+log exporter, an operator at 3am — hand Kapkan a **source** to drop in the
+[XDP data plane](/docs/dataplane), scoped to that victim, with a mandatory TTL. The decision
+is made where the requests are visible; the enforcement happens in the kernel. Both require
+an `operator` token; the `agent` role is denied.
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `victim` | yes | The protected destination the block is scoped to. It is what a tenant token is checked against, and what keeps one caller's evidence from becoming a global drop. |
+| `source` | yes | The address to drop. Must be the same address family as `victim`. |
+| `ttl_seconds` | yes for a block | How long the block lives, from `1` to `86400` (24 h). There are no permanent entries. Blocking the same pair again keeps the original `created_at` and applies the new TTL — the refresh an exporter needs to hold a persistent offender without unblock/re-block churn. |
+| `reason` | no | A free-text note carried into the [audit trail](/docs/audit). |
+
+The response is the resulting `SourceBlock`:
+
+```json
+{
+  "source": "198.51.100.7",
+  "victim": "203.0.113.10",
+  "created_at": "2026-08-17T21:04:11Z",
+  "expires_at": "2026-08-17T21:14:11Z",
+  "dry_run": false,
+  "reason": "login flood"
+}
+```
+
+`POST /api/v1/dataplane/sources/unblock` takes the same `victim` and `source` (any
+`ttl_seconds` is ignored) and removes that one pair immediately, so nobody waits out a TTL
+they typed themselves. It returns the removed `SourceBlock`, or `404` if no such pair is
+live.
+
+#### Refusals
+
+An input mistake is `400`; a well-formed request refused by policy is `409`. Every call —
+including a refusal — writes one attributed audit event, because a refused block is itself an
+operator action.
+
+| Status | Cause |
+| --- | --- |
+| `400` | Unparseable JSON or address, `victim` and `source` in different address families, or `ttl_seconds` outside `[1, 86400]`. |
+| `403` | `victim` is outside your tenant. The same uniform refusal the ban endpoints give, so the endpoint is not an existence oracle for other tenants' hosts. |
+| `404` | Unblock only: no live block for that pair. |
+| `409` | The data plane is absent or disabled; `victim` is in `protected_whitelist`; `source` is in `dataplane.allowlist`; `source` is inside the protected `networks`; this source already holds 8 victims; or no policy slots are left. |
+
+The two allowlist refusals are the interesting ones, and they are refusals precisely because
+the alternative is silence: the datapath passes an allowlisted source at precedence 1 and
+protected-destination traffic at precedence 2, both **before** any rule is evaluated — so
+such a block would install and then never match a packet. A `source` inside your own
+`networks` is refused too: an internal host is a [ban](/docs/mitigation), not a source block.
+
+<Callout type="warning" title="An install failure withdraws every pair for that source">
+One source's pairs share a single kernel policy block, and the installer's rollback is
+all-or-nothing across it. If an install fails, every pair for that source is withdrawn rather
+than left recorded-but-unenforced, and the error says so — re-add the ones you still need.
+The table never claims to be enforcing something the kernel is not.
+</Callout>
+
+<Callout type="info" title="Same guarantees as a ban">
+TTLs are mandatory and bounded, each pair carries its own expiry into the kernel (so it lapses
+on schedule even if Kapkan dies), installs are accounted against
+`dataplane.limits.max_dynamic_rules`, blocks survive a restart through the state file, and
+`dry_run` is honoured — the pair is recorded and returned with `dry_run: true` and nothing
+reaches a kernel map. See [Source blocks](/docs/dataplane#source-blocks-from-your-own-stack)
+for the limits and [Safety model](/docs/safety).
+</Callout>
 
 ### The scrub-node channel
 

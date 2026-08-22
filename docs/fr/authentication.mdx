@@ -65,7 +65,7 @@ validation bloquante au démarrage, et non une valeur par défaut silencieuse.
 | Rôle | Autorisations |
 | --- | --- |
 | `viewer` | Lecture seule : état, attaques, hôtes, bannissements, métriques. |
-| `operator` | Tout ce qu'un viewer peut faire, plus le bannissement/débannissement manuel et le rechargement de la configuration (le rechargement est réservé aux admins — voir ci-dessous). |
+| `operator` | Tout ce qu'un viewer peut faire, plus le bannissement/débannissement manuel, les [blocages de sources](/docs/api#le-canal-de-blocage-de-sources) et le rechargement de la configuration (le rechargement est réservé aux admins — voir ci-dessous). |
 | `agent` | L'identifiant d'un [nœud de scrubbing](/docs/scrubbing#nœuds-de-nettoyage-gérés) : le flux de règles du dataplane et son propre rapport, et **rien d'autre**. |
 
 Il n'existe pas de rôle `admin` distinct à attribuer — un *admin* est simplement un token operator
@@ -76,7 +76,9 @@ ci-dessous.
 <Callout type="info" title="Le rôle agent n'est pas un viewer amoindri">
 `agent` se situe **hors** de l'échelle de privilèges, en dessous de `viewer` : il accorde
 exactement deux routes (`GET /api/v1/dataplane/rules` et
-`POST /api/v1/dataplane/nodes/{name}/report`) et se voit refuser tout autre point de terminaison —
+`POST /api/v1/dataplane/nodes/{name}/report`) et se voit refuser tout autre point de terminaison, y
+compris le canal de blocage de sources, qui installe des règles noyau et reste donc réservé au rôle
+operator —
 un token agent compromis, qui réside sur une machine de scrubbing distante, ne doit pas devenir une
 clé de lecture universelle. Il ne peut pas non plus être rattaché à un tenant : le flux de règles
 concerne l'ensemble du déploiement, de sorte qu'un `tenant` sur un token agent est une erreur de

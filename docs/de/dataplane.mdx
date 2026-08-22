@@ -91,6 +91,54 @@ Die Schwere verläuft `none < dataplane < flowspec < divert < blackhole`. Auf ei
 [Eskalationsleiter](/docs/escalation) ist eine `dataplane`-Sprosse die sanfteste echte Aktion — zuerst
 lokal verwerfen und erst dann zu den router-basierten Methoden eskalieren, wenn das nicht genügt hat.
 
+## Source-Blocks aus Ihrem eigenen Stack
+
+Alles oben ist Kapkan, das entscheidet. Es gibt einen weiteren Weg, auf dem Regeln in den Kernel
+gelangen: Etwas, das *Sie* betreiben, entscheidet, und Kapkan setzt es durch. Ein nginx vor dem
+Opfer, ein Log-Exporter oder ein Operator um 3 Uhr morgens kann eine **Quelle** zum Verwerfen
+übergeben, gebunden an ein Opfer und mit einer verpflichtenden TTL:
+
+```sh
+curl -fsS -X POST localhost:8080/api/v1/dataplane/sources \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"victim":"203.0.113.10","source":"198.51.100.7","ttl_seconds":600,"reason":"login flood"}'
+```
+
+Das ist HTTP-Bewusstsein, ohne HTTP zu parsen. Kapkan sieht die Requests überhaupt nicht; den Aufruf
+macht das, was sie ohnehin terminiert, und das Verwerfen passiert auf der günstigsten Schicht, die
+es ausdrücken kann. Die Erkennung ist nicht beteiligt — kein Schwellenwert muss auslösen, und es
+wird nichts klassifiziert.
+
+Das Paar lebt im Kernel mit **seinem eigenen Ablauf**, es endet also planmäßig, selbst wenn Kapkan
+stirbt. `POST /api/v1/dataplane/sources/unblock` ist das sofortige Rückgängig. Vollständige
+Request-Form, Antwort und jede Ablehnung: [der
+Source-Block-Kanal](/docs/api#der-source-block-kanal).
+
+**Zu den Grenzen, denn sie sind geteilt.** Jede geblockte Quelle belegt einen Kernel-Policy-Slot aus
+demselben Pool, aus dem Sperren ziehen, und hält darin höchstens **8 Opfer**. Verschiedene Quellen
+sind auf das begrenzt, was übrig bleibt, nachdem jede mögliche Sperre — Host und Carpet — ihren
+eigenen Slot beanspruchen könnte, sodass ein Schwall von Blocks eine Sperre niemals in ihren
+Blackhole-Fallback hungern lassen kann. Darüber hinaus werden Blocks mit `409` abgelehnt, während
+Sperren weiterarbeiten. Erhöhen Sie `dataplane.limits.max_dynamic_rules`, wenn Sie sich auf diesen
+Kanal stützen wollen; beobachten Sie `kapkan_mitigate_source_blocks` gegen dieses Limit.
+
+<Callout type="warning" title="Die 8-Opfer-Grenze gilt pro Quelle, über alle Mandanten hinweg">
+Die Paare einer Quelle teilen einen Kernel-Policy-Block, und dieser Block ist allein über die Quelle
+indexiert — er hat keine Vorstellung davon, zu welchem Mandanten jedes Opfer gehört. Trifft
+derselbe Angreifer also Opfer in mehreren [Mandanten](/docs/multi-tenancy), konkurrieren diese Opfer
+um dieselben 8 Slots, und das neunte wird abgelehnt, wem es auch gehört. Das folgt aus dem Layout
+„ein Policy-Block pro Quelle“ und ist keine Grenze, die sich erhöhen lässt. Wo das zählt, halten Sie
+Source-Blocks bei dem Mandanten, der den Verkehr gemeldet hat, oder greifen Sie auf eine statische
+Regel zurück.
+</Callout>
+
+Zwei Ablehnungen überraschen Leute, und beide existieren, weil die Alternative Stille wäre: eine
+`source` in `dataplane.allowlist` und ein `victim` in `protected_whitelist` sind **Fehler**, keine
+akzeptierten No-ops. Der Datenpfad lässt beide durch, bevor irgendeine Regel ausgewertet wird — so
+ein Block würde sich installieren und dann nie ein Paket treffen. Eine Quelle innerhalb Ihrer
+eigenen `networks` wird ebenfalls abgelehnt: ein interner Host ist eine Sperre, kein Source-Block.
+
 ## Wohin als Nächstes
 
 Neu dabei? Lesen Sie [Datenebene installieren](/docs/dataplane-install) und fahren Sie sie im dry-run

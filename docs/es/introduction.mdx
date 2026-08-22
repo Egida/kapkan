@@ -21,8 +21,11 @@ Kapkan es un reemplazo gratuito de las funciones por las que cobran los producto
 <Callout type="info" title="¿Nuevo en BGP, RTBH o NetFlow?">
 No pasa nada — el [Inicio rápido](/docs/quickstart) te guía paso a paso, el
 [Glosario](/docs/glossary) explica cada término y Kapkan no tocará ni una sola ruta hasta
-que tú lo indiques. Kapkan gestiona ataques *volumétricos* (inundaciones que intentan saturar tu enlace o
-host con volumen bruto de paquetes y bits), no ataques de capa de aplicación.
+que tú lo indiques. Kapkan *detecta* ataques **volumétricos** (inundaciones que intentan saturar tu enlace o
+host con volumen bruto de paquetes y bits), no los de capa de aplicación. Aun así puede *aplicar* una
+decisión de capa de aplicación que haya tomado otro: lo que ya termina el tráfico puede entregarle un
+origen para descartar mediante el
+[canal de bloqueo de orígenes](/docs/api#el-canal-de-bloqueo-de-orígenes).
 </Callout>
 
 <Callout type="warning" title="Dry-run de forma predeterminada">

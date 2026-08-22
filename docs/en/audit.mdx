@@ -27,16 +27,19 @@ Every mutation is logged at `INFO` level regardless of storage. The queryable hi
 
 ## What is recorded
 
-Three actions are audited. `ban` and `config_reload` are recorded on both success and
-failure; `unban` is recorded only on success — a failed or no-op unban returns an error and is
-not written to the trail, though it is still logged (a failed unban is a `404 "no active
-ban"`, not a policy decision, so there is nothing to attribute):
+Five actions are audited. `ban`, `config_reload` and `source_block` are recorded on both
+success and failure; `unban` and `source_unblock` are recorded only on success — a failed or
+no-op removal returns an error and is not written to the trail, though it is still logged (a
+failed unban is a `404 "no active ban"`, not a policy decision, so there is nothing to
+attribute):
 
 | Action | When | Recorded outcomes (`result`) |
 | --- | --- | --- |
 | `ban` | `POST /api/v1/ban` | `active` on success; `rejected` when a safety guard refuses it. A dry-run ban still records `active` — the simulation is signalled by the separate `dry_run` field. |
 | `unban` | `POST /api/v1/unban` | `withdrawn` on success. |
 | `config_reload` | `POST /api/v1/config/reload` | `ok` on success; `error` when the new config fails to parse or validate. |
+| `source_block` | `POST /api/v1/dataplane/sources` | `blocked` on success; `rejected` when policy refuses it. A refused block is itself an operator action, so it is attributed like a refused ban. |
+| `source_unblock` | `POST /api/v1/dataplane/sources/unblock` | `removed` on success. |
 
 `config_reload` is restricted to unscoped (admin) tokens. A tenant-scoped operator is refused
 with `403` *before* the reload runs, and **no audit record is written** — that refusal appears
@@ -73,7 +76,7 @@ Returns audit records newest-first. It needs the **viewer** role, like the other
 | --- | --- | --- |
 | `from` | now − 1h | RFC 3339 start of the window. |
 | `to` | now | RFC 3339 end of the window. Must be after `from`; the window may not exceed **31 days**. |
-| `action` | (all) | Filter to one of `ban`, `unban`, `config_reload`. |
+| `action` | (all) | Filter to one of `ban`, `unban`, `config_reload`, `source_block`, `source_unblock`. |
 | `target` | (all) | Filter to one IP. Must be visible to the caller's tenant, or the request is `403`. |
 
 The endpoint returns at most ~1000 records per query, newest-first. If you hit that cap on a
@@ -112,16 +115,16 @@ Each record carries these fields:
 | Field | Notes |
 | --- | --- |
 | `event_time` | UTC, `YYYY-MM-DD HH:MM:SS`. |
-| `action` | `ban`, `unban`, or `config_reload`. |
-| `result` | `active`, `rejected`, `withdrawn`, `ok`, or `error`. |
+| `action` | `ban`, `unban`, `config_reload`, `source_block`, or `source_unblock`. |
+| `result` | `active`, `rejected`, `withdrawn`, `ok`, `error`, `blocked`, or `removed`. |
 | `operator` | The matched API token name; empty in open (token-less) mode. |
 | `role` | The caller's role (`viewer` / `operator`). |
 | `tenant` | The caller's tenant scope; empty for an unscoped (admin) caller. |
-| `target` | The IP for `ban`/`unban`; empty for `config_reload`. |
-| `target_type` | `host` for `ban`/`unban`; `global` for `config_reload`. |
+| `target` | The IP for `ban`/`unban`; `source->victim` for `source_block`/`source_unblock`; empty for `config_reload`. |
+| `target_type` | `host` for `ban`/`unban`; `source` for `source_block`/`source_unblock`; `global` for `config_reload`. |
 | `reason` | Refusal or error detail; empty on success. |
 | `source` | `api` (operator action). Engine-internal automatic actions are reserved for a future `auto` source. |
-| `ban_state` | The final ban state for `ban`/`unban`; empty for `config_reload`. |
+| `ban_state` | The final ban state for `ban`/`unban`; empty for `config_reload` and the source-block actions. |
 | `dry_run` | `1` when the deployment is in [dry-run](/docs/safety). |
 
 A query against an out-of-range window returns `400`; an unknown `action` value returns `400`;
