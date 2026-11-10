@@ -68,6 +68,23 @@ Si un vecino nunca llega a `ESTABLISHED`, la causa está en uno de dos lados:
 - **El lado del router/host**: el router debe estar configurado para aceptar la sesión, la dirección de
   origen debe ser alcanzable y ninguna ACL o firewall debe bloquear el TCP `179`.
 
+Las líneas `bgp peer state` permiten acotarlo. Una sesión pasa por `ACTIVE` → `OPENCONFIRM` →
+`ESTABLISHED`, y Kapkan se conecta y envía su OPEN mientras la sesión sigue en `ACTIVE`:
+
+- **`OPENCONFIRM`, luego `IDLE`, una y otra vez**: el router envió su OPEN y luego rechazó el de
+  Kapkan. Comprueba `bgp.local_asn` frente a lo que espera el router; lo que rechazó aparece en
+  sus registros.
+- **Una sola línea `state=ACTIVE` y nada después**: la sesión falla antes, y la propia línea
+  `sent notification` de gobgp (`journalctl -u kapkan | grep "sent notification"`) dice cómo.
+  `Code` 2 con `Subcode` 2: el OPEN del router indica un AS distinto del `remote_asn` del vecino.
+  `Code` 5 con `Subcode` 1: el router respondió al OPEN de Kapkan con algo que no es un OPEN
+  propio, normalmente una NOTIFICATION que rechaza la sesión, así que revisa `bgp.local_asn` y la
+  entrada de vecino para Kapkan en el router. Si no hay ninguna línea así, reinicia Kapkan con
+  `-log-level debug`. Entonces `failed to connect` significa que la conexión TCP nunca se
+  establece (una ruta, una ACL o un firewall bloquean el TCP `179`), y
+  `outgoing connection IO error`, que el router aceptó la conexión y la cerró, como hacen FRR y
+  BIRD con una dirección para la que no tienen ningún vecino configurado.
+
 `GET /api/v1/status` muestra tu *configuración* de BGP y las direcciones de los vecinos, pero **no** el
 estado de la sesión en vivo: el estado del peer vive únicamente en los registros.
 

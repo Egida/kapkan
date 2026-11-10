@@ -67,6 +67,21 @@ If a neighbor never reaches `ESTABLISHED`, the cause is on one of two sides:
 - **The router / host side** — the router must be configured to accept the session, the source
   address must be reachable, and no ACL or firewall may block TCP `179`.
 
+The `bgp peer state` lines narrow it down. A session goes `ACTIVE` → `OPENCONFIRM` →
+`ESTABLISHED`, and Kapkan connects and sends its OPEN while the session is still `ACTIVE`:
+
+- **`OPENCONFIRM`, then `IDLE`, over and over** — the router sent its OPEN, then refused Kapkan's.
+  Check `bgp.local_asn` against what the router expects; the router's log says what it refused.
+- **One `state=ACTIVE` line and nothing after it** — the session fails earlier, and gobgp's own
+  `sent notification` line (`journalctl -u kapkan | grep "sent notification"`) says how. `Code` 2
+  with `Subcode` 2: the router's OPEN names an AS other than the neighbor's `remote_asn`. `Code` 5
+  with `Subcode` 1: the router answered Kapkan's OPEN with something other than an OPEN of its
+  own, usually a NOTIFICATION refusing the session, so check `bgp.local_asn` and the router's
+  neighbor entry for Kapkan. No such line: restart Kapkan with `-log-level debug`. Then
+  `failed to connect` means TCP never connects (a route, an ACL or a firewall in the way of TCP
+  `179`), and `outgoing connection IO error` means the router accepted the connection and closed
+  it, as FRR and BIRD do for an address they have no neighbor for.
+
 `GET /api/v1/status` shows your BGP *configuration* and neighbor addresses, but **not** live
 session state — peer state lives only in the logs.
 
