@@ -210,6 +210,15 @@ en lugar de inferirlo:
 sum(kapkan_dataplane_map_bytes)
 ```
 
+Los mapas no lo son todo. La cola de recepción de cada listener de telemetría guarda hasta
+[`listen.queue`](/docs/configuration) datagramas de unos 10 KB de heap vivo cada uno (hasta ~160 MB
+por listener con el valor predeterminado) mientras sus workers de decodificación van por detrás, y
+sin `GOMEMLIMIT` el proceso retiene hasta el doble, ~320 MB por listener, porque el recolector de
+basura de Go deja crecer el heap hasta el doble de su tamaño vivo antes de recolectar. Así que
+presupuesta también las colas: un `MemoryMax=` en el que no caben mata al daemon antes de que
+`kapkan_ingest_dropped_flows_total` se mueva, y uno sin margen para el recolector de basura lo mata
+poco después.
+
 ### Paquetes descartados por bloqueo
 
 Cuánto descartó el kernel **para una víctima concreta** deliberadamente no está aquí. `/metrics` no

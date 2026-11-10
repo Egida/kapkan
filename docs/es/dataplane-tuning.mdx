@@ -338,6 +338,17 @@ la tabla de cubos por origen domina el total. La memoria de los mapas se carga a
 del servicio (kernel 5.11+), así que si estableces `MemoryMax=` en la unidad, dimensiónalo teniendo
 en cuenta los mapas.
 
+Los mapas no son todo el presupuesto. La cola de recepción de cada listener de telemetría guarda
+hasta [`listen.queue`](/docs/configuration) datagramas de unos 10 KB de heap vivo cada uno —hasta
+~160 MB por listener con el valor predeterminado— y se llena justo cuando la telemetría llega más
+rápido de lo que se decodifica, es decir, durante un ataque. Con un límite que no deja sitio a las
+colas, el OOM killer mata al daemon antes de que el listener descarte un solo datagrama. Y el tamaño
+vivo no es todo el coste: el recolector de basura de Go no ve `MemoryMax=` y, sin `GOMEMLIMIT`, deja
+crecer el heap hasta el doble de su tamaño vivo antes de recolectar, así que una cola llena con el
+valor predeterminado puede ocupar hasta ~320 MB por listener. Deja sitio también para eso, o fija
+`GOMEMLIMIT` por debajo de `MemoryMax=` menos los mapas para que el recolector actúe antes de que el
+heap se duplique.
+
 ## Relacionado
 
 - [Operación y monitorización](/docs/dataplane-operate) — los contadores y las alertas que gobiernan

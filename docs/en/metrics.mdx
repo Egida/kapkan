@@ -203,6 +203,14 @@ off these gauges rather than inferring it:
 sum(kapkan_dataplane_map_bytes)
 ```
 
+The maps are not all of it. Each telemetry listener's receive queue holds up to
+[`listen.queue`](/docs/configuration) datagrams at about 10 KB of live heap each (up to ~160 MB per
+listener at the default) while its decode workers are behind, and without a `GOMEMLIMIT` the
+process holds up to twice that, ~320 MB per listener, because Go's garbage collector lets the heap
+grow to twice its live size before it collects. Budget for the queues too: a `MemoryMax=` they do
+not fit in kills the daemon before `kapkan_ingest_dropped_flows_total` moves, and one with no room
+for the collector's headroom kills it soon after.
+
 ### Per-ban drop counts
 
 How much the kernel dropped **for one victim** is deliberately not here. `/metrics` is

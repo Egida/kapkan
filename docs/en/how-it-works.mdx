@@ -205,10 +205,10 @@ Configuration is **hot-reloadable** without restarting the daemon. Trigger a rel
 Both re-read and re-validate the file in place. Almost everything takes effect on reload —
 the `dry_run` switch, detection thresholds, `networks`, hostgroups, baselines, notification
 settings and `sampling.default_rate` all reload live. A handful of structural settings reject
-the reload and require a full restart: the listen addresses, BGP identity (`local_asn`,
-`router_id`), `api.listen`, and the `samples`, `storage` and `geoip` settings. See the
-[Configuration reference](/docs/configuration) for the full list of which keys reload and
-which do not.
+the reload and require a full restart: the `listen` block (both addresses and `listen.queue`),
+BGP identity (`local_asn`, `router_id`), `api.listen`, and the `samples`, `storage` and `geoip`
+settings. See the [Configuration reference](/docs/configuration) for the full list of which keys
+reload and which do not.
 
 <Callout type="warning" title="Reloads are validated">
 A reload re-validates the whole file. If the new config is invalid, the reload is rejected and

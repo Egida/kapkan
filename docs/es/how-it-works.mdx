@@ -210,8 +210,9 @@ desencadenar una recarga:
 Ambas vuelven a leer y a validar el archivo en su lugar. Casi todo surte efecto al recargar —
 el interruptor `dry_run`, los umbrales de detección, `networks`, los hostgroups, las líneas base, los
 ajustes de notificación y `sampling.default_rate` se recargan todos en caliente. Un puñado de ajustes
-estructurales rechazan la recarga y requieren un reinicio completo: las direcciones de escucha, la
-identidad BGP (`local_asn`, `router_id`), `api.listen`, y los ajustes `samples`, `storage` y `geoip`.
+estructurales rechazan la recarga y requieren un reinicio completo: el bloque `listen` (ambas
+direcciones y `listen.queue`), la identidad BGP (`local_asn`, `router_id`), `api.listen`, y los
+ajustes `samples`, `storage` y `geoip`.
 Consulta la [referencia de configuración](/docs/configuration) para ver la lista completa de qué claves
 se recargan y cuáles no.
 
