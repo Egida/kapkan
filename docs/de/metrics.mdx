@@ -69,8 +69,10 @@ Regeln, die installiert *worden wären*, während die dynamische Hälfte von `ka
 bei null bleibt. Diese Lücke ist der beabsichtigte Unterschied zwischen Absicht und Messung — und da
 `dry_run` die ausgelieferte Voreinstellung ist, zeigt jede neue Installation genau das.
 
-Das Label `proto` ist das Wire-Protokoll, über das der Flow eingetroffen ist: `sflow5`, `netflow5`,
-`netflow9` oder `ipfix` (z. B. `kapkan_ingest_flows_total{proto="sflow5"}`).
+An `kapkan_ingest_flows_total` und `kapkan_ingest_packets_total` ist das Label `proto` das
+Wire-Protokoll, über das die Telemetrie eingetroffen ist: `sflow5`, `netflow5`, `netflow9` oder
+`ipfix` (z. B. `kapkan_ingest_flows_total{proto="sflow5"}`). An
+`kapkan_ingest_decode_errors_total` ist es der Listener: `sflow` oder `netflow`.
 
 ## Datenebene (XDP)
 

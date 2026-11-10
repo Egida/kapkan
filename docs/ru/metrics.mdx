@@ -70,8 +70,10 @@ dry-run с одного взгляда: пока `dry_run: true`, каждый �
 остаётся нулевой. Это расхождение — задуманная разница между намерением и измерением, и, поскольку
 `dry_run` включён по умолчанию, именно его покажет любое новое развёртывание.
 
-Метка `proto` — это протокол передачи, по которому пришёл поток: `sflow5`, `netflow5`,
-`netflow9` или `ipfix` (например, `kapkan_ingest_flows_total{proto="sflow5"}`).
+У `kapkan_ingest_flows_total` и `kapkan_ingest_packets_total` метка `proto` — это протокол
+передачи, по которому пришла телеметрия: `sflow5`, `netflow5`, `netflow9` или `ipfix`
+(например, `kapkan_ingest_flows_total{proto="sflow5"}`). У `kapkan_ingest_decode_errors_total`
+это слушатель: `sflow` или `netflow`.
 
 ## Плоскость данных (XDP)
 

@@ -68,8 +68,10 @@ that *would* have been installed, while the dynamic half of `kapkan_dataplane_ru
 zero. That gap is the intended difference between intent and measurement, and since `dry_run`
 is the shipped default it is what a new deployment will show.
 
-The `proto` label is the wire protocol the flow arrived on: `sflow5`, `netflow5`,
-`netflow9`, or `ipfix` (e.g. `kapkan_ingest_flows_total{proto="sflow5"}`).
+On `kapkan_ingest_flows_total` and `kapkan_ingest_packets_total` the `proto` label is the wire
+protocol the telemetry arrived on: `sflow5`, `netflow5`, `netflow9`, or `ipfix`
+(e.g. `kapkan_ingest_flows_total{proto="sflow5"}`). On `kapkan_ingest_decode_errors_total` it is
+the listener: `sflow` or `netflow`.
 
 ## Data plane (XDP)
 

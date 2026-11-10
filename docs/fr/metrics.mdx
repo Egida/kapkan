@@ -71,8 +71,10 @@ règles qui *auraient* été installées, tandis que la moitié dynamique de `ka
 reste à zéro. Cet écart est la distinction voulue entre l'intention et la mesure, et comme `dry_run`
 est la valeur par défaut livrée, c'est ce qu'affichera tout nouveau déploiement.
 
-Le label `proto` est le protocole filaire sur lequel le flow est arrivé : `sflow5`, `netflow5`,
-`netflow9` ou `ipfix` (par ex. `kapkan_ingest_flows_total{proto="sflow5"}`).
+Sur `kapkan_ingest_flows_total` et `kapkan_ingest_packets_total`, le label `proto` est le
+protocole filaire sur lequel la télémétrie est arrivée : `sflow5`, `netflow5`, `netflow9` ou
+`ipfix` (par ex. `kapkan_ingest_flows_total{proto="sflow5"}`). Sur
+`kapkan_ingest_decode_errors_total`, c'est l'écouteur : `sflow` ou `netflow`.
 
 ## Plan de données (XDP)
 

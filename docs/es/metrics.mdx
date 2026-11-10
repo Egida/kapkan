@@ -70,8 +70,10 @@ reglas que se *habrían* instalado, mientras que la mitad dinámica de `kapkan_d
 queda en cero. Esa diferencia es la distinción intencionada entre intención y medición, y como
 `dry_run` es el valor por defecto de fábrica, es lo que mostrará cualquier despliegue nuevo.
 
-La etiqueta `proto` es el protocolo de transporte por el que llegó el flow: `sflow5`, `netflow5`,
-`netflow9` o `ipfix` (p. ej. `kapkan_ingest_flows_total{proto="sflow5"}`).
+En `kapkan_ingest_flows_total` y `kapkan_ingest_packets_total`, la etiqueta `proto` es el
+protocolo de transporte por el que llegó la telemetría: `sflow5`, `netflow5`, `netflow9` o
+`ipfix` (p. ej. `kapkan_ingest_flows_total{proto="sflow5"}`). En
+`kapkan_ingest_decode_errors_total` es el listener: `sflow` o `netflow`.
 
 ## Plano de datos (XDP)
 
