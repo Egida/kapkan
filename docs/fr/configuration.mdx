@@ -40,7 +40,7 @@ modifier :
 - les paramètres `storage` ;
 - les paramètres `geoip` ;
 - l'attachement du plan de données et le dimensionnement de ses maps (`dataplane.enabled`,
-  `interfaces`, `xdp_mode`, `pin_path`, `on_exit` et tout ce qui se trouve sous `limits`) — rien de
+  `interfaces`, `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` et tout ce qui se trouve sous `limits`) — rien de
   cela ne peut changer sous un programme XDP déjà chargé. La politique statique du même bloc —
   `allowlist`, `static_rules`, `ratelimit_profiles` — se recharge à chaud.
 

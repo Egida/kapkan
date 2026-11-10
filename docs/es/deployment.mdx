@@ -200,7 +200,7 @@ elementos quedan fijados al arrancar, y una recarga que cambie cualquiera de ell
 (requiere reinicio): el bloque `listen` (ambas direcciones y `listen.queue`), la identidad BGP
 (`bgp.local_asn` / `router_id`), `api.listen`, los ajustes de `samples`, los ajustes de `storage`,
 los ajustes de `geoip`, así como la conexión del plano de datos y el dimensionamiento de sus mapas
-(`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `on_exit` y todo lo que hay bajo
+(`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` y todo lo que hay bajo
 `limits`). Consulta la [referencia de configuración](/docs/configuration) y, para cambiar el binario
 sin perder la mitigación, [Actualización](/docs/upgrading).
 

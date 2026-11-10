@@ -205,7 +205,7 @@ Sieben Dinge sind beim Start fest und ein Reload, der eines davon ändert, wird 
 (Neustart erforderlich): der `listen`-Block (beide Adressen und `listen.queue`), die BGP-Identität
 (`bgp.local_asn` / `router_id`), `api.listen`, die `samples`-Einstellungen, die
 `storage`-Einstellungen, die `geoip`-Einstellungen sowie die Anbindung und Map-Dimensionierung der
-Datenebene (`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `on_exit` und alles unter
+Datenebene (`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` und alles unter
 `limits`). Siehe die [Konfigurationsreferenz](/docs/configuration) und, um das Binary zu wechseln,
 ohne die Mitigation zu unterbrechen, [Upgrade](/docs/upgrading).
 

@@ -39,7 +39,7 @@ hostgroup, базовые линии (baseline), настройки уведом
 - настройки `storage`;
 - настройки `geoip`;
 - подключение плоскости данных и размеры карт (`dataplane.enabled`, `interfaces`, `xdp_mode`,
-  `pin_path`, `on_exit` и всё внутри `limits`) — ни одно из них нельзя изменить под уже
+  `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` и всё внутри `limits`) — ни одно из них нельзя изменить под уже
   загруженной программой XDP. Статическая политика в том же блоке — `allowlist`, `static_rules`,
   `ratelimit_profiles` — перечитывается на лету.
 
