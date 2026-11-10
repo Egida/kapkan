@@ -344,10 +344,14 @@ way, and the per-source bucket table dominates the total. Map memory is charged 
 memory cgroup (kernel 5.11+), so if you set `MemoryMax=` on the unit, size it with the maps in mind.
 
 The maps are not the whole budget. Each telemetry listener's receive queue holds up to
-[`listen.queue`](/docs/configuration) datagrams at about 10 KB each — up to ~160 MB per listener at
-the default — and it fills exactly when telemetry outruns decoding, which is to say under attack. A
-limit that leaves no room for the queues gets the daemon OOM-killed before the listener drops a
-single datagram.
+[`listen.queue`](/docs/configuration) datagrams at about 10 KB of live heap each — up to ~160 MB per
+listener at the default — and it fills exactly when telemetry outruns decoding, which is to say
+under attack. A limit that leaves no room for the queues gets the daemon OOM-killed before the
+listener drops a single datagram. The live size is not the whole cost either: Go's garbage
+collector does not see `MemoryMax=`, and without a `GOMEMLIMIT` it lets the heap grow to twice its
+live size before it collects, so a full default queue can take up to ~320 MB per listener. Leave
+room for that, or set `GOMEMLIMIT` below `MemoryMax=` minus the maps so the collector runs before
+the heap doubles.
 
 ## Related
 

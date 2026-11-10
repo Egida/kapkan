@@ -175,8 +175,8 @@ Beide lesen und validieren die Datei direkt neu. Nahezu alles wird beim Reload w
 `dry_run`-Schalter, die Erkennungs-Schwellwerte, `networks`, Hostgroups, Baselines,
 Benachrichtigungseinstellungen und `sampling.default_rate` werden allesamt live neu geladen. Eine
 Handvoll struktureller Einstellungen lehnt den Reload ab und erfordert einen vollständigen Neustart:
-die Listen-Adressen, die BGP-Identität (`local_asn`, `router_id`), `api.listen` sowie die
-Einstellungen `samples`, `storage` und `geoip`. In der
+der `listen`-Block (beide Adressen und `listen.queue`), die BGP-Identität (`local_asn`,
+`router_id`), `api.listen` sowie die Einstellungen `samples`, `storage` und `geoip`. In der
 [Konfigurationsreferenz](/docs/configuration) finden Sie die vollständige Liste, welche Schlüssel neu
 geladen werden und welche nicht.
 

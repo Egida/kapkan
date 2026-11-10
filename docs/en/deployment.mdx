@@ -190,11 +190,13 @@ token — a [tenant-scoped](/docs/multi-tenancy) token (one limited to a single 
 networks) gets `403`.
 
 Most keys reload live, including `dry_run`, thresholds, `networks`, hostgroups, baselines,
-notification settings and `sampling.default_rate`. Six things are fixed at startup, and a
-reload that changes any of them is rejected (restart required): the `listen` addresses, BGP
-identity (`bgp.local_asn` / `router_id`), `api.listen`, the `samples` settings, `storage`
-settings and `geoip` settings. See the [configuration reference](/docs/configuration) and,
-for changing the binary without dropping mitigation, [Upgrading](/docs/upgrading).
+notification settings and `sampling.default_rate`. Seven things are fixed at startup, and a
+reload that changes any of them is rejected (restart required): the `listen` block (both
+addresses and `listen.queue`), BGP identity (`bgp.local_asn` / `router_id`), `api.listen`, the
+`samples` settings, `storage` settings, `geoip` settings, and the data-plane attachment and map
+sizing (`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `on_exit` and everything under
+`limits`). See the [configuration reference](/docs/configuration) and, for changing the binary
+without dropping mitigation, [Upgrading](/docs/upgrading).
 
 <Callout type="warning" title="A reverse proxy in front of the API needs a long read timeout">
 If you run [scrubbing nodes](/docs/scrubbing#managed-scrubbing-nodes) and put a reverse proxy in

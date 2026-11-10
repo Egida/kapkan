@@ -197,10 +197,12 @@ curl -s -X POST localhost:8080/api/v1/config/reload \
 и его сети), получает `403`.
 
 Большинство ключей перезагружается без перезапуска, включая `dry_run`, пороги, `networks`,
-hostgroups, базовые линии (baselines), настройки уведомлений и `sampling.default_rate`. Шесть
+hostgroups, базовые линии (baselines), настройки уведомлений и `sampling.default_rate`. Семь
 параметров фиксируются при запуске, и перезагрузка, изменяющая любой из них, отклоняется
-(требуется перезапуск): адреса `listen`, идентичность BGP (`bgp.local_asn` / `router_id`),
-`api.listen`, настройки `samples`, настройки `storage` и настройки `geoip`. См.
+(требуется перезапуск): блок `listen` (оба адреса и `listen.queue`), идентичность BGP
+(`bgp.local_asn` / `router_id`), `api.listen`, настройки `samples`, настройки `storage`, настройки
+`geoip`, а также подключение плоскости данных и размеры карт (`dataplane.enabled`, `interfaces`,
+`xdp_mode`, `pin_path`, `on_exit` и всё внутри `limits`). См.
 [справочник по конфигурации](/docs/configuration), а для смены бинарного файла без потери
 подавления атак — [Обновление](/docs/upgrading).
 

@@ -213,10 +213,13 @@ sum(kapkan_dataplane_map_bytes)
 ```
 
 Les maps ne sont pas tout. La file de réception de chaque écouteur de télémétrie contient jusqu'à
-[`listen.queue`](/docs/configuration) datagrammes d'environ 10 Ko chacun (jusqu'à ~160 Mo par
-écouteur avec la valeur par défaut) tant que ses workers de décodage sont en retard ; prévoyez donc
+[`listen.queue`](/docs/configuration) datagrammes d'environ 10 Ko de tas vivant chacun (jusqu'à
+~160 Mo par écouteur avec la valeur par défaut) tant que ses workers de décodage sont en retard, et
+sans `GOMEMLIMIT` le processus en garde jusqu'au double, ~320 Mo par écouteur, car le ramasse-miettes
+de Go laisse le tas grandir jusqu'au double de sa taille vivante avant de collecter. Prévoyez donc
 aussi les files : un `MemoryMax=` où elles ne tiennent pas tue le daemon avant que
-`kapkan_ingest_dropped_flows_total` ne bouge.
+`kapkan_ingest_dropped_flows_total` ne bouge, et une limite sans marge pour le ramasse-miettes le
+tue peu après.
 
 ### Paquets rejetés par blocage
 

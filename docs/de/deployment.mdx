@@ -201,11 +201,13 @@ einen ungescopeten (Admin-)Bearer-Token — ein [mandantengebundener](/docs/mult
 
 Die meisten Schlüssel werden live neu geladen, darunter `dry_run`, Schwellenwerte,
 `networks`, hostgroups, Baselines, Benachrichtigungseinstellungen und `sampling.default_rate`.
-Sechs Dinge sind beim Start fest und ein Reload, der eines davon ändert, wird abgelehnt
-(Neustart erforderlich): die `listen`-Adressen, die BGP-Identität (`bgp.local_asn` /
-`router_id`), `api.listen`, die `samples`-Einstellungen, die `storage`-Einstellungen und die
-`geoip`-Einstellungen. Siehe die [Konfigurationsreferenz](/docs/configuration) und, um das
-Binary zu wechseln, ohne die Mitigation zu unterbrechen, [Upgrade](/docs/upgrading).
+Sieben Dinge sind beim Start fest und ein Reload, der eines davon ändert, wird abgelehnt
+(Neustart erforderlich): der `listen`-Block (beide Adressen und `listen.queue`), die BGP-Identität
+(`bgp.local_asn` / `router_id`), `api.listen`, die `samples`-Einstellungen, die
+`storage`-Einstellungen, die `geoip`-Einstellungen sowie die Anbindung und Map-Dimensionierung der
+Datenebene (`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `on_exit` und alles unter
+`limits`). Siehe die [Konfigurationsreferenz](/docs/configuration) und, um das Binary zu wechseln,
+ohne die Mitigation zu unterbrechen, [Upgrade](/docs/upgrading).
 
 <Callout type="warning" title="Ein Reverse-Proxy vor der API braucht ein langes Read-Timeout">
 Wenn Sie [Scrubbing-Knoten](/docs/scrubbing#verwaltete-scrubbing-knoten) betreiben und einen

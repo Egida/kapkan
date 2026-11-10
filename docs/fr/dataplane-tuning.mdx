@@ -349,10 +349,15 @@ mémoire du service (noyau 5.11+), donc si vous définissez `MemoryMax=` sur l'u
 en tenant compte des maps.
 
 Les maps ne sont pas tout le budget. La file de réception de chaque écouteur de télémétrie contient
-jusqu'à [`listen.queue`](/docs/configuration) datagrammes d'environ 10 Ko chacun — jusqu'à ~160 Mo
-par écouteur avec la valeur par défaut — et elle se remplit précisément quand la télémétrie arrive
-plus vite qu'elle n'est décodée, c'est-à-dire pendant une attaque. Avec une limite qui ne laisse pas
-de place aux files, l'OOM killer tue le daemon avant que l'écouteur ne rejette un seul datagramme.
+jusqu'à [`listen.queue`](/docs/configuration) datagrammes d'environ 10 Ko de tas vivant chacun —
+jusqu'à ~160 Mo par écouteur avec la valeur par défaut — et elle se remplit précisément quand la
+télémétrie arrive plus vite qu'elle n'est décodée, c'est-à-dire pendant une attaque. Avec une limite
+qui ne laisse pas de place aux files, l'OOM killer tue le daemon avant que l'écouteur ne rejette un
+seul datagramme. Et la taille vivante n'est pas tout le coût : le ramasse-miettes de Go ne voit pas
+`MemoryMax=` et, sans `GOMEMLIMIT`, laisse le tas grandir jusqu'au double de sa taille vivante avant
+de collecter, si bien qu'une file pleine à la valeur par défaut peut occuper jusqu'à ~320 Mo par
+écouteur. Prévoyez aussi cette marge, ou fixez `GOMEMLIMIT` sous `MemoryMax=` moins les maps pour
+que le ramasse-miettes passe avant que le tas ne double.
 
 ## Voir aussi
 

@@ -179,9 +179,9 @@ Les deux relisent et revalident le fichier sur place. Presque tout prend effet a
 rechargement — le commutateur `dry_run`, les seuils de détection, `networks`, les hostgroups,
 les baselines, les paramètres de notification et `sampling.default_rate` se rechargent tous à
 chaud. Une poignée de paramètres structurels rejettent le rechargement et nécessitent un
-redémarrage complet : les adresses d'écoute, l'identité BGP (`local_asn`, `router_id`),
-`api.listen`, ainsi que les paramètres `samples`, `storage` et `geoip`. Voir la
-[Référence de configuration](/docs/configuration) pour la liste complète des clés qui se
+redémarrage complet : le bloc `listen` (les deux adresses et `listen.queue`), l'identité BGP
+(`local_asn`, `router_id`), `api.listen`, ainsi que les paramètres `samples`, `storage` et `geoip`.
+Voir la [Référence de configuration](/docs/configuration) pour la liste complète des clés qui se
 rechargent et de celles qui ne le font pas.
 
 <Callout type="warning" title="Les rechargements sont validés">
