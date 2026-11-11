@@ -24,7 +24,7 @@ Bind the listener accordingly — see [Authentication](/docs/authentication).
 | --- | --- | --- |
 | `kapkan_ingest_flows_total` | `proto` | Total flows ingested, by flow protocol. |
 | `kapkan_ingest_packets_total` | `exporter`, `proto` | Telemetry datagrams decoded, by source exporter (cardinality-bounded; see [`flow_sources`](/docs/configuration)) and protocol — one per datagram, however many flow records it carried. An exporter that sends only sFlow counters or NetFlow templates still shows here; `kapkan_ingest_flows_total` counts the records. A datagram that fails to decode is counted in `kapkan_ingest_decode_errors_total` instead; one that decodes but whose records the decoder then rejects is counted in both. A record with no destination address, such as a sampled ARP frame, is skipped without an error, so its datagram is counted here only. |
-| `kapkan_ingest_decode_errors_total` | `proto` | Telemetry datagrams that failed to decode, by protocol. |
+| `kapkan_ingest_decode_errors_total` | `proto` | Telemetry datagrams that failed to decode, by listener: `sflow` or `netflow` (which takes NetFlow v5, v9 and IPFIX alike). Every one is counted, a flood of junk included — unlike the log, which records at most five of each kind of decode error per listener per minute and says when it starts skipping the rest. NetFlow v9 and IPFIX data that arrives before its template counts here too: after Kapkan or an exporter restarts, expect it to climb until the exporter next sends its templates. A datagram that decoded but whose flow records then failed to convert counts both here and in `kapkan_ingest_packets_total`. |
 | `kapkan_ingest_dropped_flows_total` | — | Telemetry datagrams dropped before decoding because the receive queue of a listener (`listen.sflow` or `listen.netflow`) was full — the decode workers, which also hand every flow to the detection engine, are not keeping up. Despite the name it counts datagrams, not flows: a dropped datagram is never decoded, so how many flows it carried is unknown. It is in the same unit as `kapkan_ingest_packets_total`, so the two give the share of telemetry being lost. Should sit at zero. Datagrams the kernel discards before Kapkan reads them are not counted here; they show in the host's UDP receive-buffer errors (`netstat -su`). |
 | `kapkan_engine_active_attacks` | — | Gauge of attacks currently in progress. |
 | `kapkan_engine_attacks_total` | — | Counter of attacks detected since start. |
@@ -68,8 +68,10 @@ that *would* have been installed, while the dynamic half of `kapkan_dataplane_ru
 zero. That gap is the intended difference between intent and measurement, and since `dry_run`
 is the shipped default it is what a new deployment will show.
 
-The `proto` label is the wire protocol the flow arrived on: `sflow5`, `netflow5`,
-`netflow9`, or `ipfix` (e.g. `kapkan_ingest_flows_total{proto="sflow5"}`).
+On `kapkan_ingest_flows_total` and `kapkan_ingest_packets_total` the `proto` label is the wire
+protocol the telemetry arrived on: `sflow5`, `netflow5`, `netflow9`, or `ipfix`
+(e.g. `kapkan_ingest_flows_total{proto="sflow5"}`). On `kapkan_ingest_decode_errors_total` it is
+the listener: `sflow` or `netflow`.
 
 ## Data plane (XDP)
 
