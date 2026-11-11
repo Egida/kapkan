@@ -195,12 +195,14 @@ Bearer sin ámbito (de administrador) — un token con [ámbito de inquilino](/d
 (uno limitado a las redes de un solo cliente) obtiene un `403`.
 
 La mayoría de las claves se recargan en vivo, incluidas `dry_run`, los umbrales, `networks`,
-los hostgroups, las líneas base, los ajustes de notificación y `sampling.default_rate`. Seis
+los hostgroups, las líneas base, los ajustes de notificación y `sampling.default_rate`. Siete
 elementos quedan fijados al arrancar, y una recarga que cambie cualquiera de ellos es rechazada
-(requiere reinicio): las direcciones `listen`, la identidad BGP (`bgp.local_asn` / `router_id`),
-`api.listen`, los ajustes de `samples`, los ajustes de `storage` y los ajustes de `geoip`. Consulta
-la [referencia de configuración](/docs/configuration) y, para cambiar el binario sin perder la
-mitigación, [Actualización](/docs/upgrading).
+(requiere reinicio): el bloque `listen` (ambas direcciones y `listen.queue`), la identidad BGP
+(`bgp.local_asn` / `router_id`), `api.listen`, los ajustes de `samples`, los ajustes de `storage`,
+los ajustes de `geoip`, así como la conexión del plano de datos y el dimensionamiento de sus mapas
+(`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` y todo lo que hay bajo
+`limits`). Consulta la [referencia de configuración](/docs/configuration) y, para cambiar el binario
+sin perder la mitigación, [Actualización](/docs/upgrading).
 
 <Callout type="warning" title="Un proxy inverso delante de la API necesita un read timeout largo">
 Si ejecutas [nodos de scrubbing](/docs/scrubbing#nodos-de-scrubbing-gestionados) y pones un proxy
