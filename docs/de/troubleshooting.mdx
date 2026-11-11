@@ -74,6 +74,25 @@ Wenn ein Nachbar nie `ESTABLISHED` erreicht, liegt die Ursache auf einer von zwe
   akzeptiert, die Quelladresse muss erreichbar sein, und keine ACL oder Firewall darf TCP `179`
   blockieren.
 
+Die Zeilen `bgp peer state` grenzen das ein. Eine Sitzung durchläuft `ACTIVE` → `OPENCONFIRM` →
+`ESTABLISHED`, und Kapkan baut die Verbindung auf und sendet sein OPEN, während die Sitzung noch
+`ACTIVE` ist:
+
+- **`OPENCONFIRM`, dann `IDLE`, immer wieder** — der Router hat sein OPEN gesendet und dann das
+  von Kapkan abgelehnt. Gleichen Sie `bgp.local_asn` mit dem ab, was der Router erwartet; was er
+  abgelehnt hat, steht in seinen Logs.
+- **Eine Zeile `state=ACTIVE` und danach nichts** — die Sitzung scheitert früher, und woran,
+  zeigt die Zeile `sent notification`, die gobgp selbst schreibt
+  (`journalctl -u kapkan | grep "sent notification"`). `Code` 2 mit `Subcode` 2: Das OPEN des
+  Routers nennt ein anderes AS als den `remote_asn` des Nachbarn. `Code` 5 mit `Subcode` 1: Der
+  Router hat auf Kapkans OPEN mit etwas anderem als einem eigenen OPEN geantwortet, meist mit
+  einer NOTIFICATION, die die Sitzung ablehnt; prüfen Sie `bgp.local_asn` und den Nachbareintrag
+  für Kapkan auf dem Router. Fehlt diese Zeile, starten Sie Kapkan mit `-log-level debug` neu.
+  Dann bedeutet `failed to connect`, dass die TCP-Verbindung nie zustande kommt (eine Route, eine
+  ACL oder eine Firewall steht TCP `179` im Weg), und `outgoing connection IO error`, dass der
+  Router die Verbindung angenommen und wieder geschlossen hat, wie es FRR und BIRD bei einer
+  Adresse tun, für die kein Nachbar konfiguriert ist.
+
 `GET /api/v1/status` zeigt Ihre BGP-*Konfiguration* und die Nachbaradressen, aber **nicht** den
 Live-Sitzungszustand — der Peer-Zustand existiert nur in den Logs.
 

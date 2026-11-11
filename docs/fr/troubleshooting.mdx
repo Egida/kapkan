@@ -71,6 +71,25 @@ Si un voisin n'atteint jamais `ESTABLISHED`, la cause se trouve d'un des deux c�
 - **Le côté routeur / hôte** — le routeur doit être configuré pour accepter la session, l'adresse
   source doit être joignable, et aucune ACL ni pare-feu ne doit bloquer le TCP `179`.
 
+Les lignes `bgp peer state` permettent d'affiner le diagnostic. Une session passe par `ACTIVE` →
+`OPENCONFIRM` → `ESTABLISHED`, et Kapkan se connecte et envoie son OPEN alors que la session est
+encore `ACTIVE` :
+
+- **`OPENCONFIRM`, puis `IDLE`, en boucle** — le routeur a envoyé son OPEN, puis a refusé celui
+  de Kapkan. Comparez `bgp.local_asn` à ce qu'attend le routeur ; ce qu'il a refusé figure dans
+  ses journaux.
+- **Une seule ligne `state=ACTIVE`, puis plus rien** — la session échoue plus tôt, et la ligne
+  `sent notification` écrite par gobgp lui-même
+  (`journalctl -u kapkan | grep "sent notification"`) dit comment. `Code` 2 avec `Subcode` 2 :
+  l'OPEN du routeur annonce un AS autre que le `remote_asn` du voisin. `Code` 5 avec `Subcode` 1 :
+  le routeur a répondu à l'OPEN de Kapkan par autre chose que son propre OPEN, le plus souvent une
+  NOTIFICATION qui refuse la session ; vérifiez donc `bgp.local_asn` et l'entrée de voisin pour
+  Kapkan sur le routeur. En l'absence d'une telle ligne, redémarrez Kapkan avec
+  `-log-level debug`. `failed to connect` signifie alors que la connexion TCP ne s'établit jamais
+  (une route, une ACL ou un pare-feu bloque le TCP `179`), et `outgoing connection IO error`, que
+  le routeur a accepté la connexion puis l'a fermée, comme le font FRR et BIRD pour une adresse
+  sans voisin configuré.
+
 `GET /api/v1/status` affiche votre *configuration* BGP et les adresses des voisins, mais **pas**
 l'état en direct de la session — l'état des pairs ne figure que dans les journaux.
 
