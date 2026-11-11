@@ -194,7 +194,7 @@ notification settings and `sampling.default_rate`. Seven things are fixed at sta
 reload that changes any of them is rejected (restart required): the `listen` block (both
 addresses and `listen.queue`), BGP identity (`bgp.local_asn` / `router_id`), `api.listen`, the
 `samples` settings, `storage` settings, `geoip` settings, and the data-plane attachment and map
-sizing (`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `on_exit` and everything under
+sizing (`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` and everything under
 `limits`). See the [configuration reference](/docs/configuration) and, for changing the binary
 without dropping mitigation, [Upgrading](/docs/upgrading).
 

@@ -200,7 +200,7 @@ Sept éléments sont figés au démarrage, et un rechargement qui en modifie un 
 requis) : le bloc `listen` (les deux adresses et `listen.queue`), l'identité BGP (`bgp.local_asn` /
 `router_id`), `api.listen`, les paramètres `samples`, les paramètres `storage`, les paramètres
 `geoip`, ainsi que l'attachement du plan de données et le dimensionnement de ses maps
-(`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `on_exit` et tout ce qui se trouve sous
+(`dataplane.enabled`, `interfaces`, `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` et tout ce qui se trouve sous
 `limits`). Consultez la [référence de configuration](/docs/configuration) et, pour changer le
 binaire sans interrompre la mitigation, [Mise à niveau](/docs/upgrading).
 

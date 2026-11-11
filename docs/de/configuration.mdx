@@ -4,7 +4,7 @@ export const metadata = {
     "Jeder Schlüssel in der YAML-Konfigurationsdatei von Kapkan, mit Standardwerten und einem vollständigen, kommentierten Beispiel.",
 };
 
-# Konfigurationsreferenz
+# Konfigurations&shy;referenz
 
 <Callout type="info" title="Lieber ein geführtes Formular?">
 Der [Konfigurations-Builder](/config) erstellt eine gültige Konfiguration in Ihrem Browser, mit
@@ -41,7 +41,7 @@ den Daemon neu starten müssen, um sie zu ändern:
 - die `storage`-Einstellungen;
 - die `geoip`-Einstellungen;
 - die Anbindung und Map-Dimensionierung der Datenebene (`dataplane.enabled`, `interfaces`,
-  `xdp_mode`, `pin_path`, `on_exit` und alles unter `limits`) — keines davon kann sich unter einem
+  `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` und alles unter `limits`) — keines davon kann sich unter einem
   geladenen XDP-Programm ändern. Die statische Policy im selben Block — `allowlist`, `static_rules`,
   `ratelimit_profiles` — wird live neu geladen.
 

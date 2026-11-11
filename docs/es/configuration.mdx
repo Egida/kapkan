@@ -40,7 +40,7 @@ que debes reiniciar el demonio para cambiarlas:
 - las opciones de `storage`;
 - las opciones de `geoip`;
 - la conexión del plano de datos y el dimensionamiento de sus mapas (`dataplane.enabled`,
-  `interfaces`, `xdp_mode`, `pin_path`, `on_exit` y todo lo que hay bajo `limits`): nada de eso
+  `interfaces`, `xdp_mode`, `pin_path`, `fingerprint.enabled` / `sample_pps`, `on_exit` y todo lo que hay bajo `limits`): nada de eso
   puede cambiar bajo un programa XDP ya cargado. La política estática del mismo bloque —
   `allowlist`, `static_rules`, `ratelimit_profiles` — se recarga en caliente.
 
